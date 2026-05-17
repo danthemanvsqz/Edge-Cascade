@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 
-from cascade.orchestrator import Orchestrator, processor
+from cascade.orchestrator import cascade_session, processor
 
 
 def main() -> None:
@@ -29,27 +29,27 @@ def main() -> None:
     args = ap.parse_args()
 
     print("Loading cascade (Tier-1 compile + NPU probe)...")
-    orch = Orchestrator(enable_cloud=args.cloud)
-    print(f"Ready. Tier-1: {processor(orch.npu.device)} | "
-          f"Tier-2: NVIDIA RTX 5070 Ti | "
-          f"Tier-3: {orch.cloud.status()}")
-    print(f"Log: {orch.log_path}")
-    print(f"  tail -f \"{orch.log_path}\"                        (Git Bash)")
-    print(f"  Get-Content -Wait -Tail 20 \"{orch.log_path}\"     (PowerShell)")
+    with cascade_session(enable_cloud=args.cloud) as cs:
+        print(f"Ready. Tier-1: {processor(cs.tier1_device)} | "
+              f"Tier-2: NVIDIA RTX 5070 Ti | "
+              f"Tier-3: {cs.cloud_status}")
+        print(f"Log: {cs.log_path}")
+        print(f"  tail -f \"{cs.log_path}\"                        (Git Bash)")
+        print(f"  Get-Content -Wait -Tail 20 \"{cs.log_path}\"     (PowerShell)")
 
-    if args.query:
-        orch.run(" ".join(args.query))  # output is teed to console + log
-        return
+        if args.query:
+            cs.run(" ".join(args.query))  # output is teed to console + log
+            return
 
-    print("Interactive mode — empty line or Ctrl-C to exit.")
-    try:
-        while True:
-            q = input("\n> ").strip()
-            if not q:
-                break
-            orch.run(q)  # output is teed to console + log
-    except (KeyboardInterrupt, EOFError):
-        print()
+        print("Interactive mode — empty line or Ctrl-C to exit.")
+        try:
+            while True:
+                q = input("\n> ").strip()
+                if not q:
+                    break
+                cs.run(q)  # output is teed to console + log
+        except (KeyboardInterrupt, EOFError):
+            print()
 
 
 if __name__ == "__main__":
