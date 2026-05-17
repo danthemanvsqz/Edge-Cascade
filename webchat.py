@@ -20,10 +20,16 @@ from cascade.config import CONFIG
 from cascade.gpu_worker import GPUWorker
 from cascade.npu_worker import NPUWorker
 
-NPU = NPUWorker()
-GPU = GPUWorker()
-GPU_OK = GPU.available()
 _NPU_LOCK = threading.Lock()  # openvino pipeline is not reentrant
+_W: dict = {}
+
+
+def _workers() -> dict:
+    """Lazily build the workers once (keeps `import webchat` side-effect free)."""
+    if not _W:
+        npu, gpu = NPUWorker(), GPUWorker()
+        _W.update(npu=npu, gpu=gpu, gpu_ok=gpu.available())
+    return _W
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <title>NPU vs GPU</title><style>
@@ -92,11 +98,12 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/health":
+            w = _workers()
             self._send(200, json.dumps({
-                "npu_device": NPU.device,
+                "npu_device": w["npu"].device,
                 "npu_model": "qwen2.5-coder-1.5b",
-                "gpu_ok": GPU_OK,
-                "gpu_model": GPU._model if GPU_OK else "",
+                "gpu_ok": w["gpu_ok"],
+                "gpu_model": w["gpu"]._model if w["gpu_ok"] else "",
             }))
         else:
             self._send(200, PAGE, "text/html; charset=utf-8")
@@ -104,18 +111,19 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
         prompt = json.loads(self.rfile.read(n) or b"{}").get("prompt", "")
+        w = _workers()
         t = time.perf_counter()
         try:
             if self.path == "/api/npu":
                 with _NPU_LOCK:
-                    d = NPU.draft(prompt, max_new_tokens=512)
+                    d = w["npu"].draft(prompt, max_new_tokens=512)
                 out = {"text": d.text,
                        "meta": f"NPU · {d.latency_s:.2f}s"}
             elif self.path == "/api/gpu":
-                if not GPU_OK:
+                if not w["gpu_ok"]:
                     out = {"text": "[GPU/Ollama unavailable]", "meta": ""}
                 else:
-                    g = GPU.generate(prompt)
+                    g = w["gpu"].generate(prompt)
                     out = {"text": g.text,
                            "meta": f"NVIDIA · {g.latency_s:.2f}s · "
                                    f"{g.tokens_per_s:.0f} tok/s"}
@@ -131,7 +139,8 @@ class H(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    print(f"NPU ready on {NPU.device} | GPU available: {GPU_OK}")
+    w = _workers()
+    print(f"NPU ready on {w['npu'].device} | GPU available: {w['gpu_ok']}")
     srv = ThreadingHTTPServer(("127.0.0.1", 8080), H)
     print("Open http://127.0.0.1:8080  (Ctrl-C to stop)")
     try:

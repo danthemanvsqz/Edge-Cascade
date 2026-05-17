@@ -23,6 +23,7 @@ accel = [
 dev = [
     "pytest>=8",
     "pytest-cov>=5",
+    "pytest-mock>=3.14",
 ]
 
 [tool.pytest.ini_options]

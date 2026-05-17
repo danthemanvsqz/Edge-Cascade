@@ -13,9 +13,26 @@ import sys
 import time
 from dataclasses import dataclass
 
-import openvino_genai as ov_genai
-
 from .config import CONFIG
+
+_OV = None
+
+
+def _ov():
+    """Lazy-load openvino_genai so the module imports without the (heavy,
+    optional) `accel` extra -- the import only happens when an NPUWorker is
+    actually constructed/used."""
+    global _OV
+    if _OV is None:
+        try:
+            import openvino_genai
+        except ModuleNotFoundError as e:  # pragma: no cover - env-dependent
+            raise RuntimeError(
+                "openvino_genai is required to run the NPU/iGPU tier. "
+                "Install it: uv sync --extra accel"
+            ) from e
+        _OV = openvino_genai
+    return _OV
 
 _CHAT = (
     "<|im_start|>system\n{system}<|im_end|>\n"
@@ -91,7 +108,7 @@ class NPUWorker:
                 )
                 continue
             try:
-                self._pipe = ov_genai.LLMPipeline(CONFIG.npu_model_dir, dev)
+                self._pipe = _ov().LLMPipeline(CONFIG.npu_model_dir, dev)
                 return dev
             except Exception as e:
                 last_err = e
@@ -101,7 +118,7 @@ class NPUWorker:
         )
 
     def _gen(self, system: str, user: str, max_new_tokens: int) -> tuple[str, float]:
-        cfg = ov_genai.GenerationConfig()
+        cfg = _ov().GenerationConfig()
         cfg.max_new_tokens = max_new_tokens
         cfg.stop_strings = {"<|im_end|>"}
         cfg.include_stop_str_in_output = False

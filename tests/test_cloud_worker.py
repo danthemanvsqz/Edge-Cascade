@@ -1,6 +1,7 @@
 """cloud_worker reaches true 100% with a stubbed Anthropic client -- no
-network, no spend. CONFIG is swapped for a namespace so the credit/cost and
-gating logic can be driven directly."""
+network, no spend. CONFIG is swapped (via pytest-mock) for a namespace so the
+credit/cost and gating logic can be driven directly."""
+import os
 import types
 
 import anthropic
@@ -74,8 +75,8 @@ def test_compose_user_branches():
 
 # --- gating / status -------------------------------------------------------
 
-def test_no_key_disables_and_generate_noops(monkeypatch):
-    monkeypatch.setattr(cloud_worker, "CONFIG", _cfg(key=None))
+def test_no_key_disables_and_generate_noops(mocker):
+    mocker.patch.object(cloud_worker, "CONFIG", _cfg(key=None))
     w = CloudWorker(enabled=True)
     assert w.enabled is False
     assert w.status() == "disabled (no ANTHROPIC_API_KEY)"
@@ -83,17 +84,17 @@ def test_no_key_disables_and_generate_noops(monkeypatch):
     assert r.available is False and r.text == "[paid cloud tier disabled]"
 
 
-def test_key_present_but_not_enabled(monkeypatch):
-    monkeypatch.setattr(cloud_worker, "CONFIG", _cfg(key="k"))
+def test_key_present_but_not_enabled(mocker):
+    mocker.patch.object(cloud_worker, "CONFIG", _cfg(key="k"))
     w = CloudWorker(enabled=False)
     assert w.enabled is False
     assert w.status() == ("disabled (key present; pass --cloud / "
                           "enable_cloud=True)")
 
 
-def _enabled_worker(monkeypatch):
-    monkeypatch.setattr(cloud_worker, "CONFIG", _cfg(key="k"))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # for Anthropic() ctor
+def _enabled_worker(mocker):
+    mocker.patch.object(cloud_worker, "CONFIG", _cfg(key="k"))
+    mocker.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"})
     w = CloudWorker(enabled=True)
     assert w.enabled is True and w.status() == "enabled (m)"
     return w
@@ -101,8 +102,8 @@ def _enabled_worker(monkeypatch):
 
 # --- generate (enabled, stubbed client) ------------------------------------
 
-def test_generate_success_counts_usage(monkeypatch):
-    w = _enabled_worker(monkeypatch)
+def test_generate_success_counts_usage(mocker):
+    w = _enabled_worker(mocker)
     msg = types.SimpleNamespace(
         content=[_Blk("thinking"), _Blk("text", "hello")],
         usage=types.SimpleNamespace(
@@ -115,16 +116,16 @@ def test_generate_success_counts_usage(monkeypatch):
     assert r.input_tokens == 13 and r.output_tokens == 5
 
 
-def test_generate_handles_missing_usage(monkeypatch):
-    w = _enabled_worker(monkeypatch)
+def test_generate_handles_missing_usage(mocker):
+    w = _enabled_worker(mocker)
     w._client = _Client(msg=types.SimpleNamespace(
         content=[_Blk("text", "z")], usage=None))
     r = w.generate("q")
     assert r.text == "z" and r.input_tokens == 0 and r.output_tokens == 0
 
 
-def test_generate_handles_api_error(monkeypatch):
-    w = _enabled_worker(monkeypatch)
+def test_generate_handles_api_error(mocker):
+    w = _enabled_worker(mocker)
     err = anthropic.APIConnectionError(
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     )
