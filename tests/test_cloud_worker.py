@@ -9,7 +9,12 @@ import httpx
 import pytest
 
 from cascade import cloud_worker
-from cascade.cloud_worker import CloudResult, CloudWorker, _compose_user
+from cascade.cloud_worker import (
+    CloudResult,
+    CloudWorker,
+    _compose_user,
+    _price_for,
+)
 
 
 def _cfg(key=None):
@@ -57,10 +62,31 @@ class _Client:
 
 # --- CloudResult -----------------------------------------------------------
 
+@pytest.mark.parametrize(
+    "model, in_rate, out_rate",
+    [
+        ("claude-opus-4-7", 15.0, 75.0),       # version bump still matches prefix
+        ("claude-sonnet-4-6", 3.0, 15.0),
+        ("claude-haiku-4-5", 1.0, 5.0),
+        ("claude-3-opus-20240229", 15.0, 75.0),
+        ("claude-3-5-sonnet-latest", 3.0, 15.0),
+        ("gpt-4o", 15.0, 75.0),                # UNKNOWN -> dearest known rate
+        ("", 15.0, 75.0),                      # empty -> dearest, never cheap
+    ],
+)
+def test_price_for_table_and_conservative_fallback(model, in_rate, out_rate):
+    assert _price_for(model) == (in_rate, out_rate)
+
+
 def test_reason_note_and_cost():
-    ok = CloudResult("txt", 1.0, "m", True, 1_000_000, 1_000_000)
+    # Known model: priced at its own rate.
+    ok = CloudResult("txt", 1.0, "claude-sonnet-4-6", True, 1_000_000, 1_000_000)
     assert ok.reason_note() == "ok"
     assert ok.est_cost_usd() == pytest.approx(18.0)        # 3 + 15
+    # Unknown model "m": the latent-bug fix -- costed at the dearest known
+    # (Opus) rate so the credit guard can never under-count a new model.
+    unknown = CloudResult("txt", 1.0, "m", True, 1_000_000, 1_000_000)
+    assert unknown.est_cost_usd() == pytest.approx(90.0)   # 15 + 75
     bad = CloudResult("boom", 0.0, "m", False)
     assert bad.reason_note() == "boom"
     assert bad.est_cost_usd() == 0.0

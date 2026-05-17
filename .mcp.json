@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "edge-npu": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "mcp_servers.npu"]
+    },
+    "edge-gpu": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "mcp_servers.gpu"]
+    },
+    "edge-verify": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "mcp_servers.verify"]
+    },
+    "edge-cloud": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "mcp_servers.cloud"]
+    }
+  }
+}

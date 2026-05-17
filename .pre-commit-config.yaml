@@ -1,0 +1,52 @@
+# Pre-commit: lint + security at commit; unit tests at push.
+# Install once:  uv run pre-commit install && uv run pre-commit install -t pre-push
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key          # defense-in-depth on the secrets rule
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13                       # match the project's ruff (dev dep
+    hooks:                              # ruff>=0.8 resolves to 0.15.x); the
+      - id: ruff                        # old v0.8.6 pin flagged UP038, a rule
+        args: [--fix]                   # since removed from ruff itself
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.0
+    hooks:
+      - id: bandit                      # security scan, our code only
+        args: ["-c", "pyproject.toml", "--severity-level", "medium"]
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (unit + smoke, scoped 100% gate)
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]              # unit tests run before push, not commit
+
+      # LOCAL ONLY -- proves the real local pipeline (route->draft->verify) on
+      # actual Intel iGPU + the Tier-1 model. CI has none of that, so the
+      # script SKIPs (exit 0) when accel/hardware is absent and a hardware-less
+      # push is never blocked. On a dev box with the hardware it must pass.
+      # CI must NOT invoke this hook (it runs only at the local pre-push stage).
+      - id: e2e-local
+        name: e2e local pipeline happy path (LOCAL ONLY, skips w/o hardware)
+        entry: bash scripts/e2e_local.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
