@@ -19,6 +19,7 @@ from pathlib import Path
 from .cloud_worker import CloudWorker
 from .config import CONFIG
 from .gpu_worker import GPUWorker
+from .logfmt import dump_record
 from .npu_worker import NPUWorker
 from .verifier import verify
 
@@ -56,6 +57,10 @@ class Orchestrator:
     def __init__(self, verbose: bool = True, enable_cloud: bool = False) -> None:
         self.verbose = verbose
         self.log_path = Path(CONFIG.log_path)
+        # Deterministically-parseable sibling stream (see cascade/logfmt.py).
+        # The .log tee is for humans; this .rec is what validate_log consumes.
+        self.rec_path = self.log_path.with_suffix(".rec")
+        self._seq = 0
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._logger = self._build_logger(self.log_path, verbose)
         self._logger.info("=== cascade started ===")
@@ -136,9 +141,29 @@ class Orchestrator:
         trace.append(Hop("cloud", c.model, c.latency_s, c.reason_note()))
         return CascadeResult(c.text, "cloud", time.perf_counter() - t0, trace)
 
+    def _write_record(self, query: str, result: CascadeResult) -> None:
+        """Append one deterministic record (cascade/logfmt.py grammar). The
+        free-text query/answer are length-framed, so a model answer that emits
+        fake "%%REC"/timestamp lines can never corrupt the parse."""
+        trace = "\n".join(
+            f"{h.tier}|{h.device}|{h.latency_s:.2f}s|{h.note}"
+            for h in result.trace
+        )
+        rec = dump_record(self._seq, {
+            "query": query,
+            "answer": result.answer,
+            "final_tier": result.final_tier,
+            "total_latency_s": f"{result.total_latency_s:.2f}",
+            "trace": trace,
+        })
+        with open(self.rec_path, "a", encoding="utf-8") as fh:
+            fh.write(rec)
+        self._seq += 1
+
     def run(self, query: str) -> CascadeResult:
         """Run the cascade and log the full outcome (trace, summary, answer)."""
         result = self._run(query)
+        self._write_record(query, result)
         self._logger.info("---- trace ----")
         for h in result.trace:
             self._logger.info(

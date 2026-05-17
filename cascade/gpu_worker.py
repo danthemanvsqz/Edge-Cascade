@@ -36,7 +36,9 @@ class GPUWorker:
         except (httpx.HTTPError, ValueError, KeyError):
             return False
 
-    def generate(self, query: str) -> GPUResult:
+    def generate(
+        self, query: str, max_new_tokens: int | None = None
+    ) -> GPUResult:
         payload = {
             "model": self._model,
             "messages": [
@@ -44,7 +46,9 @@ class GPUWorker:
                 {"role": "user", "content": query},
             ],
             "stream": False,
-            "options": {"num_predict": CONFIG.gpu_max_new_tokens},
+            "options": {
+                "num_predict": max_new_tokens or CONFIG.gpu_max_new_tokens
+            },
         }
         t0 = time.perf_counter()
         try:

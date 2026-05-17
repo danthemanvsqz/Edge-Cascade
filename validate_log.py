@@ -23,9 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cascade.feedback import CheckFailure, build_repair_prompt
+from cascade.logfmt import parse_stream
 
 ROOT = Path(__file__).parent
 LOG = ROOT / "runs" / "cascade.log"
+REC = ROOT / "runs" / "cascade.rec"
 DSL = ROOT / "checks.dsl"
 _TS = re.compile(r"^\d\d:\d\d:\d\d ")
 
@@ -54,6 +56,21 @@ def parse_records(text: str) -> list[tuple[str, str]]:
     if collecting:
         records.append((query or "?", "\n".join(buf)))
     return records
+
+
+def load_records() -> list[tuple[str, str]]:
+    """(query, answer) records, preferring the deterministic .rec stream.
+
+    cascade.rec is length-framed (cascade/logfmt.py) so it parses
+    unambiguously even when an answer contains fake timestamps or the record
+    sentinels. Falls back to regex-scraping the legacy human .log only when
+    no structured stream exists (old runs / hand-written logs)."""
+    if REC.exists() and REC.stat().st_size:
+        return [
+            (r.get("query", "?"), r.get("answer", ""))
+            for r in parse_stream(REC.read_text(encoding="utf-8"))
+        ]
+    return parse_records(LOG.read_text(encoding="utf-8"))
 
 
 # ---- answer -> compilable code (repairs truncated fences) -------------------
@@ -321,7 +338,7 @@ def main() -> None:
         recs = [("write a python function to add two numbers",
                  "```python\ndef add_numbers(a, b):\n    return a - b\n```")]
     else:
-        recs = parse_records(LOG.read_text(encoding="utf-8"))
+        recs = load_records()
     print(f"{DSL.name}: {len(blocks)} block(s) | "
           f"{len(recs)} answer(s) | repair={args.repair}\n")
 

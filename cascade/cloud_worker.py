@@ -28,10 +28,39 @@ root cause — don't just restate it.
 reasonable decision and note it."""
 
 
-# claude-sonnet-4-6 list price; ignore cache discounts so the estimate is
-# conservative (slightly high) -- the safe bias for a credit guard.
-_USD_PER_1M_IN = 3.0
-_USD_PER_1M_OUT = 15.0
+# Per-model list price, USD per 1M tokens (input, output). Cache discounts are
+# ignored so the estimate is conservative (slightly high) -- the safe bias for
+# a credit guard. Keyed by model-id PREFIX so version bumps (…-4-6 -> …-4-7)
+# don't silently fall back. ORDER MATTERS: longest/most-specific prefixes first.
+#
+# This replaces the old hardcoded Sonnet constants. The latent bug it fixes:
+# pointing the cloud tier at Opus while the cost math stayed on Sonnet rates
+# made the guard under-count spend ~5x and silently blow cloud_usd_budget.
+# Model id, price, and budget now move together; an UNKNOWN model is costed at
+# the most expensive known rate (see _price_for) so a new model can never be
+# under-counted.
+_PRICES: dict[str, tuple[float, float]] = {
+    "claude-opus":   (15.0, 75.0),
+    "claude-sonnet": (3.0, 15.0),
+    "claude-haiku":  (1.0, 5.0),
+    "claude-3-opus":   (15.0, 75.0),
+    "claude-3-5-sonnet": (3.0, 15.0),
+    "claude-3-5-haiku":  (1.0, 5.0),
+}
+# Conservative fallback for an unrecognised model: the dearest known rate.
+_MAX_PRICE: tuple[float, float] = max(_PRICES.values())
+
+
+def _price_for(model: str) -> tuple[float, float]:
+    """(in, out) USD/1M for `model` by id-prefix; dearest known rate if unknown.
+
+    Unknown -> dearest is deliberate: a credit guard must never under-count,
+    so an unrecognised/new model is billed pessimistically rather than cheaply.
+    """
+    for prefix, price in _PRICES.items():
+        if model.startswith(prefix):
+            return price
+    return _MAX_PRICE
 
 
 @dataclass
@@ -49,8 +78,9 @@ class CloudResult:
         return self.text  # carries the disabled/error message
 
     def est_cost_usd(self) -> float:
-        return (self.input_tokens / 1e6 * _USD_PER_1M_IN
-                + self.output_tokens / 1e6 * _USD_PER_1M_OUT)
+        in_rate, out_rate = _price_for(self.model)
+        return (self.input_tokens / 1e6 * in_rate
+                + self.output_tokens / 1e6 * out_rate)
 
 
 def _compose_user(query: str, prior_attempt: str | None) -> str:
