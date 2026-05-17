@@ -22,6 +22,7 @@ MCP_MODULES = [
     "mcp_servers", "mcp_servers.verify", "mcp_servers._funcverify_child",
     "mcp_servers._demo", "mcp_servers.cloud", "mcp_servers.gpu",
     "mcp_servers.npu", "mcp_servers._rec",
+    "mcp_servers._npu_worker_proc",
 ]
 
 

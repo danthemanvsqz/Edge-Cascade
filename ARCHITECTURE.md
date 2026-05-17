@@ -71,6 +71,17 @@ Engine: OpenVINO GenAI `LLMPipeline`, `qwen2.5-coder-1.5B` channel-wise
 **symmetric INT4** (the only layout the vpux compiler accepts —
 see `edge-inference-setup` memory).
 
+**OpenVINO runs in an isolated worker subprocess, never in this server's
+process** (`mcp_servers/_npu_worker_proc.py`, private pipe). Measured root
+cause: `openvino_genai.LLMPipeline` compile returns in ~3.5 s in any normal
+process — and even with the bare MCP stdio transport up — but **never returns
+when run inside the full FastMCP request-dispatch path**, on any thread
+(process-global; not stdout corruption, not slowness, not the event-loop
+thread, all disproven by probe). The worker process has none of that
+machinery, so the compile completes normally; the server is a thin, bounded
+RPC client that never imports OpenVINO. The worker reserves fd 1 for its JSON
+protocol and routes all native/`print()` output to stderr.
+
 | Tool | Signature | Purpose |
 |------|-----------|---------|
 | `route` | `(prompt) -> {difficulty: float, category: str, latency_s}` | The cheap up-front classifier. Drives all routing. |
