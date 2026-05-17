@@ -10,9 +10,12 @@ funnelling them into a single file would interleave partial writes and
 corrupt records (the grammar tolerates a truncated tail, not interleaving).
 Per-server files keep each stream single-writer and append-only.
 
-Use via the `recorded` decorator, applied UNDER @mcp.tool() so it wraps the
-real tool. functools.wraps keeps the wrapper transparent to FastMCP's
-signature/type-hint introspection.
+`make_recorder(server)` returns an `emit(tool, fields)` closure -- the append
+path and the seq counter live in the closure (no object, no manual counter:
+the seq is an `itertools.count()` generator). Wrap a tool with the `recorded`
+decorator, applied UNDER @mcp.tool() so it wraps the real tool;
+functools.wraps keeps the wrapper transparent to FastMCP's signature/type
+introspection.
 """
 from __future__ import annotations
 
@@ -20,6 +23,8 @@ import functools
 import json
 import sys
 import time
+from collections.abc import Callable
+from itertools import count
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +32,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from cascade.logfmt import dump_record  # noqa: E402
+
+Emit = Callable[[str, dict[str, str]], None]
 
 
 def _s(obj: object) -> str:
@@ -37,24 +44,29 @@ def _s(obj: object) -> str:
         return repr(obj)
 
 
-class Recorder:
-    def __init__(self, server: str) -> None:
-        self.server = server
-        self.path = ROOT / "runs" / f"{server}.rec"
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._seq = 0
+def make_recorder(server: str) -> Emit:
+    """Return an `emit(tool, fields)` that appends one logfmt record per call.
 
-    def emit(self, tool: str, fields: dict[str, str]) -> None:
+    State -- the append path and the monotonic seq -- lives in the closure,
+    not an object. The seq is `itertools.count()`: a lazy generator, so there
+    is no counter to read-modify-write.
+    """
+    path = ROOT / "runs" / f"{server}.rec"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seq = count()
+
+    def emit(tool: str, fields: dict[str, str]) -> None:
         rec = dump_record(
-            self._seq, {"server": self.server, "tool": tool, **fields}
+            next(seq), {"server": server, "tool": tool, **fields}
         )
         # Single write of the whole record: append-only, single-writer.
-        with open(self.path, "a", encoding="utf-8") as fh:
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(rec)
-        self._seq += 1
+
+    return emit
 
 
-def recorded(rec: Recorder):
+def recorded(emit: Emit):
     """Decorator: emit a logfmt record for the wrapped tool call (args,
     result, latency, ok). Errors are recorded then re-raised so FastMCP still
     surfaces them."""
@@ -66,14 +78,14 @@ def recorded(rec: Recorder):
             try:
                 result = fn(*args, **kwargs)
             except Exception as e:  # noqa: BLE001 - record then re-raise
-                rec.emit(fn.__name__, {
+                emit(fn.__name__, {
                     "args": _s(kwargs or args),
                     "ok": "false",
                     "error": f"{type(e).__name__}: {e}",
                     "latency_ms": f"{(time.perf_counter() - t0) * 1000:.1f}",
                 })
                 raise
-            rec.emit(fn.__name__, {
+            emit(fn.__name__, {
                 "args": _s(kwargs or args),
                 "ok": "true",
                 "result": _s(result),

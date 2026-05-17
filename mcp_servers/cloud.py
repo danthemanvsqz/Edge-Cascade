@@ -20,22 +20,22 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from ._rec import Recorder, recorded
+from ._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cascade.cloud_worker import CloudWorker  # noqa: E402
+from cascade.cloud_worker import est_cost_usd, make_cloud_worker  # noqa: E402
 from cascade.config import CONFIG  # noqa: E402
 
 mcp = FastMCP("edge-cloud")
-_REC = Recorder("edge-cloud")
+_REC = make_recorder("edge-cloud")
 
 # Paid tier ON here by design: this server *is* Tier 4. The credit guard +
 # explicit deadlock-only invocation by the skill are the safety, not an
 # off-by-default flag. Without a key CloudWorker still safely no-ops.
-_worker = CloudWorker(enabled=True)
+_worker = make_cloud_worker(enabled=True)
 
 # Per-process credit-guard accumulator (== one pipeline run).
 _calls_used = 0
@@ -63,7 +63,7 @@ def _budget_state() -> dict:
         "usd_budget": CONFIG.cloud_usd_budget,
         "guard_tripped": tripped,
         "worker_enabled": _worker.enabled,
-        "status": _worker.status(),
+        "status": _worker.status,
         # allowed == a paid call would actually be attempted right now.
         "allowed": _worker.enabled and not tripped,
     }
@@ -133,7 +133,7 @@ def escalate(
                       f"{verifier_reason}]"
 
     res = _worker.generate(user_query, prior_attempt=prior)
-    cost = res.est_cost_usd()
+    cost = est_cost_usd(res)
     _calls_used += 1
     _usd_spent += cost
     return {

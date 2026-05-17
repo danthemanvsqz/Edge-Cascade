@@ -3,6 +3,13 @@
 Two roles in the cascade:
   route(query)  -> difficulty score + category, so the orchestrator can pick a tier
   draft(query)  -> a fast, cheap answer used directly for trivial queries
+
+No worker object: the compiled pipeline is real, long-lived state, but it is
+built once and reused for the process with no `with` scope -- so it is closed
+over by `route`/`draft` closures, not wrapped in a class. `make_npu_worker()`
+does the (eager, ~9-20s) compile and binds them. `openvino_genai` is
+lazy-loaded (only inside the compile/gen path), so this module still imports
+without the optional `accel` extra.
 """
 from __future__ import annotations
 
@@ -11,7 +18,9 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 from .config import CONFIG
 
@@ -20,8 +29,8 @@ _OV = None
 
 def _ov():
     """Lazy-load openvino_genai so the module imports without the (heavy,
-    optional) `accel` extra -- the import only happens when an NPUWorker is
-    actually constructed/used."""
+    optional) `accel` extra -- the import only happens when a worker is
+    actually compiled/used."""
     global _OV
     if _OV is None:
         try:
@@ -73,79 +82,104 @@ class DraftResult:
     device: str
 
 
-class NPUWorker:
-    def __init__(self) -> None:
-        self.device = self._compile()
-
-    @staticmethod
-    def _npu_can_compile() -> bool:
-        # The NPU (vpux) compiler can hard-abort the process (LLVM ERROR /
-        # non-zero exit) rather than raise a catchable exception, so probe it
-        # in a throwaway subprocess before trusting it in-process.
-        code = (
-            "import openvino_genai as g;"
-            f"g.LLMPipeline(r'{CONFIG.npu_model_dir}','NPU');"
-            "print('ok')"
+def _npu_can_compile() -> bool:
+    # The NPU (vpux) compiler can hard-abort the process (LLVM ERROR /
+    # non-zero exit) rather than raise a catchable exception, so probe it
+    # in a throwaway subprocess before trusting it in-process.
+    code = (
+        "import openvino_genai as g;"
+        f"g.LLMPipeline(r'{CONFIG.npu_model_dir}','NPU');"
+        "print('ok')"
+    )
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=240,
         )
-        try:
-            r = subprocess.run(
-                [sys.executable, "-c", code],
-                capture_output=True,
-                text=True,
-                timeout=240,
+        return r.returncode == 0 and "ok" in r.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _compile() -> tuple[str, object]:
+    """Walk CONFIG.npu_device_order (NPU probed in a subprocess first); return
+    (device, pipe) for the first that loads, else raise."""
+    last_err: Exception | None = None
+    for dev in CONFIG.npu_device_order:
+        if dev == "NPU" and not _npu_can_compile():
+            print(
+                "[npu_worker] NPU rejected this model (vpux compiler) -- "
+                "falling back to next device"
             )
-            return r.returncode == 0 and "ok" in r.stdout
-        except (subprocess.TimeoutExpired, OSError):
-            return False
+            continue
+        try:
+            pipe = _ov().LLMPipeline(CONFIG.npu_model_dir, dev)
+            return dev, pipe
+        except Exception as e:
+            last_err = e
+            print(f"[npu_worker] device {dev} unavailable: {e}")
+    raise RuntimeError(
+        f"No OpenVINO device could load the Tier-1 model: {last_err}"
+    )
 
-    def _compile(self) -> str:
-        last_err: Exception | None = None
-        for dev in CONFIG.npu_device_order:
-            if dev == "NPU" and not self._npu_can_compile():
-                print(
-                    "[npu_worker] NPU rejected this model (vpux compiler) -- "
-                    "falling back to next device"
-                )
-                continue
-            try:
-                self._pipe = _ov().LLMPipeline(CONFIG.npu_model_dir, dev)
-                return dev
-            except Exception as e:
-                last_err = e
-                print(f"[npu_worker] device {dev} unavailable: {e}")
-        raise RuntimeError(
-            f"No OpenVINO device could load the Tier-1 model: {last_err}"
-        )
 
-    def _gen(self, system: str, user: str, max_new_tokens: int) -> tuple[str, float]:
-        cfg = _ov().GenerationConfig()
-        cfg.max_new_tokens = max_new_tokens
-        cfg.stop_strings = {"<|im_end|>"}
-        cfg.include_stop_str_in_output = False
-        prompt = _CHAT.format(system=system, user=user)
-        t0 = time.perf_counter()
-        out = self._pipe.generate(prompt, cfg)
-        return str(out).strip(), time.perf_counter() - t0
+def _gen(
+    pipe, system: str, user: str, max_new_tokens: int
+) -> tuple[str, float]:
+    cfg = _ov().GenerationConfig()
+    cfg.max_new_tokens = max_new_tokens
+    cfg.stop_strings = {"<|im_end|>"}
+    cfg.include_stop_str_in_output = False
+    prompt = _CHAT.format(system=system, user=user)
+    t0 = time.perf_counter()
+    out = pipe.generate(prompt, cfg)
+    return str(out).strip(), time.perf_counter() - t0
 
-    def route(self, query: str) -> RouteResult:
-        raw, dt = self._gen(_ROUTER_SYSTEM, query, max_new_tokens=48)
-        difficulty, category = 0.5, "standard"
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            try:
-                obj = json.loads(m.group(0))
-                difficulty = float(obj.get("difficulty", 0.5))
-                category = str(obj.get("category", "standard"))
-            except (ValueError, TypeError):
-                pass
-        difficulty = min(1.0, max(0.0, difficulty))
-        return RouteResult(difficulty, category, dt, self.device)
 
-    def draft(
-        self, query: str, max_new_tokens: int | None = None
-    ) -> DraftResult:
-        text, dt = self._gen(
-            _DRAFT_SYSTEM, query,
-            max_new_tokens=max_new_tokens or CONFIG.npu_max_new_tokens,
-        )
-        return DraftResult(text, dt, self.device)
+def _route(pipe, device: str, query: str) -> RouteResult:
+    raw, dt = _gen(pipe, _ROUTER_SYSTEM, query, max_new_tokens=48)
+    difficulty, category = 0.5, "standard"
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            difficulty = float(obj.get("difficulty", 0.5))
+            category = str(obj.get("category", "standard"))
+        except (ValueError, TypeError):
+            pass
+    difficulty = min(1.0, max(0.0, difficulty))
+    return RouteResult(difficulty, category, dt, device)
+
+
+def _draft(
+    pipe, device: str, query: str, max_new_tokens: int | None = None
+) -> DraftResult:
+    text, dt = _gen(
+        pipe, _DRAFT_SYSTEM, query,
+        max_new_tokens=max_new_tokens or CONFIG.npu_max_new_tokens,
+    )
+    return DraftResult(text, dt, device)
+
+
+@dataclass(frozen=True)
+class NPUWorker:
+    """Immutable Tier-1 handle: the loaded device + bound route/draft closures
+    over the compiled pipeline. Pure data -- no behavior on the object."""
+
+    device: str
+    route: Callable[[str], RouteResult]
+    draft: Callable[..., DraftResult]
+
+
+def make_npu_worker() -> NPUWorker:
+    """Compile Tier-1 (NPU probe -> iGPU -> CPU) and bind route/draft over the
+    loaded pipeline. Eager compile (~9-20s); callers print 'loading' around
+    it. The module still imports without `accel` (openvino_genai is lazy)."""
+    device, pipe = _compile()
+    return NPUWorker(
+        device=device,
+        route=partial(_route, pipe, device),
+        draft=partial(_draft, pipe, device),
+    )

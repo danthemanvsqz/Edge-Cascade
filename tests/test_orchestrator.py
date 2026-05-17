@@ -4,7 +4,7 @@ decision tree needs live workers and is covered by the live smoke runs, not
 by simulated mocks."""
 import logging
 
-from cascade.orchestrator import CascadeResult, Hop, Orchestrator, processor
+from cascade.orchestrator import CascadeResult, Hop, build_logger, processor
 
 
 def test_processor_maps_every_device():
@@ -25,13 +25,13 @@ def test_trace_dataclasses():
 
 def test_build_logger_tees_to_file_and_stdout(tmp_path):
     path = tmp_path / "c.log"
-    lg = Orchestrator._build_logger(path, verbose=True)
+    lg = build_logger(path, verbose=True)
     assert lg.propagate is False
     kinds = sorted(type(h).__name__ for h in lg.handlers)
     assert kinds == ["FileHandler", "StreamHandler"]   # the tee
     lg.info("hello")
     assert "hello" in path.read_text(encoding="utf-8")
 
-    quiet = Orchestrator._build_logger(path, verbose=False)
+    quiet = build_logger(path, verbose=False)
     assert [type(h).__name__ for h in quiet.handlers] == ["FileHandler"]
     assert logging.getLogger("cascade") is quiet       # named, reused

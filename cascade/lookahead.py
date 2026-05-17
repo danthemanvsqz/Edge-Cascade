@@ -12,6 +12,12 @@ achievable analog with the same components is *request-level* speculation:
 
 Agreement is measured (difflib ratio of NPU draft vs GPU's authoritative
 answer); the final answer is gated by the existing code verifier.
+
+There is no controller *object*. The state that genuinely evolves across the
+task stream -- the trust window, the checkpoint counter, the credit-guard
+accumulators -- lives in the frame of the `_iter_steps` GENERATOR (state
+without an object; the natural Python idiom for per-stream iteration state).
+The logger's lifetime is managed by the `_run_logger` context manager.
 """
 from __future__ import annotations
 
@@ -19,13 +25,15 @@ import difflib
 import logging
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .cloud_worker import CloudWorker
+from .cloud_worker import est_cost_usd, make_cloud_worker
 from .config import CONFIG
-from .gpu_worker import GPUWorker
-from .npu_worker import NPUWorker
+from .gpu_worker import make_gpu_worker
+from .npu_worker import make_npu_worker
 from .verifier import verify
 
 _VERIFY_SYS = (
@@ -50,12 +58,13 @@ class Step:
 class LookAheadResult:
     steps: list[Step] = field(default_factory=list)
 
-    @property
-    def speedup_note(self) -> str:
-        solo = sum(s.mode == "npu-solo" for s in self.steps)
-        n = len(self.steps) or 1
-        return (f"{solo}/{n} tasks answered NPU-solo "
-                f"(GPU calls skipped: {solo})")
+
+def speedup_note(result: LookAheadResult) -> str:
+    """How many tasks the NPU answered solo. Was LookAheadResult.speedup_note
+    -- derivation moved off the dataclass to a function."""
+    solo = sum(s.mode == "npu-solo" for s in result.steps)
+    n = len(result.steps) or 1
+    return f"{solo}/{n} tasks answered NPU-solo (GPU calls skipped: {solo})"
 
 
 def _agreement(a: str, b: str) -> float:
@@ -64,7 +73,10 @@ def _agreement(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
 
 
-def _logger() -> logging.Logger:
+@contextmanager
+def _run_logger() -> Iterator[logging.Logger]:
+    """Tee logger for a run; handlers are closed + detached on exit (the
+    lifetime the old class left unmanaged)."""
     path = Path(CONFIG.log_path).parent / "lookahead.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     lg = logging.getLogger("lookahead")
@@ -77,109 +89,127 @@ def _logger() -> logging.Logger:
     ch = logging.StreamHandler(sys.stdout)
     ch.setFormatter(logging.Formatter("%(message)s"))
     lg.addHandler(ch)
-    return lg
+    try:
+        yield lg
+    finally:
+        for h in list(lg.handlers):
+            h.close()
+            lg.removeHandler(h)
 
 
-class LookAhead:
-    def __init__(self, accept_threshold: float = 0.55,
-                 trust_window: int = 2, checkpoint_every: int = 3,
-                 enable_cloud: bool = False) -> None:
-        self.t = accept_threshold
-        self.win = trust_window
-        self.ckpt = checkpoint_every
-        self.trust_left = 0
-        self.since_ckpt = 0
-        self.log = _logger()
-        self.log.info("=== look-ahead started ===")
-        self.npu = NPUWorker()
-        self.gpu = GPUWorker()
-        self.gpu_ok = self.gpu.available()
-        self.cloud = CloudWorker(enabled=enable_cloud or CONFIG.enable_cloud)
-        # Credit guard state (per LookAhead instance / run).
-        self._cloud_calls = 0
-        self._cloud_usd = 0.0
-        self.log.info(f"NPU={self.npu.device} | GPU available={self.gpu_ok} | "
-                      f"accept>={self.t} trust_window={self.win} "
-                      f"checkpoint_every={self.ckpt}")
-        self.log.info(
-            f"cloud: {'ON' if self.cloud.enabled else 'OFF'} | credit guard: "
-            f"<= {CONFIG.cloud_max_calls} calls and "
-            f"<= ${CONFIG.cloud_usd_budget:.2f}/run"
-        )
+def _cloud_blocked(cloud, calls: int, usd: float) -> str | None:
+    """Reason string if the credit guard forbids a cloud call, else None.
+    Pure -- derived only from its args."""
+    if not cloud.enabled:
+        return "cloud disabled (gated off)"
+    if calls >= CONFIG.cloud_max_calls:
+        return f"call cap reached ({calls}/{CONFIG.cloud_max_calls})"
+    if usd >= CONFIG.cloud_usd_budget:
+        return (f"USD budget reached "
+                f"(${usd:.3f}/${CONFIG.cloud_usd_budget:.2f})")
+    return None
 
-    def _cloud_blocked(self) -> str | None:
-        """Return a reason string if the credit guard forbids a cloud call."""
-        if not self.cloud.enabled:
-            return "cloud disabled (gated off)"
-        if self._cloud_calls >= CONFIG.cloud_max_calls:
-            return f"call cap reached ({self._cloud_calls}/{CONFIG.cloud_max_calls})"
-        if self._cloud_usd >= CONFIG.cloud_usd_budget:
-            return (f"USD budget reached "
-                    f"(${self._cloud_usd:.3f}/${CONFIG.cloud_usd_budget:.2f})")
-        return None
 
-    def step(self, task: str) -> Step:
+def _iter_steps(
+    tasks: list[str], *, npu, gpu, gpu_ok: bool, cloud,
+    accept: float, win: int, ckpt: int, log: logging.Logger,
+) -> Iterator[Step]:
+    """Yield one Step per task. The controller state (trust window, checkpoint
+    counter, credit-guard accumulators) is local to this generator's frame --
+    it evolves across the stream without any object."""
+    trust_left = 0
+    since_ckpt = 0
+    cloud_calls = 0
+    cloud_usd = 0.0
+
+    for task in tasks:
         t0 = time.perf_counter()
-        self.log.info(f"---- TASK: {task}")
+        log.info(f"---- TASK: {task}")
 
-        draft = self.npu.draft(task, max_new_tokens=CONFIG.npu_repair_max_tokens)
-        self.log.info(f"  NPU drafted on {draft.device} ({draft.latency_s:.2f}s)")
+        draft = npu.draft(task, max_new_tokens=CONFIG.npu_repair_max_tokens)
+        log.info(f"  NPU drafted on {draft.device} ({draft.latency_s:.2f}s)")
 
-        forced = self.since_ckpt >= self.ckpt
-        if self.trust_left > 0 and not forced and self.gpu_ok:
-            self.trust_left -= 1
-            self.since_ckpt += 1
+        forced = since_ckpt >= ckpt
+        if trust_left > 0 and not forced and gpu_ok:
+            trust_left -= 1
+            since_ckpt += 1
             answer, mode, who, agree = draft.text, "npu-solo", "npu", 1.0
-            self.log.info(f"  TRUST: NPU-solo (GPU skipped), "
-                          f"trust_left={self.trust_left}")
+            log.info(f"  TRUST: NPU-solo (GPU skipped), "
+                     f"trust_left={trust_left}")
         else:
-            if not self.gpu_ok:
+            if not gpu_ok:
                 answer, mode, who, agree = draft.text, "npu-solo", "npu", 0.0
-                self.log.info("  GPU unavailable -> NPU answer (unverified)")
+                log.info("  GPU unavailable -> NPU answer (unverified)")
             else:
                 tag = "forced checkpoint" if forced else "verify"
-                self.since_ckpt = 0
+                since_ckpt = 0
                 prompt = (f"# TASK\n{task}\n\n# DRAFT ANSWER\n{draft.text}\n\n"
                           f"# INSTRUCTION\n{_VERIFY_SYS}")
-                g = self.gpu.generate(prompt)
+                g = gpu.generate(prompt)
                 agree = _agreement(draft.text, g.text)
                 answer, mode, who = g.text, "verified", "gpu"
-                self.trust_left = self.win if agree >= self.t else 0
-                self.log.info(
+                trust_left = win if agree >= accept else 0
+                log.info(
                     f"  GPU {tag} on NVIDIA ({g.latency_s:.2f}s) | "
                     f"agreement={agree:.2f} -> "
-                    f"{'TRUST granted' if agree >= self.t else 'no trust'} "
-                    f"(trust_left={self.trust_left})")
+                    f"{'TRUST granted' if agree >= accept else 'no trust'} "
+                    f"(trust_left={trust_left})")
 
         ok = verify(answer).passed
         if not ok:
-            self.trust_left = 0  # a local miss -> don't trust NPU next round
-            blocked = self._cloud_blocked()
+            trust_left = 0  # a local miss -> don't trust NPU next round
+            blocked = _cloud_blocked(cloud, cloud_calls, cloud_usd)
             if blocked is None:
-                self.log.info("  verifier FAIL -> escalating to CLOUD (paid)")
-                c = self.cloud.generate(task, prior_attempt=answer)
-                self._cloud_calls += 1
-                self._cloud_usd += c.est_cost_usd()
+                log.info("  verifier FAIL -> escalating to CLOUD (paid)")
+                c = cloud.generate(task, prior_attempt=answer)
+                cloud_calls += 1
+                cloud_usd += est_cost_usd(c)
                 if c.available:
                     answer, who, mode = c.text, "cloud", "cloud-escalated"
                     ok = verify(answer).passed
-                self.log.info(
+                log.info(
                     f"  CLOUD {c.model} ({c.latency_s:.2f}s) "
-                    f"~${c.est_cost_usd():.4f} | verifier="
+                    f"~${est_cost_usd(c):.4f} | verifier="
                     f"{'PASS' if ok else 'FAIL'} | run total: "
-                    f"{self._cloud_calls} call(s) ~${self._cloud_usd:.4f}")
+                    f"{cloud_calls} call(s) ~${cloud_usd:.4f}")
             else:
-                self.log.info(f"  verifier FAIL -> NO escalation: {blocked} "
-                              f"(returning unverified local answer)")
+                log.info(f"  verifier FAIL -> NO escalation: {blocked} "
+                         f"(returning unverified local answer)")
 
         dt = time.perf_counter() - t0
-        self.log.info(f"  => {who.upper()} answered | verifier={'PASS' if ok else 'FAIL'}"
-                      f" | {dt:.2f}s")
-        return Step(task, mode, who, agree, dt, ok, self.trust_left)
+        log.info(
+            f"  => {who.upper()} answered | "
+            f"verifier={'PASS' if ok else 'FAIL'} | {dt:.2f}s"
+        )
+        yield Step(task, mode, who, agree, dt, ok, trust_left)
 
-    def run(self, tasks: list[str]) -> LookAheadResult:
-        res = LookAheadResult()
-        for tk in tasks:
-            res.steps.append(self.step(tk))
-        self.log.info("---- summary: " + res.speedup_note)
-        return res
+
+def run_lookahead(
+    tasks: list[str], *, accept_threshold: float = 0.55,
+    trust_window: int = 2, checkpoint_every: int = 3,
+    enable_cloud: bool = False,
+) -> LookAheadResult:
+    """Run the speculative look-ahead pipeline over `tasks`."""
+    with _run_logger() as log:
+        log.info("=== look-ahead started ===")
+        npu = make_npu_worker()
+        gpu = make_gpu_worker()
+        gpu_ok = gpu.available()
+        cloud = make_cloud_worker(
+            enabled=enable_cloud or CONFIG.enable_cloud
+        )
+        log.info(f"NPU={npu.device} | GPU available={gpu_ok} | "
+                 f"accept>={accept_threshold} trust_window={trust_window} "
+                 f"checkpoint_every={checkpoint_every}")
+        log.info(
+            f"cloud: {'ON' if cloud.enabled else 'OFF'} | credit guard: "
+            f"<= {CONFIG.cloud_max_calls} calls and "
+            f"<= ${CONFIG.cloud_usd_budget:.2f}/run"
+        )
+        result = LookAheadResult(list(_iter_steps(
+            tasks, npu=npu, gpu=gpu, gpu_ok=gpu_ok, cloud=cloud,
+            accept=accept_threshold, win=trust_window,
+            ckpt=checkpoint_every, log=log,
+        )))
+        log.info("---- summary: " + speedup_note(result))
+        return result

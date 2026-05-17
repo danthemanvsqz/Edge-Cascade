@@ -3,11 +3,19 @@
 Invoked only for queries the local NPU/GPU tiers couldn't handle. The API key
 is read from ANTHROPIC_API_KEY (env or .env); if it's absent the tier no-ops
 so the NPU->GPU cascade still works.
+
+No worker *object*: the tier is set-once config with no mutable state, so it
+is a closure. `make_cloud_worker()` returns an immutable `CloudWorker` value
+object carrying the resolved config plus a bound `generate` closure. The
+network call lives in `_generate`, which takes the client as a parameter --
+pure w.r.t. the network, so tests inject a stub instead of monkeypatching.
 """
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 from .config import CONFIG
 
@@ -72,15 +80,20 @@ class CloudResult:
     input_tokens: int = 0
     output_tokens: int = 0
 
-    def reason_note(self) -> str:
-        if self.available:
-            return "ok"
-        return self.text  # carries the disabled/error message
 
-    def est_cost_usd(self) -> float:
-        in_rate, out_rate = _price_for(self.model)
-        return (self.input_tokens / 1e6 * in_rate
-                + self.output_tokens / 1e6 * out_rate)
+def reason_note(result: CloudResult) -> str:
+    """'ok' on success; otherwise the disabled/error message it carries.
+    Was CloudResult.reason_note() -- behavior on data moved to a function."""
+    if result.available:
+        return "ok"
+    return result.text
+
+
+def est_cost_usd(result: CloudResult) -> float:
+    """Conservative USD estimate for one result. Was CloudResult.est_cost_usd()."""
+    in_rate, out_rate = _price_for(result.model)
+    return (result.input_tokens / 1e6 * in_rate
+            + result.output_tokens / 1e6 * out_rate)
 
 
 def _compose_user(query: str, prior_attempt: str | None) -> str:
@@ -94,69 +107,91 @@ def _compose_user(query: str, prior_attempt: str | None) -> str:
     )
 
 
+def cloud_status(*, enabled: bool, has_key: bool, model: str) -> str:
+    """Human-readable tier state. Pure -- derived only from its args."""
+    if enabled:
+        return f"enabled ({model})"
+    if has_key:
+        return "disabled (key present; pass --cloud / enable_cloud=True)"
+    return "disabled (no ANTHROPIC_API_KEY)"
+
+
+def _generate(
+    client, model: str, max_tokens: int,
+    query: str, prior_attempt: str | None = None,
+) -> CloudResult:
+    """The actual API call + parse. `client` is injected (a real
+    anthropic.Anthropic in production, a stub in tests), so this is pure with
+    respect to the network and needs no monkeypatching to test."""
+    import anthropic
+
+    user_content = _compose_user(query, prior_attempt)
+
+    t0 = time.perf_counter()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "high"},
+            system=[
+                {
+                    "type": "text",
+                    "text": _SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_content}],
+        ) as stream:
+            msg = stream.get_final_message()
+    except anthropic.APIError as e:
+        return CloudResult(
+            f"[cloud error: {e}]", time.perf_counter() - t0, model, False
+        )
+
+    dt = time.perf_counter() - t0
+    text = "".join(
+        b.text for b in msg.content if b.type == "text"
+    ).strip()
+    u = getattr(msg, "usage", None)
+    in_tok = (getattr(u, "input_tokens", 0)
+              + getattr(u, "cache_read_input_tokens", 0)
+              + getattr(u, "cache_creation_input_tokens", 0)) if u else 0
+    out_tok = getattr(u, "output_tokens", 0) if u else 0
+    return CloudResult(text, dt, model, True, in_tok, out_tok)
+
+
+@dataclass(frozen=True)
 class CloudWorker:
-    def __init__(self, enabled: bool = False) -> None:
-        # PAID tier: requires the explicit opt-in AND a key. Neither alone is
-        # enough — a key sitting in .env must not silently incur cost.
-        self._has_key = bool(CONFIG.anthropic_api_key)
-        self._enabled = enabled and self._has_key
-        self._model = CONFIG.cloud_model
-        self._client = None
-        if self._enabled:
-            import anthropic
+    """Immutable Tier-3 handle: resolved config + a bound `generate` closure.
+    Pure data -- `status` is a precomputed string, `generate` a closure."""
 
-            self._client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+    enabled: bool
+    model: str
+    status: str
+    generate: Callable[..., CloudResult]
 
-    def status(self) -> str:
-        if self._enabled:
-            return f"enabled ({self._model})"
-        if self._has_key:
-            return "disabled (key present; pass --cloud / enable_cloud=True)"
-        return "disabled (no ANTHROPIC_API_KEY)"
 
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
+def make_cloud_worker(enabled: bool = False) -> CloudWorker:
+    """Resolve the paid tier. PAID: requires the explicit opt-in AND a key --
+    neither alone is enough (a key sitting in .env must not silently spend)."""
+    has_key = bool(CONFIG.anthropic_api_key)
+    is_on = enabled and has_key
+    model = CONFIG.cloud_model
+    status = cloud_status(enabled=is_on, has_key=has_key, model=model)
 
-    def generate(self, query: str, prior_attempt: str | None = None) -> CloudResult:
-        if not self._enabled:
+    if not is_on:
+        def generate(
+            query: str, prior_attempt: str | None = None
+        ) -> CloudResult:
             return CloudResult(
-                "[paid cloud tier disabled]", 0.0, self._model, False
+                "[paid cloud tier disabled]", 0.0, model, False
             )
 
-        import anthropic
+        return CloudWorker(False, model, status, generate)
 
-        user_content = _compose_user(query, prior_attempt)
+    import anthropic
 
-        t0 = time.perf_counter()
-        try:
-            with self._client.messages.stream(
-                model=self._model,
-                max_tokens=CONFIG.cloud_max_tokens,
-                thinking={"type": "adaptive"},
-                output_config={"effort": "high"},
-                system=[
-                    {
-                        "type": "text",
-                        "text": _SYSTEM,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=[{"role": "user", "content": user_content}],
-            ) as stream:
-                msg = stream.get_final_message()
-        except anthropic.APIError as e:
-            return CloudResult(
-                f"[cloud error: {e}]", time.perf_counter() - t0, self._model, False
-            )
-
-        dt = time.perf_counter() - t0
-        text = "".join(
-            b.text for b in msg.content if b.type == "text"
-        ).strip()
-        u = getattr(msg, "usage", None)
-        in_tok = (getattr(u, "input_tokens", 0)
-                  + getattr(u, "cache_read_input_tokens", 0)
-                  + getattr(u, "cache_creation_input_tokens", 0)) if u else 0
-        out_tok = getattr(u, "output_tokens", 0) if u else 0
-        return CloudResult(text, dt, self._model, True, in_tok, out_tok)
+    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+    generate = partial(_generate, client, model, CONFIG.cloud_max_tokens)
+    return CloudWorker(True, model, status, generate)

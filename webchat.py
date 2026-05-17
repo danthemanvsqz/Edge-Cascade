@@ -16,8 +16,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from cascade.gpu_worker import GPUWorker
-from cascade.npu_worker import NPUWorker
+from cascade.gpu_worker import make_gpu_worker
+from cascade.npu_worker import make_npu_worker
 
 _NPU_LOCK = threading.Lock()  # openvino pipeline is not reentrant
 _W: dict = {}
@@ -26,7 +26,7 @@ _W: dict = {}
 def _workers() -> dict:
     """Lazily build the workers once (keeps `import webchat` side-effect free)."""
     if not _W:
-        npu, gpu = NPUWorker(), GPUWorker()
+        npu, gpu = make_npu_worker(), make_gpu_worker()
         _W.update(npu=npu, gpu=gpu, gpu_ok=gpu.available())
     return _W
 
@@ -102,7 +102,7 @@ class H(BaseHTTPRequestHandler):
                 "npu_device": w["npu"].device,
                 "npu_model": "qwen2.5-coder-1.5b",
                 "gpu_ok": w["gpu_ok"],
-                "gpu_model": w["gpu"]._model if w["gpu_ok"] else "",
+                "gpu_model": w["gpu"].model if w["gpu_ok"] else "",
             }))
         else:
             self._send(200, PAGE, "text/html; charset=utf-8")

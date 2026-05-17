@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from cascade.lookahead import LookAhead
+from cascade.lookahead import run_lookahead, speedup_note
 
 _DEFAULT = [
     "write a python function add(a, b) that returns their sum",
@@ -33,8 +33,7 @@ def main() -> None:
     ap.add_argument("task", nargs="*", help="tasks; omit for the built-in set")
     args = ap.parse_args()
     tasks = args.task or _DEFAULT
-    la = LookAhead(enable_cloud=args.cloud)
-    res = la.run(tasks)
+    res = run_lookahead(tasks, enable_cloud=args.cloud)
     print("\n--- look-ahead summary ---")
     print(f"{'#':<2} {'mode':<9} {'by':<3} {'agree':>5} {'verif':<5} "
           f"{'trust':>5}  task")
@@ -42,7 +41,7 @@ def main() -> None:
         print(f"{i:<2} {s.mode:<9} {s.answerer:<3} {s.agreement:>5.2f} "
               f"{'PASS' if s.ok else 'FAIL':<5} {s.trust_left:>5}  "
               f"{s.task[:46]}")
-    print(res.speedup_note)
+    print(speedup_note(res))
 
 
 if __name__ == "__main__":

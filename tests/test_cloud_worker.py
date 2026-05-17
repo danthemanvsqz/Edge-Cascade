@@ -1,6 +1,7 @@
 """cloud_worker reaches true 100% with a stubbed Anthropic client -- no
-network, no spend. CONFIG is swapped (via pytest-mock) for a namespace so the
-credit/cost and gating logic can be driven directly."""
+network, no spend. `_generate` takes the client as a parameter, so the stub
+is injected directly (no monkeypatching). CONFIG is swapped (via pytest-mock)
+for a namespace so the gating/status logic can be driven directly."""
 import os
 import types
 
@@ -11,9 +12,12 @@ import pytest
 from cascade import cloud_worker
 from cascade.cloud_worker import (
     CloudResult,
-    CloudWorker,
     _compose_user,
+    _generate,
     _price_for,
+    est_cost_usd,
+    make_cloud_worker,
+    reason_note,
 )
 
 
@@ -60,7 +64,7 @@ class _Client:
         self.messages = _Messages(msg, exc)
 
 
-# --- CloudResult -----------------------------------------------------------
+# --- CloudResult: behavior moved off the dataclass to functions ------------
 
 @pytest.mark.parametrize(
     "model, in_rate, out_rate",
@@ -81,15 +85,15 @@ def test_price_for_table_and_conservative_fallback(model, in_rate, out_rate):
 def test_reason_note_and_cost():
     # Known model: priced at its own rate.
     ok = CloudResult("txt", 1.0, "claude-sonnet-4-6", True, 1_000_000, 1_000_000)
-    assert ok.reason_note() == "ok"
-    assert ok.est_cost_usd() == pytest.approx(18.0)        # 3 + 15
+    assert reason_note(ok) == "ok"
+    assert est_cost_usd(ok) == pytest.approx(18.0)         # 3 + 15
     # Unknown model "m": the latent-bug fix -- costed at the dearest known
     # (Opus) rate so the credit guard can never under-count a new model.
     unknown = CloudResult("txt", 1.0, "m", True, 1_000_000, 1_000_000)
-    assert unknown.est_cost_usd() == pytest.approx(90.0)   # 15 + 75
+    assert est_cost_usd(unknown) == pytest.approx(90.0)    # 15 + 75
     bad = CloudResult("boom", 0.0, "m", False)
-    assert bad.reason_note() == "boom"
-    assert bad.est_cost_usd() == 0.0
+    assert reason_note(bad) == "boom"
+    assert est_cost_usd(bad) == 0.0
 
 
 def test_compose_user_branches():
@@ -99,62 +103,60 @@ def test_compose_user_branches():
     assert "q" in out and "failed verification" in out and "PRIOR" in out
 
 
-# --- gating / status -------------------------------------------------------
+# --- gating / status (make_cloud_worker) -----------------------------------
 
 def test_no_key_disables_and_generate_noops(mocker):
     mocker.patch.object(cloud_worker, "CONFIG", _cfg(key=None))
-    w = CloudWorker(enabled=True)
+    w = make_cloud_worker(enabled=True)
     assert w.enabled is False
-    assert w.status() == "disabled (no ANTHROPIC_API_KEY)"
+    assert w.status == "disabled (no ANTHROPIC_API_KEY)"
     r = w.generate("q")
     assert r.available is False and r.text == "[paid cloud tier disabled]"
 
 
 def test_key_present_but_not_enabled(mocker):
     mocker.patch.object(cloud_worker, "CONFIG", _cfg(key="k"))
-    w = CloudWorker(enabled=False)
+    w = make_cloud_worker(enabled=False)
     assert w.enabled is False
-    assert w.status() == ("disabled (key present; pass --cloud / "
-                          "enable_cloud=True)")
+    assert w.status == ("disabled (key present; pass --cloud / "
+                        "enable_cloud=True)")
 
 
-def _enabled_worker(mocker):
+def test_enabled_construction(mocker):
     mocker.patch.object(cloud_worker, "CONFIG", _cfg(key="k"))
     mocker.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"})
-    w = CloudWorker(enabled=True)
-    assert w.enabled is True and w.status() == "enabled (m)"
-    return w
+    w = make_cloud_worker(enabled=True)
+    assert w.enabled is True
+    assert w.status == "enabled (m)"
+    assert w.model == "m" and callable(w.generate)
 
 
-# --- generate (enabled, stubbed client) ------------------------------------
+# --- _generate (stubbed client injected directly) --------------------------
 
-def test_generate_success_counts_usage(mocker):
-    w = _enabled_worker(mocker)
+def test_generate_success_counts_usage():
     msg = types.SimpleNamespace(
         content=[_Blk("thinking"), _Blk("text", "hello")],
         usage=types.SimpleNamespace(
             input_tokens=10, cache_read_input_tokens=2,
             cache_creation_input_tokens=1, output_tokens=5),
     )
-    w._client = _Client(msg=msg)
-    r = w.generate("q", prior_attempt="p")
+    r = _generate(_Client(msg=msg), "m", 128, "q", "p")
     assert r.available and r.text == "hello" and r.model == "m"
     assert r.input_tokens == 13 and r.output_tokens == 5
 
 
-def test_generate_handles_missing_usage(mocker):
-    w = _enabled_worker(mocker)
-    w._client = _Client(msg=types.SimpleNamespace(
-        content=[_Blk("text", "z")], usage=None))
-    r = w.generate("q")
+def test_generate_handles_missing_usage():
+    r = _generate(
+        _Client(msg=types.SimpleNamespace(
+            content=[_Blk("text", "z")], usage=None)),
+        "m", 128, "q",
+    )
     assert r.text == "z" and r.input_tokens == 0 and r.output_tokens == 0
 
 
-def test_generate_handles_api_error(mocker):
-    w = _enabled_worker(mocker)
+def test_generate_handles_api_error():
     err = anthropic.APIConnectionError(
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     )
-    w._client = _Client(exc=err)
-    r = w.generate("q")
+    r = _generate(_Client(exc=err), "m", 128, "q")
     assert r.available is False and r.text.startswith("[cloud error:")

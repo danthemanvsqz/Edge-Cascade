@@ -20,7 +20,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from ._rec import Recorder, recorded
+from ._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -30,7 +30,7 @@ from cascade.feedback import CheckFailure, build_repair_prompt  # noqa: E402
 from cascade.verifier import verify  # noqa: E402
 
 mcp = FastMCP("edge-verify")
-_REC = Recorder("edge-verify")
+_REC = make_recorder("edge-verify")
 
 # Hard cap so a pathological/looping candidate can never wedge the gate. The
 # sandbox is a separate process; on timeout we kill it and report a failure.
