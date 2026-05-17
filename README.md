@@ -1,9 +1,45 @@
 # edge-cascade
 
+![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![tests](https://img.shields.io/badge/pytest-51%20passing-brightgreen)
+![python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
+![uv](https://img.shields.io/badge/deps-uv-DE5FE9)
+![GenAI](https://img.shields.io/badge/%F0%9F%A4%96%20GenAI-NPU%E2%86%92GPU%E2%86%92Claude-8A2BE2)
+![verifier-gated](https://img.shields.io/badge/%E2%9C%85%20verifier-gated-0aa)
+
 A multi-accelerator inference cascade for an Intel Core Ultra + NVIDIA laptop.
 It routes coding prompts across **Intel NPU → NVIDIA GPU → Claude cloud**,
 gating every hop on an objective code verifier and only spending money when
 the free local tiers provably can't deliver.
+
+```mermaid
+flowchart TD
+    P([Coding prompt]) --> T1
+
+    subgraph LOCAL["Local — free"]
+        direction TB
+        T1["Tier 1 · Intel NPU<br/>qwen2.5-coder-1.5b INT4<br/>scores difficulty + drafts"]
+        T2["Tier 2 · NVIDIA RTX 5070 Ti<br/>Ollama · qwen2.5-coder:14b"]
+    end
+
+    subgraph CLOUDZONE["Cloud — paid, credit-guarded"]
+        T3["Tier 3 · Claude<br/>claude-sonnet-4-6"]
+    end
+
+    T1 --> V1{"Verifier:<br/>code compiles?"}
+    V1 -->|pass| A([Answer])
+    V1 -->|fail / routed hard| T2
+    T2 --> V2{"Verifier:<br/>code compiles?"}
+    V2 -->|pass| A
+    V2 -->|fail| G{"Credit guard:<br/>enabled and under<br/>call and cost caps?"}
+    G -->|blocked| L(["Best local answer<br/>· unverified"])
+    G -->|allowed| T3
+    T3 --> A
+```
+
+> The cascade is local-first: the NPU routes by difficulty and most prompts
+> never leave the machine. The paid tier is reached only on a verifier failure
+> *and* when the credit guard allows it.
 
 ## Hardware tiers
 
@@ -16,6 +52,44 @@ the free local tiers provably can't deliver.
 > The NPU only runs models exported with the NPU recipe
 > (`--weight-format int4 --sym --ratio 1.0 --group-size=-1`). The stock
 > `*-int4-ov` exports crash the vpux compiler; the probe falls back to the iGPU.
+
+## Why route Tier 1 to the NPU?
+
+Tier 1 is the *hot path* — it runs on **every** prompt (difficulty routing + the
+trivial-draft attempt). Putting that always-on work on the NPU instead of the
+discrete GPU pays off several ways:
+
+- **Battery life.** This is the headline. The Intel AI Boost NPU does sustained
+  inference in the **single-digit watts**, while waking the RTX 5070 Ti laptop
+  GPU for the same small job pulls **tens of watts** (and the dGPU's idle/active
+  power-state swings are themselves costly). Keeping the dGPU asleep for routing
+  and easy prompts is a large, measurable extension of unplugged runtime.
+- **Thermals & noise.** NPU inference stays fanless and cool; routing every
+  prompt through the dGPU spins fans and heats the chassis — bad for a laptop.
+- **The dGPU stays free.** The 14B model needs ~9 GB of VRAM and full GPU
+  compute. Pinning the cheap tier to the NPU means the RTX is untouched and
+  available for Tier-2 escalations, training, games, or other CUDA work —
+  better total system utilization (the NPU would otherwise sit idle).
+- **No spin-up tax on the common case.** The NPU pipeline loads once and stays
+  resident, so short router/draft calls avoid repeated dGPU power-state and
+  context-load latency.
+- **Effectively free.** Local **and** low-power: the always-on routing layer
+  costs ~0 dollars and ~0 meaningful energy, which is exactly what makes a
+  local-first cascade economical.
+
+**Honest caveat:** the NPU is *not* faster per token than the 14B model on the
+dGPU — its small 1.5B model is also lower quality. The NPU's value is
+**perf-per-watt and offload**, not raw speed. That's why the design only trusts
+it for routing and trivial drafts, with the verifier gating every answer and
+escalating to the GPU/cloud when it isn't good enough.
+
+**Surprisingly capable in practice.** For a 1.5B model on the NPU it punched
+above its weight during testing: it produced a correct, **stable** merge sort
+that passed the property-based `sorts_like` check (random/duplicate/empty
+inputs), and it responded reasonably to the repair protocol — given a failing
+assertion it fixed a buggy function in one round. It won't match the 14B model
+on harder tasks, but the cheap tier resolves more prompts on its own than the
+"1.5B" label suggests — which makes the local-first routing pay off more often.
 
 ## What's in here
 
