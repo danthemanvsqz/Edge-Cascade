@@ -2,7 +2,7 @@
 speedup summary, and the Step record. The trust/credit-guard controller needs
 live workers and is covered by the live smoke runs (it was exercised there),
 not by simulated mocks."""
-from cascade.lookahead import LookAheadResult, Step, _agreement
+from cascade.lookahead import LookAheadResult, Step, _agreement, speedup_note
 
 
 def test_agreement_is_normalized():
@@ -18,12 +18,12 @@ def test_speedup_note_counts_solo():
         Step("t", "verified", "gpu", 0.3, 0.2, True, 0),
         Step("t", "npu-solo", "npu", 1.0, 0.1, True, 2),
     ]
-    assert LookAheadResult(steps).speedup_note == \
+    assert speedup_note(LookAheadResult(steps)) == \
         "2/3 tasks answered NPU-solo (GPU calls skipped: 2)"
 
 
 def test_speedup_note_empty_uses_one_denominator():
-    assert LookAheadResult().speedup_note == \
+    assert speedup_note(LookAheadResult()) == \
         "0/1 tasks answered NPU-solo (GPU calls skipped: 0)"
 
 
