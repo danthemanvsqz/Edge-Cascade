@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
 
-from .cloud_worker import CloudWorker
+from .cloud_worker import make_cloud_worker, reason_note
 from .config import CONFIG
 from .gpu_worker import GPUWorker
 from .logfmt import dump_record
@@ -115,10 +115,10 @@ def cascade_session(
 
     npu = NPUWorker()
     gpu = GPUWorker()
-    cloud = CloudWorker(enabled=enable_cloud or CONFIG.enable_cloud)
+    cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)
     logger.info(
         f"config: Tier-1={processor(npu.device)} | "
-        f"Tier-2=NVIDIA RTX 5070 Ti | Tier-3={cloud.status()}"
+        f"Tier-2=NVIDIA RTX 5070 Ti | Tier-3={cloud.status}"
     )
     seq = count()
 
@@ -167,10 +167,10 @@ def cascade_session(
             trace.append(Hop("local", "none", 0.0, "no answer; cloud disabled"))
             return CascadeResult(msg, "none", time.perf_counter() - t0, trace)
 
-        start(t0, "CLOUD", cloud._model)
+        start(t0, "CLOUD", cloud.model)
         c = cloud.generate(query, prior_attempt=prior)
-        done(t0, "CLOUD", c.reason_note(), c.latency_s)
-        trace.append(Hop("cloud", c.model, c.latency_s, c.reason_note()))
+        done(t0, "CLOUD", reason_note(c), c.latency_s)
+        trace.append(Hop("cloud", c.model, c.latency_s, reason_note(c)))
         return CascadeResult(c.text, "cloud", time.perf_counter() - t0, trace)
 
     def run_pipeline(query: str) -> CascadeResult:
@@ -194,10 +194,10 @@ def cascade_session(
         if r.difficulty >= CONFIG.escalate_to_cloud_difficulty:
             if cloud.enabled:
                 log(t0, "   route: clearly hard -> straight to CLOUD")
-                start(t0, "CLOUD", cloud._model)
+                start(t0, "CLOUD", cloud.model)
                 c = cloud.generate(query)
-                done(t0, "CLOUD", c.reason_note(), c.latency_s)
-                trace.append(Hop("cloud", c.model, c.latency_s, c.reason_note()))
+                done(t0, "CLOUD", reason_note(c), c.latency_s)
+                trace.append(Hop("cloud", c.model, c.latency_s, reason_note(c)))
                 return CascadeResult(
                     c.text, "cloud", time.perf_counter() - t0, trace
                 )
@@ -259,7 +259,7 @@ def cascade_session(
     try:
         yield Session(
             run=run, log_path=log_path,
-            tier1_device=npu.device, cloud_status=cloud.status(),
+            tier1_device=npu.device, cloud_status=cloud.status,
         )
     finally:
         # The tee FileHandler owns an open fd -- this lifetime was unmanaged

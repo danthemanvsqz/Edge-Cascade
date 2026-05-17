@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .cloud_worker import CloudWorker
+from .cloud_worker import est_cost_usd, make_cloud_worker
 from .config import CONFIG
 from .gpu_worker import GPUWorker
 from .npu_worker import NPUWorker
@@ -94,7 +94,7 @@ class LookAhead:
         self.npu = NPUWorker()
         self.gpu = GPUWorker()
         self.gpu_ok = self.gpu.available()
-        self.cloud = CloudWorker(enabled=enable_cloud or CONFIG.enable_cloud)
+        self.cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)
         # Credit guard state (per LookAhead instance / run).
         self._cloud_calls = 0
         self._cloud_usd = 0.0
@@ -159,13 +159,13 @@ class LookAhead:
                 self.log.info("  verifier FAIL -> escalating to CLOUD (paid)")
                 c = self.cloud.generate(task, prior_attempt=answer)
                 self._cloud_calls += 1
-                self._cloud_usd += c.est_cost_usd()
+                self._cloud_usd += est_cost_usd(c)
                 if c.available:
                     answer, who, mode = c.text, "cloud", "cloud-escalated"
                     ok = verify(answer).passed
                 self.log.info(
                     f"  CLOUD {c.model} ({c.latency_s:.2f}s) "
-                    f"~${c.est_cost_usd():.4f} | verifier="
+                    f"~${est_cost_usd(c):.4f} | verifier="
                     f"{'PASS' if ok else 'FAIL'} | run total: "
                     f"{self._cloud_calls} call(s) ~${self._cloud_usd:.4f}")
             else:
