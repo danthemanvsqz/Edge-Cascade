@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+*.key
+
+# Models (large, downloaded separately)
+models/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Metrics / logs
+*.log
+runs/
+
+# Test / build artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+# NB: uv.lock is intentionally committed (reproducible installs).

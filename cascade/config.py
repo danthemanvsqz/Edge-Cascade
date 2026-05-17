@@ -1,0 +1,84 @@
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # pragma: no cover - optional dependency fallback
+    pass
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@dataclass(frozen=True)
+class Config:
+    # Tier 1 — NPU (OpenVINO GenAI). Device fallback order if NPU compile fails.
+    # NPU-compatible export: symmetric, channel-wise INT4 (--sym --group-size=-1).
+    # The default asymmetric/group-quantized int4-ov export crashes the vpux
+    # compiler; this one compiles on the NPU.
+    npu_model_dir: str = os.environ.get(
+        "CASCADE_NPU_MODEL_DIR", str(ROOT / "models" / "qwen2.5-coder-1.5b-npu")
+    )
+    # Set CASCADE_SKIP_NPU=1 to skip the NPU probe entirely (it crashes on
+    # models the vpux compiler can't digest; iGPU is the reliable Tier-1 path).
+    npu_device_order: tuple[str, ...] = field(
+        default_factory=lambda: (
+            ("GPU.0", "CPU")
+            if os.environ.get("CASCADE_SKIP_NPU") == "1"
+            else ("NPU", "GPU.0", "CPU")
+        )
+    )
+
+    # Tier 2 — local GPU via Ollama (NVIDIA/CUDA).
+    ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    gpu_model: str = os.environ.get("CASCADE_GPU_MODEL", "qwen2.5-coder:14b")
+
+    # Tier 3 — cloud backstop (Anthropic). PAID. Off unless explicitly enabled
+    # (Orchestrator(enable_cloud=True) / CLI --cloud / CASCADE_ENABLE_CLOUD=1),
+    # AND a key is present. A key alone never enables the paid tier.
+    cloud_model: str = os.environ.get("CASCADE_CLOUD_MODEL", "claude-sonnet-4-6")
+    anthropic_api_key: str | None = field(
+        default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY") or None
+    )
+    enable_cloud: bool = field(
+        default_factory=lambda: os.environ.get("CASCADE_ENABLE_CLOUD") == "1"
+    )
+    # Credit guard: hard ceilings on the PAID tier per pipeline run. Cloud is
+    # refused once EITHER is reached (deterministic call cap + conservative
+    # USD estimate). Tune via CASCADE_CLOUD_MAX_CALLS / CASCADE_CLOUD_USD.
+    cloud_max_calls: int = field(
+        default_factory=lambda: int(os.environ.get("CASCADE_CLOUD_MAX_CALLS", "3"))
+    )
+    cloud_usd_budget: float = field(
+        default_factory=lambda: float(os.environ.get("CASCADE_CLOUD_USD", "0.50"))
+    )
+
+    # Escalation gate thresholds.
+    # Live log file — tail -f this while driving the CLI.
+    log_path: str = os.environ.get(
+        "CASCADE_LOG", str(ROOT / "runs" / "cascade.log")
+    )
+
+    npu_max_new_tokens: int = 192
+    # Repair needs room for a whole corrected block; the NPU's static-shape
+    # prompt limit still caps how large an input it can repair.
+    npu_repair_max_tokens: int = 640
+    gpu_max_new_tokens: int = 1024
+    cloud_max_tokens: int = 16000
+    # difficulty < this  -> Tier-1 (NPU/iGPU) draft handles it
+    # [this, cloud)       -> Tier-2 (NVIDIA GPU)
+    # >= cloud            -> Tier-3 (cloud), skipping the GPU
+    # NPU-first: the verifier gate makes a wrong "easy" guess cheap (one ~3s NPU
+    # draft, then escalate), so try the NPU for anything not flagged clearly
+    # hard. The small router rates trivial code ~0.5-0.65; clearly-hard ~0.85+.
+    escalate_to_gpu_difficulty: float = 0.70
+    escalate_to_cloud_difficulty: float = 0.80
+
+    @property
+    def cloud_enabled(self) -> bool:
+        return self.enable_cloud and bool(self.anthropic_api_key)
+
+
+CONFIG = Config()
