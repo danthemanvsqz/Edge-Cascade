@@ -33,7 +33,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from ._rec import Recorder, recorded
+from ._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -42,7 +42,7 @@ if str(ROOT) not in sys.path:
 from cascade.config import CONFIG  # noqa: E402
 
 mcp = FastMCP("edge-npu")
-_REC = Recorder("edge-npu")
+_REC = make_recorder("edge-npu")
 
 # Generous: covers the iGPU compile (~9s) + safety. The NPU-probe path is
 # longer; CASCADE_SKIP_NPU=1 is the recommended Tier-1 setting.

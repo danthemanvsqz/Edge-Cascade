@@ -20,7 +20,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from ._rec import Recorder, recorded
+from ._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -30,7 +30,7 @@ from cascade.cloud_worker import CloudWorker  # noqa: E402
 from cascade.config import CONFIG  # noqa: E402
 
 mcp = FastMCP("edge-cloud")
-_REC = Recorder("edge-cloud")
+_REC = make_recorder("edge-cloud")
 
 # Paid tier ON here by design: this server *is* Tier 4. The credit guard +
 # explicit deadlock-only invocation by the skill are the safety, not an

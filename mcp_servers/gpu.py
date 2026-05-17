@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from ._rec import Recorder, recorded
+from ._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -33,7 +33,7 @@ from cascade.config import CONFIG  # noqa: E402
 from cascade.gpu_worker import GPUWorker  # noqa: E402
 
 mcp = FastMCP("edge-gpu")
-_REC = Recorder("edge-gpu")
+_REC = make_recorder("edge-gpu")
 _worker = GPUWorker()
 _URL = CONFIG.ollama_base_url.rstrip("/")
 
