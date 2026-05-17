@@ -1,7 +1,8 @@
 # edge-cascade
 
-![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
-![tests](https://img.shields.io/badge/pytest-51%20passing-brightgreen)
+[![CI](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml/badge.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
+[![coverage 100% scoped](https://img.shields.io/badge/coverage-100%25%20scoped%20%C2%B7%20CI--enforced-brightgreen)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
+[![security: bandit](https://img.shields.io/badge/security-bandit%20gated-yellow.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/deps-uv-DE5FE9)
 ![GenAI](https://img.shields.io/badge/%F0%9F%A4%96%20GenAI-NPU%E2%86%92GPU%E2%86%92Claude-8A2BE2)
@@ -132,6 +133,11 @@ If a key is ever pasted or leaked, rotate it at
 ```bash
 uv run pytest
 ```
+
+> **CI** runs this exact suite *and* the bandit security gate on every push
+> and PR (`.github/workflows/ci.yml`, Windows runner). The badges at the top
+> reflect the latest run: a green **CI** badge means the scoped 100% coverage
+> gate held and bandit found no MEDIUM+ issues.
 
 The suite enforces **`fail_under = 100`** — but *scoped*, not project-wide.
 100% is measured over the pure, safety-critical logic:

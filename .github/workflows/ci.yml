@@ -1,0 +1,52 @@
+name: CI
+
+# Runs the unit + smoke suite behind the scoped fail_under=100 gate and the
+# bandit security gate on every push and PR. Windows runner on purpose: the
+# codebase has real Windows-specific behavior (PowerShell, cp1252 console, the
+# NPU subprocess probe) so CI must exercise that platform.
+#
+# NOTE: this does NOT run pre-commit. The pre-commit `e2e-local` hook is
+# LOCAL-ONLY (needs real Intel hardware) and must never run in CI, per
+# .pre-commit-config.yaml. CI invokes pytest and bandit directly instead.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref makes the in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests + scoped 100% gate + bandit (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (+ Python 3.11)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      # core deps + the default `dev` group (pytest/cov/mock, bandit, ruff)
+      # + the `mcp` extra so the mcp_servers import-smoke tests actually run
+      # instead of skipping.
+      - name: Sync dependencies
+        run: uv sync --extra mcp
+
+      # Same gate as the pre-commit bandit hook: our code only (deps live in
+      # .venv, excluded via [tool.bandit] exclude_dirs), fail on MEDIUM+.
+      - name: Bandit security gate (medium+, our code only)
+        run: uv run bandit -c pyproject.toml -r . --severity-level medium
+
+      # addopts already carry --cov; [tool.coverage.report] fail_under = 100
+      # makes this step (and the build) fail if the scoped 100% gate slips.
+      - name: Unit + smoke tests (scoped 100% coverage gate)
+        run: uv run pytest
