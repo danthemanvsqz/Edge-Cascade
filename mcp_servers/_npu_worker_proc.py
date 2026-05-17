@@ -39,9 +39,9 @@ def _send(obj: dict) -> None:
 
 def main() -> None:
     try:
-        from cascade.npu_worker import NPUWorker
+        from cascade.npu_worker import make_npu_worker
 
-        w = NPUWorker()  # the OpenVINO compile -- safe here (clean process)
+        w = make_npu_worker()  # the OpenVINO compile -- safe here (clean process)
     except Exception as e:  # noqa: BLE001 - report and exit; server marks down
         _send({"ok": False, "event": "ready",
                "error": f"{type(e).__name__}: {e}"})

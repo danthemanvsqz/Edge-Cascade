@@ -25,7 +25,7 @@ from pathlib import Path
 from .cloud_worker import est_cost_usd, make_cloud_worker
 from .config import CONFIG
 from .gpu_worker import make_gpu_worker
-from .npu_worker import NPUWorker
+from .npu_worker import make_npu_worker
 from .verifier import verify
 
 _VERIFY_SYS = (
@@ -91,7 +91,7 @@ class LookAhead:
         self.since_ckpt = 0
         self.log = _logger()
         self.log.info("=== look-ahead started ===")
-        self.npu = NPUWorker()
+        self.npu = make_npu_worker()
         self.gpu = make_gpu_worker()
         self.gpu_ok = self.gpu.available()
         self.cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)

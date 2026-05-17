@@ -10,14 +10,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from cascade.gpu_worker import make_gpu_worker
-from cascade.npu_worker import NPUWorker
+from cascade.npu_worker import make_npu_worker
 
 RULE = "=" * 72
 
 
 def main() -> None:
     print("Loading (NPU compile ~20s)...")
-    npu = NPUWorker()
+    npu = make_npu_worker()
     gpu = make_gpu_worker()
     gpu_ok = gpu.available()
     print(f"NPU: {npu.device} (qwen2.5-coder-1.5b) | "

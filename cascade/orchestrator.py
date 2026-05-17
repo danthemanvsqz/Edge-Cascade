@@ -30,7 +30,7 @@ from .cloud_worker import make_cloud_worker, reason_note
 from .config import CONFIG
 from .gpu_worker import make_gpu_worker
 from .logfmt import dump_record
-from .npu_worker import NPUWorker
+from .npu_worker import make_npu_worker
 from .verifier import verify
 
 
@@ -113,7 +113,7 @@ def cascade_session(
     logger = build_logger(log_path, verbose)
     logger.info("=== cascade started ===")
 
-    npu = NPUWorker()
+    npu = make_npu_worker()
     gpu = make_gpu_worker()
     cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)
     logger.info(

@@ -287,9 +287,9 @@ def _make_repairer(tier: str):
     """Return (label, prompt->text) for the chosen repair tier, or (None, why)."""
     if tier == "npu":
         from cascade.config import CONFIG
-        from cascade.npu_worker import NPUWorker
+        from cascade.npu_worker import make_npu_worker
 
-        w = NPUWorker()
+        w = make_npu_worker()
         cap = CONFIG.npu_repair_max_tokens
         return (f"NPU ({w.device})",
                 lambda p: w.draft(p, max_new_tokens=cap).text)
