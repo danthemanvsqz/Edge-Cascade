@@ -59,7 +59,8 @@ class LookAheadResult:
 
 
 def _agreement(a: str, b: str) -> float:
-    norm = lambda s: " ".join(s.split())
+    def norm(s: str) -> str:
+        return " ".join(s.split())
     return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
 
 

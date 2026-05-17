@@ -24,7 +24,38 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
     "pytest-mock>=3.14",
+    "pre-commit>=4",
+    "ruff>=0.8",
+    "bandit>=1.8",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "models", "runs"]
+
+[tool.ruff.lint]
+# Pragmatic set: pyflakes (F), pycodestyle (E/W), isort (I), bugbear (B),
+# pyupgrade (UP). Quiet a few that fight an exploratory single-dev codebase.
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = [
+    "E741",   # ambiguous var names (l/I) - used in terse helpers
+    "B008",   # function call in arg default (dataclass field(default_factory=...))
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]   # long assertion lines are fine in tests
+
+# Bandit security scan. Triage policy (enforced by reviewers, encoded here):
+#   * We scan ONLY our own code (cascade/ + root scripts). Dependencies are
+#     never scanned, so low-severity findings in third-party code are ignored
+#     by construction.
+#   * The pre-commit hook fails on MEDIUM/HIGH ("major") findings -- these
+#     must be analysed and explicitly resolved (justified `# nosec BXXX`,
+#     replace, or upgrade) before the commit can land. LOW is reported, not
+#     blocking.
+[tool.bandit]
+exclude_dirs = [".venv", "tests", "models", "runs", ".git"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -24,4 +24,4 @@ def test_module_imports(name):
 
 def test_entrypoints_expose_main():
     for name in ("cli", "validate_log", "vs", "lookahead", "webchat"):
-        assert callable(getattr(importlib.import_module(name), "main"))
+        assert callable(importlib.import_module(name).main)

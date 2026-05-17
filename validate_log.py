@@ -223,7 +223,11 @@ def _safe_exec(code: str, ns: dict) -> str | None:
     """Exec code; return None on success or a located error string."""
     try:
         with contextlib.redirect_stdout(io.StringIO()):
-            exec(code, ns)  # noqa: S102 - offline tool, model output
+            # Analysed & accepted (bandit B102): offline dev validator only,
+            # never in the cascade request path; runs developer-reviewed
+            # model output to check correctness. Replacement is impossible --
+            # the tool's whole job is to execute the candidate code.
+            exec(code, ns)  # nosec B102
         return None
     except Exception as e:
         return _fmt_exc(e)
@@ -248,7 +252,11 @@ def run(record_code: str, blocks) -> list[Check]:
             continue
         for expr, req in asserts:
             try:
-                val = eval(expr, ns)  # noqa: S307 - trusted local DSL
+                # Analysed & accepted (bandit B307): evaluates assertion
+                # expressions from checks.dsl -- a trusted, repo-owned,
+                # developer-authored file, never user/network input. Offline
+                # tool only. ast.literal_eval can't evaluate predicates.
+                val = eval(expr, ns)  # nosec B307
                 checks.append(Check(
                     sym, expr, bool(val),
                     "ok" if val else f"evaluated to {val!r}", req,

@@ -16,7 +16,6 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from cascade.config import CONFIG
 from cascade.gpu_worker import GPUWorker
 from cascade.npu_worker import NPUWorker
 
