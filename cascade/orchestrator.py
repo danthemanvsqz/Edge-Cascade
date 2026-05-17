@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .cloud_worker import make_cloud_worker, reason_note
 from .config import CONFIG
-from .gpu_worker import GPUWorker
+from .gpu_worker import make_gpu_worker
 from .logfmt import dump_record
 from .npu_worker import NPUWorker
 from .verifier import verify
@@ -114,7 +114,7 @@ def cascade_session(
     logger.info("=== cascade started ===")
 
     npu = NPUWorker()
-    gpu = GPUWorker()
+    gpu = make_gpu_worker()
     cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)
     logger.info(
         f"config: Tier-1={processor(npu.device)} | "

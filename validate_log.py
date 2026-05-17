@@ -293,9 +293,9 @@ def _make_repairer(tier: str):
         cap = CONFIG.npu_repair_max_tokens
         return (f"NPU ({w.device})",
                 lambda p: w.draft(p, max_new_tokens=cap).text)
-    from cascade.gpu_worker import GPUWorker
+    from cascade.gpu_worker import make_gpu_worker
 
-    w = GPUWorker()
+    w = make_gpu_worker()
     if not w.available():
         return None, "GPU tier unavailable (Ollama not reachable)"
     return "NVIDIA GPU", lambda p: w.generate(p).text

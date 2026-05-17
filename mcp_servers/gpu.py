@@ -30,11 +30,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from cascade.config import CONFIG  # noqa: E402
-from cascade.gpu_worker import GPUWorker  # noqa: E402
+from cascade.gpu_worker import make_gpu_worker  # noqa: E402
 
 mcp = FastMCP("edge-gpu")
 _REC = make_recorder("edge-gpu")
-_worker = GPUWorker()
+_worker = make_gpu_worker()
 _URL = CONFIG.ollama_base_url.rstrip("/")
 
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .cloud_worker import est_cost_usd, make_cloud_worker
 from .config import CONFIG
-from .gpu_worker import GPUWorker
+from .gpu_worker import make_gpu_worker
 from .npu_worker import NPUWorker
 from .verifier import verify
 
@@ -92,7 +92,7 @@ class LookAhead:
         self.log = _logger()
         self.log.info("=== look-ahead started ===")
         self.npu = NPUWorker()
-        self.gpu = GPUWorker()
+        self.gpu = make_gpu_worker()
         self.gpu_ok = self.gpu.available()
         self.cloud = make_cloud_worker(enabled=enable_cloud or CONFIG.enable_cloud)
         # Credit guard state (per LookAhead instance / run).
