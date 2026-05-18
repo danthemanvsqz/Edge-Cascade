@@ -1,0 +1,6 @@
+# Shell scripts MUST stay LF — they are invoked via `bash` (pre-push hooks);
+# CRLF makes bash choke on `\r` (e.g. `set -euo pipefail\r`).
+*.sh text eol=lf
+
+# PowerShell is Windows-only here; keep it CRLF.
+*.ps1 text eol=crlf

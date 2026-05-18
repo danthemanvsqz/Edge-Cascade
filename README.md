@@ -5,50 +5,60 @@
 [![security: bandit](https://img.shields.io/badge/security-bandit%20gated-yellow.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/deps-uv-DE5FE9)
-![GenAI](https://img.shields.io/badge/%F0%9F%A4%96%20GenAI-NPU%E2%86%92GPU%E2%86%92Claude-8A2BE2)
+![GenAI](https://img.shields.io/badge/%F0%9F%A4%96%20GenAI-NPU%E2%86%92GPU%E2%86%92CLI%E2%86%92API-8A2BE2)
 ![verifier-gated](https://img.shields.io/badge/%E2%9C%85%20verifier-gated-0aa)
 
-A multi-accelerator inference cascade for an Intel Core Ultra + NVIDIA laptop.
-It routes coding prompts across **Intel NPU → NVIDIA GPU → Claude cloud**,
-gating every hop on an objective code verifier and only spending money when
-the free local tiers provably can't deliver.
+A local-first inference mesh for an Intel Core Ultra + NVIDIA laptop. The
+headline interface is **not a script you call** — it's **Claude Code itself**,
+running as Tier 3 of a 4-tier cascade and driving the local accelerators as
+MCP tools. The expensive metered API is the last resort, not the default, so
+your subscription stretches across long build sessions and real dollars stay
+near zero.
 
 ```mermaid
 flowchart TD
-    P([Coding prompt]) --> T1
+    P(["Build / coding task"]) --> CLI
 
-    subgraph LOCAL["Local — free"]
+    subgraph SUB["Tier 3 — your Claude Code subscription (already paid)"]
+        CLI["Claude CLI = the orchestrator brain<br/>plans · decomposes · holds repo + memory<br/>writes/edits files · runs commands"]
+    end
+
+    CLI -->|"route() then draft()/generate()"| LOCAL
+    subgraph LOCAL["Tiers 1–2 — local, free (MCP tools)"]
         direction TB
-        T1["Tier 1 · Intel NPU<br/>qwen2.5-coder-1.5b INT4<br/>scores difficulty + drafts"]
-        T2["Tier 2 · NVIDIA RTX 5070 Ti<br/>Ollama · qwen2.5-coder:14b"]
+        T1["edge-npu · Intel NPU<br/>qwen2.5-coder-1.5b INT4<br/>difficulty route + trivial draft"]
+        T2["edge-gpu · NVIDIA RTX 5070 Ti<br/>Ollama · qwen2.5-coder:14b<br/>bulk code / refactor / repair"]
     end
 
-    subgraph CLOUDZONE["Cloud — paid, credit-guarded"]
-        T3["Tier 3 · Claude<br/>claude-sonnet-4-6"]
-    end
-
-    T1 --> V1{"Verifier:<br/>code compiles?"}
-    V1 -->|pass| A([Answer])
-    V1 -->|fail / routed hard| T2
-    T2 --> V2{"Verifier:<br/>code compiles?"}
-    V2 -->|pass| A
-    V2 -->|fail| G{"Credit guard:<br/>enabled and under<br/>call and cost caps?"}
-    G -->|blocked| L(["Best local answer<br/>· unverified"])
-    G -->|allowed| T3
-    T3 --> A
+    LOCAL --> V{"edge-verify<br/>syntax + sandboxed<br/>functional gate"}
+    V -->|pass| DONE(["Verified code → repo"])
+    V -->|fail ×1| RPR["edge-verify.repair_prompt<br/>→ retry on Tier 2"]
+    RPR --> V
+    V -->|"locals fail ×2"| CLI2["Tier 3: Claude reasons it<br/>out itself (no $ spent)"]
+    CLI2 --> G{"deadlock Claude<br/>can't break?"}
+    G -->|no| DONE
+    G -->|"yes / explicit ask"| T4["Tier 4 · edge-cloud<br/>Anthropic API · PAID<br/>credit-guarded · off by default"]
+    T4 --> DONE
 ```
 
-> The cascade is local-first: the NPU routes by difficulty and most prompts
-> never leave the machine. The paid tier is reached only on a verifier failure
-> *and* when the credit guard allows it.
+> Local-first, max savings: every delegable sub-task goes to the cheapest
+> sufficient tier; every local answer is gated by an objective verifier; Claude
+> only reasons directly when the locals fail; the paid API fires only when even
+> Claude is stuck. The full policy is in [`CLAUDE.md`](CLAUDE.md).
 
-## Hardware tiers
+## The 4 tiers
 
-| Tier | Device | Backend | Model |
-|------|--------|---------|-------|
-| 1 | Intel NPU (AI Boost), iGPU fallback | OpenVINO GenAI | `qwen2.5-coder-1.5b` (sym INT4) |
-| 2 | NVIDIA RTX 5070 Ti | Ollama | `qwen2.5-coder:14b` |
-| 3 | Cloud (**paid, off by default**) | Anthropic API | `claude-sonnet-4-6` |
+| Tier | What | Engine | Marginal cost |
+|------|------|--------|---------------|
+| 1 | Intel NPU (AI Boost), iGPU fallback — `edge-npu` | OpenVINO GenAI · `qwen2.5-coder-1.5b` sym-INT4 | ~free (single-digit watts) |
+| 2 | NVIDIA RTX 5070 Ti — `edge-gpu` | Ollama · `qwen2.5-coder:14b` | free local tokens |
+| 3 | **The Claude CLI session = you, reading this** | Claude Code (your **subscription**) | already paid — the default brain |
+| — | Deterministic gate — `edge-verify` | Intel CPU, **no model** | free (AST + sandboxed exec) |
+| 4 | Anthropic API — `edge-cloud` | `claude-sonnet-4-6`, credit-guarded | **metered $ — genuine last resort** |
+
+The key distinction the design enforces: **Tier 3 (CLI-Claude, subscription)
+and Tier 4 (API-Claude, metered) are different tiers.** When the locals can't
+deliver, Claude reasons it out *itself* before ever spending API money.
 
 > The NPU only runs models exported with the NPU recipe
 > (`--weight-format int4 --sym --ratio 1.0 --group-size=-1`). The stock
@@ -94,25 +104,93 @@ on harder tasks, but the cheap tier resolves more prompts on its own than the
 
 ## What's in here
 
-- **`cli.py`** — the 3-tier cascade: NPU router/draft → GPU → cloud, verifier-gated, with a live tee log (`runs/cascade.log`).
-- **`lookahead.py`** — request-level speculative look-ahead: the NPU answers, earns a *trust window* by agreeing with the GPU, then runs solo; verifier-gated cloud escalation behind a **credit guard**.
-- **`validate_log.py`** — extracts code from logs and validates it with a tiny **DSL** (`checks.dsl`); `--repair` feeds failures back to a model (`--repair-tier gpu|npu`) via the structured protocol in `cascade/feedback.py`.
-- **`vs.py` / `webchat.py`** — NPU-vs-GPU side-by-side, in the terminal or a local web page.
+**The agentic flow (primary):**
+
+- **`scripts/edge-cli.ps1`** — the launcher. Ensures the venv extras, generates
+  a machine-correct local MCP config, and starts Claude Code with
+  `--mcp-config <that> --strict-mcp-config` so the session sees exactly the
+  local mesh. `edge-cloud` (paid Tier 4) is **excluded by default** — the
+  session is structurally unable to spend until you pass `-WithCloud`. It also
+  injects the `CLAUDE.md` delegation policy via `--append-system-prompt`, so
+  the policy travels with the session **regardless of which directory you build
+  in** (the session launches in your project dir, where `CLAUDE.md` would not
+  otherwise be auto-discovered, and `--add-dir` grants file access, not policy).
+- **`mcp_servers/`** — the tiers as MCP tools: `edge-npu` (`route`, `draft`,
+  `status`), `edge-gpu` (`generate`, `status`), `edge-verify` (`verify_syntax`,
+  `verify_functional`, `repair_prompt`), `edge-cloud` (`budget`, `escalate`).
+- **`CLAUDE.md`** — the delegation policy the orchestrator follows, plus the
+  `routing_dispatch` protocol.
+- **`/edge-cascade`** skill — route one task through the mesh on demand once
+  the MCP servers are connected (see `ARCHITECTURE.md §7`).
+
+**Standalone cascade (legacy / demo — stateless, single-shot):**
+
+- **`cli.py`** — the original NPU→GPU→cloud cascade with a live tee log
+  (`runs/cascade.log`). One prompt, one answer; no memory or file/exec — fine
+  for a quick local Q&A, not for building projects.
+- **`lookahead.py`** — request-level speculative look-ahead with a trust window.
+- **`validate_log.py`** — extracts code from logs and validates it with a tiny
+  **DSL** (`checks.dsl`); `--repair` feeds failures back to a model.
+- **`vs.py` / `webchat.py`** — NPU-vs-GPU side-by-side, terminal or web page.
 
 ## Setup (uv)
 
 ```bash
-uv sync                 # core deps + dev tools (fast; no ML stack)
-uv sync --extra accel   # add the Intel NPU/iGPU stack (OpenVINO GenAI) — large
+uv sync                              # core deps + dev tools (fast; no ML stack)
+uv sync --extra accel --extra mcp    # NPU/iGPU stack + MCP servers (required for the flow)
 ```
 
-The cloud tier needs `ANTHROPIC_API_KEY`. Put it in a local `.env`
-(git-ignored — see below). It stays **off** unless you pass `--cloud` /
-`enable_cloud=True` / `CASCADE_ENABLE_CLOUD=1`, and is further bounded by the
-credit guard (`CASCADE_CLOUD_MAX_CALLS`, default 3; `CASCADE_CLOUD_USD`,
-default 0.50, per run).
+> Sync **both** extras together. `uv sync --extra accel` *alone* removes the
+> `mcp` package (and vice-versa) — the launcher re-syncs both for you.
+
+The paid Tier 4 needs `ANTHROPIC_API_KEY` in a local `.env` (git-ignored — see
+below). It is bounded by the credit guard (`CASCADE_CLOUD_MAX_CALLS`, default 3;
+`CASCADE_CLOUD_USD`, default 0.50, per run) **and** excluded from the launcher
+unless you opt in.
 
 ## Run
+
+**Agentic flow (recommended).** From any directory you want to build in:
+
+```powershell
+# Windows PowerShell 5.1 (no `pwsh`? use `powershell`; PS7 users can use `pwsh`):
+powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1                    # build here, local mesh only
+powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -ProjectDir C:\src\myapp
+powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Check             # validate wiring, don't launch
+powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -WithCloud         # also wire paid Tier 4 (opt-in)
+```
+
+This opens a Claude Code session that **is Tier 3** — it drives `edge-npu` /
+`edge-gpu` for the bulk work, gates with `edge-verify`, reasons hard parts
+itself, and never touches the paid API (unless `-WithCloud`).
+
+### Using it — and confirming it actually delegated
+
+1. **Check the wiring.** In the new session run `/mcp`. Expect exactly three,
+   all `✔ connected`: `edge-npu` (3 tools), `edge-gpu` (2), `edge-verify` (3),
+   and **no `edge-cloud`**. ("connected" means the server process answered — the
+   NPU itself compiles lazily on the first `route`/`draft` call, a one-time
+   ~12 s pause, not a hang.) Press `Esc` to exit the menu.
+2. **Give it a coding task**, e.g. *"write a Python function that merges two
+   sorted lists"*. It emits a `routing_dispatch` block, calls `edge-npu.route`
+   → `edge-npu.draft`, gates the draft with `edge-verify`, and only escalates
+   to `edge-gpu` (or reasons it out itself) if the gate fails.
+3. **Verify it didn't just fake it.** Every tool call is recorded to
+   `runs/<server>.rec`. After a task, a fresh `runs/edge-npu.rec` /
+   `runs/edge-verify.rec` (and a *stale* `edge-gpu.rec` / `edge-cloud.rec` for
+   work that stayed local) is independent proof of which silicon actually ran —
+   the recorder can't be talked into lying the way a chat reply can.
+
+> **Verified end-to-end (2026-05-18).** The merge-two-sorted-lists task above
+> ran entirely on Tier 1: `edge-npu.route` + `draft`, `edge-verify` syntax +
+> functional gate, **zero** `edge-gpu` / `edge-cloud` calls — confirmed against
+> the `.rec` recorder, not just the transcript. The policy also correctly
+> overrode the 1.5B router over-rating the prompt's difficulty, staying on the
+> cheap tier instead of escalating. The escalation/repair path
+> (gate-fail → NPU→GPU climb → `repair_prompt` loop) is the next thing to
+> harden.
+
+**Standalone cascade (demo).**
 
 ```bash
 uv run python cli.py "write a binary search in python"

@@ -50,3 +50,18 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+
+      # LOCAL ONLY -- the repair/escalation regression gate. Drives the real
+      # NPU->verify->GPU->re-gate->cap loop and asserts the invariants that
+      # must always hold: the deterministic gate REJECTS a known-bad draft and
+      # NO paid (edge-cloud) call ever happens. The stochastic GPU outcome
+      # ([OK] repaired vs [CAP] -> Tier 3) is not a failure. SKIPs (exit 0)
+      # without accel/hardware/Ollama so CI and hardware-less pushes are never
+      # blocked; CI must NOT invoke this (pre-push stage only).
+      - id: repair-path-gate
+        name: local repair/escalation regression gate (LOCAL ONLY, skips w/o hw)
+        entry: bash scripts/probe_repair_path.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
