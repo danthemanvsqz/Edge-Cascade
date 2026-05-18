@@ -3,6 +3,7 @@ name = "edge-cascade"
 version = "0.1.0"
 description = "Multi-accelerator (NPU/GPU/cloud) inference cascade with verifier-gated escalation, look-ahead speculation, and a credit guard."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40",
