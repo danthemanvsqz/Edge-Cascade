@@ -124,6 +124,26 @@ on harder tasks, but the cheap tier resolves more prompts on its own than the
 - **`/edge-cascade`** skill — route one task through the mesh on demand once
   the MCP servers are connected (see `ARCHITECTURE.md §7`).
 
+**Observability (read-only over the recorder — not chat narration):**
+
+Every MCP tool call and every `cli.py` task appends one deterministic record
+(`cascade/logfmt.py`) to `runs/*.rec`, each carrying a `ts` + per-process
+`run_id`. Both tools below are pure consumers of that stream — the auditable
+ground truth the RUNBOOK honesty rule requires.
+
+- **`replay.py`** — reconstructs the true ordered timeline. Merges the five
+  streams, sorts by wall-clock `ts`, splits into **episodes** (idle-gap
+  heuristic; each `cascade.rec` task is an exact, isolated boundary), and
+  prints the real hop sequence: `route → draft → verify → repair_prompt →
+  gpu.generate → …`. Flags: `--last N`, `--run <id>`, `--server <name>`,
+  `--failures-only`, `--gap <s>`, `--json`. Records written before the
+  `ts`/`run_id` change degrade to a clearly-marked "legacy" episode.
+- **`dashboard.py`** — a self-refreshing terminal health view (stdlib ANSI
+  redraw, default 2 s; `--once`/`--json` for a snapshot): per-server liveness
+  + latency percentiles, draft-truncation rate, gate failures, escalations,
+  and the headline **spend invariant** — `edge-cloud` calls + $ must read
+  `$0.00`, rendered RED the instant they do not.
+
 **Standalone cascade (legacy / demo — stateless, single-shot):**
 
 - **`cli.py`** — the original NPU→GPU→cloud cascade with a live tee log
