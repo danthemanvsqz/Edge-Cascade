@@ -1,0 +1,61 @@
+{
+  "name": "@danthemanvsqz/vinyl",
+  "version": "0.0.0",
+  "description": "Streaming server-rendered async JSX, htmx-driven. Zero client state. SSR is the vinyl record of web tech.",
+  "keywords": [
+    "jsx",
+    "ssr",
+    "streaming",
+    "htmx",
+    "websocket",
+    "server-components",
+    "suspense"
+  ],
+  "license": "MIT",
+  "author": "danthemanvsqz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danthemanvsqz/vinyl.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/jsx-runtime.d.ts",
+      "import": "./dist/jsx-runtime.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/jsx-dev-runtime.d.ts",
+      "import": "./dist/jsx-dev-runtime.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.15.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
+  }
+}
