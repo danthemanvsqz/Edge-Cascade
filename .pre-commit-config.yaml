@@ -30,6 +30,18 @@ repos:
 
   - repo: local
     hooks:
+      # Runs FIRST at pre-push so a blocked main-push fails instantly,
+      # before the slow test/hardware gates below. Local defense-in-depth
+      # only -- GitHub branch protection on main is the real gate.
+      - id: no-direct-push-to-main
+        name: block direct push to main (use a PR)
+        entry: bash scripts/no-direct-push-to-main.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        fail_fast: true                 # stop here -- don't run the slow
+        stages: [pre-push]              # test/hardware gates on a blocked push
+
       - id: pytest
         name: pytest (unit + smoke, scoped 100% gate)
         entry: uv run pytest
