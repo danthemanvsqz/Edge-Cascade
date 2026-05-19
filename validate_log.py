@@ -26,51 +26,33 @@ from cascade.feedback import CheckFailure, build_repair_prompt
 from cascade.logfmt import parse_stream
 
 ROOT = Path(__file__).parent
-LOG = ROOT / "runs" / "cascade.log"
 REC = ROOT / "runs" / "cascade.rec"
 DSL = ROOT / "checks.dsl"
-_TS = re.compile(r"^\d\d:\d\d:\d\d ")
 
 
-# ---- log -> (query, answer) records -----------------------------------------
+# ---- .rec stream -> (query, answer) records ---------------------------------
 
-def parse_records(text: str) -> list[tuple[str, str]]:
-    records, query, collecting, buf = [], None, False, []
-    for ln in text.splitlines():
-        q = re.match(r"^\d\d:\d\d:\d\d ---- QUERY: (.*)", ln)
-        if q:
-            if collecting:
-                records.append((query or "?", "\n".join(buf)))
-                collecting = False
-            query = q.group(1)
-            continue
-        if re.match(r"^\d\d:\d\d:\d\d .*ANSWER:$", ln):
-            collecting, buf = True, []
-            continue
-        if collecting:
-            if _TS.match(ln):
-                records.append((query or "?", "\n".join(buf)))
-                collecting = False
-            else:
-                buf.append(ln)
-    if collecting:
-        records.append((query or "?", "\n".join(buf)))
-    return records
+_KEEP = frozenset({"query", "answer"})
 
 
 def load_records() -> list[tuple[str, str]]:
-    """(query, answer) records, preferring the deterministic .rec stream.
+    """(query, answer) records from the deterministic .rec stream.
 
-    cascade.rec is length-framed (cascade/logfmt.py) so it parses
-    unambiguously even when an answer contains fake timestamps or the record
-    sentinels. Falls back to regex-scraping the legacy human .log only when
-    no structured stream exists (old runs / hand-written logs)."""
-    if REC.exists() and REC.stat().st_size:
-        return [
-            (r.get("query", "?"), r.get("answer", ""))
-            for r in parse_stream(REC.read_text(encoding="utf-8"))
-        ]
-    return parse_records(LOG.read_text(encoding="utf-8"))
+    cascade.rec is byte-length-framed (cascade/logfmt.py): it parses
+    unambiguously even when an answer embeds fake timestamps or the record
+    sentinels. Bytes in (no decode->re-encode round trip), and the `keep`
+    projection skips materialising the fields we never read here
+    (ts/run_id/final_tier/total_latency_s/trace -- trace is the large one).
+
+    The legacy regex-scraped human .log path has been retired: .rec is
+    canonical, so an absent/empty stream is simply "no records" -- not a
+    fallback to an ambiguously-parseable format."""
+    if not REC.exists() or not REC.stat().st_size:
+        return []
+    return [
+        (r.get("query", "?"), r.get("answer", ""))
+        for r in parse_stream(REC.read_bytes(), keep=_KEEP)
+    ]
 
 
 # ---- answer -> compilable code (repairs truncated fences) -------------------
@@ -199,11 +181,18 @@ class Check:
     requirement: str = ""
 
 
-def _defs_only(code: str) -> str | None:
-    """Blank out top-level demo/script lines, keeping defs/classes/imports.
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
-    Blanking (not ast.unparse) preserves original line numbers, so the
-    located error fed to repair matches the code the model is shown.
+
+def _defs_for(code: str, syms: set[str] | None) -> str | None:
+    """Blank top-level lines, keeping defs/classes/imports -- and, when `syms`
+    is given, only the defs/classes whose name is in it (imports are always
+    kept; they are cheap and the slice may need them).
+
+    Blanking (not ast.unparse) preserves original line numbers, so a located
+    error still matches the code the model is shown. Returns None when there
+    is no useful slice: a syntax error, or `syms` matched no top-level symbol
+    -- the caller then falls back to the whole program.
     """
     try:
         tree = ast.parse(code)
@@ -213,8 +202,11 @@ def _defs_only(code: str) -> str | None:
     keep = [False] * (len(lines) + 2)
     found = False
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef, ast.Import, ast.ImportFrom)):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for i in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                keep[i] = True
+            found = found or syms is None  # imports alone aren't a useful slice
+        elif isinstance(node, _DEFS) and (syms is None or node.name in syms):
             found = True
             for i in range(node.lineno, (node.end_lineno or node.lineno) + 1):
                 keep[i] = True
@@ -223,6 +215,12 @@ def _defs_only(code: str) -> str | None:
     return "\n".join(
         lines[i - 1] if keep[i] else "" for i in range(1, len(lines) + 1)
     )
+
+
+def _defs_only(code: str) -> str | None:
+    """Keep ALL top-level defs/classes/imports (the module-level-crash
+    fallback in run()). Thin wrapper -- the AST walk lives in _defs_for."""
+    return _defs_for(code, None)
 
 
 def _fmt_exc(e: BaseException) -> str:
@@ -301,16 +299,64 @@ def _make_repairer(tier: str):
     return "NVIDIA GPU", lambda p: w.generate(p).text
 
 
+def _slice_for_repair(code: str, fails: list[Check]) -> str:
+    """The source the model is shown: only the symbols implicated by failing
+    checks (plus imports). Falls back to the whole program when the slice is
+    empty -- a module-level <exec> failure, or symbols not at top level."""
+    syms = {c.sym for c in fails if c.sym != "<exec>"}
+    sliced = _defs_for(code, syms) if syms else None
+    return sliced if sliced is not None else code
+
+
+def _bounded_failures(fails: list[Check]) -> tuple[list[CheckFailure], str]:
+    """Dedupe failures by (sym, expr) keeping the latest observed, cap each
+    observed length, and cap the count. Returns (failures, note); the note
+    tells the model the code/list is a projection of a larger program so it
+    doesn't assume what it sees is everything."""
+    from cascade.config import CONFIG
+
+    seen: dict[tuple[str, str], Check] = {}
+    for c in fails:
+        seen[(c.sym, c.expr)] = c  # later wins -> keep the latest observed
+    uniq = list(seen.values())
+    shown = uniq[: CONFIG.repair_max_failures]
+    cap = CONFIG.repair_observed_maxlen
+    out = [
+        CheckFailure(
+            c.expr,
+            c.observed if len(c.observed) <= cap
+            else c.observed[: cap - 1] + "…",
+            c.requirement,
+        )
+        for c in shown
+    ]
+    syms = sorted({c.sym for c in shown if c.sym != "<exec>"})
+    bits = []
+    if syms:
+        bits.append(f"only the {len(syms)} implicated symbol(s) "
+                    f"({', '.join(syms)})")
+    if len(shown) < len(uniq):
+        bits.append(f"first {len(shown)} of {len(uniq)} failing checks")
+    return out, "; ".join(bits)
+
+
 def repair(task: str, code: str, fails: list[Check], blocks,
            tier: str = "gpu", rounds: int = 2) -> tuple[bool, str]:
-    """Feed failures back to a model (gpu or npu) via the repair protocol."""
+    """Feed failures back to a model (gpu or npu) via the repair protocol.
+
+    The prompt is sliced to the implicated symbols and the failures list is
+    deduped/capped (cascade.config repair_* knobs) so a deep synthesis run
+    doesn't blow the local model's context -- critical for the NPU tier's
+    640-token repair cap. `code`/`fails` recycle in FULL across rounds (run()
+    validates the whole program); the slice is recomputed per round at
+    prompt-build time, so accreted scaffolding never compounds."""
     label, gen = _make_repairer(tier)
     if label is None:
         return False, gen  # gen holds the reason string
     for r in range(1, rounds + 1):
+        failures, note = _bounded_failures(fails)
         prompt = build_repair_prompt(
-            task, code,
-            [CheckFailure(c.expr, c.observed, c.requirement) for c in fails],
+            task, _slice_for_repair(code, fails), failures, note=note,
         )
         print(f"      -> repair protocol -> {label} (round {r})")
         fixed = extract_code(gen(prompt))
