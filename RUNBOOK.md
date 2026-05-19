@@ -72,6 +72,24 @@ Success criteria (check `.rec` yourself, report counts honestly):
 - `edge-cloud.rec` **stale** — zero spend.
 - Your narration's tool counts match the `.rec` counts exactly.
 
+## C. At-a-glance verification (replay + dashboard)
+
+These operationalize the honesty rule — they read `runs/*.rec` directly, so
+they are the proof, not your narration. Both are read-only and need no
+hardware.
+
+- **`uv run python replay.py --last 1`** — after any delegated step, this
+  prints the *actual* hop sequence of the most recent episode (`route →
+  draft → verify → repair_prompt → gpu.generate → …`). Use it to confirm what
+  you claim happened really did, in that order. `--failures-only` isolates
+  the gate failures; `--run <id>` / `--server edge-gpu` narrow it.
+- **`uv run python dashboard.py`** — a live health view to keep open in a
+  second pane during a session (`--once` for a one-shot, `--json` for a
+  scripted check). The **SPEND** panel is the load-bearing one: it must read
+  `edge-cloud calls=0  total=$0.00  OK`. If it ever goes RED / `NONZERO !`,
+  the local-first invariant broke — treat any "stayed cheap" claim as false
+  and stop (this is the same condition as the `edge-cloud` stop below).
+
 ## Known issues to expect (don't re-discover them)
 
 - **Router miscalibration:** ~0.65/"standard" for almost everything, ~0.85+

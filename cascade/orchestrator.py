@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -121,6 +122,9 @@ def cascade_session(
         f"Tier-2=NVIDIA RTX 5070 Ti | Tier-3={cloud.status}"
     )
     seq = count()
+    # Process-stable id so replay/dashboard can tie cascade.rec records to one
+    # session; seq resets to 0 per process, so it alone is not enough.
+    run_id = uuid.uuid4().hex[:12]
 
     def log(t0: float, msg: str) -> None:
         logger.info(f"  [{time.perf_counter() - t0:6.2f}s] {msg}")
@@ -230,6 +234,8 @@ def cascade_session(
             for h in result.trace
         )
         rec = dump_record(next(seq), {
+            "ts": f"{time.time():.3f}",
+            "run_id": run_id,
             "query": query,
             "answer": result.answer,
             "final_tier": result.final_tier,

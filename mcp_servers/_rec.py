@@ -23,6 +23,7 @@ import functools
 import json
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from itertools import count
 from pathlib import Path
@@ -50,14 +51,26 @@ def make_recorder(server: str) -> Emit:
     State -- the append path and the monotonic seq -- lives in the closure,
     not an object. The seq is `itertools.count()`: a lazy generator, so there
     is no counter to read-modify-write.
+
+    `run_id` is created once per server process (the seq resets to 0 on every
+    restart, so it alone cannot tie records to a process); `ts` is wall-clock
+    seconds, the only thing that orders records *across* the per-server files.
     """
     path = ROOT / "runs" / f"{server}.rec"
     path.parent.mkdir(parents=True, exist_ok=True)
     seq = count()
+    run_id = uuid.uuid4().hex[:12]
 
     def emit(tool: str, fields: dict[str, str]) -> None:
         rec = dump_record(
-            next(seq), {"server": server, "tool": tool, **fields}
+            next(seq),
+            {
+                "server": server,
+                "tool": tool,
+                "ts": f"{time.time():.3f}",
+                "run_id": run_id,
+                **fields,
+            },
         )
         # Single write of the whole record: append-only, single-writer.
         with open(path, "a", encoding="utf-8") as fh:
