@@ -13,7 +13,7 @@ def _records(**streams: list[dict]) -> list[dict]:
     """Build {src: .rec text} from dicts and run the real merge layer, so
     compute_metrics sees exactly what the live tool sees."""
     return R.tag_and_merge({
-        src: "".join(dump_record(i, r) for i, r in enumerate(recs))
+        src: b"".join(dump_record(i, r) for i, r in enumerate(recs))
         for src, recs in streams.items()
     })
 

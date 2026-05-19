@@ -40,10 +40,14 @@ DEFAULT_GAP = 30.0
 
 # ---- load + merge + order ---------------------------------------------------
 
-def load_streams(runs_dir: Path) -> dict[str, str]:
-    """{source_stem: raw_text} for every runs/*.rec that exists (FS touch)."""
+def load_streams(runs_dir: Path) -> dict[str, bytes]:
+    """{source_stem: raw bytes} for every runs/*.rec that exists (FS touch).
+
+    Bytes, not text: the .rec grammar is byte-length-framed, so parse_stream
+    consumes bytes directly -- reading text here would force a decode now and
+    a re-encode inside the parser for no benefit."""
     return {
-        p.stem: p.read_text(encoding="utf-8")
+        p.stem: p.read_bytes()
         for p in sorted(runs_dir.glob("*.rec"))
         if p.stat().st_size
     }
@@ -63,7 +67,7 @@ def _is_cascade(rec: dict) -> bool:
     return rec.get("_src") == "cascade" or "final_tier" in rec
 
 
-def tag_and_merge(streams: dict[str, str]) -> list[dict]:
+def tag_and_merge(streams: dict[str, bytes]) -> list[dict]:
     """Parse every stream, tag each record with its source + a global read
     index, and return one list ordered for replay. Pure (no FS).
 

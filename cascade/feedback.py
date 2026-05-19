@@ -29,7 +29,7 @@ You are repairing code that failed automated validation. Fix it.
 ```
 
 # FAILED CHECKS
-Each item is an assertion that MUST hold true. It failed as shown.
+{note}Each item is an assertion that MUST hold true. It failed as shown.
 {failures}
 
 # OUTPUT CONTRACT
@@ -45,7 +45,7 @@ Rules:
 
 
 def build_repair_prompt(
-    task: str, code: str, failures: list[CheckFailure]
+    task: str, code: str, failures: list[CheckFailure], note: str = ""
 ) -> str:
     blocks = []
     for i, f in enumerate(failures, 1):
@@ -53,6 +53,15 @@ def build_repair_prompt(
         lines.append(("   " if lines else f"{i}. ") + f"assert: {f.expr}")
         lines.append(f"   observed: {f.observed}")
         blocks.append("\n".join(lines))
+    # When the caller sliced the program to the implicated symbols, say so --
+    # otherwise the model assumes the code shown is the whole program and may
+    # delete the parts it can't see.
+    note_line = (
+        f"NOTE: showing {note} -- the code above is the implicated part of a "
+        f"larger program; fix it without dropping the rest.\n"
+        if note else ""
+    )
     return _PROTOCOL.format(
-        task=task.strip(), code=code.strip(), failures="\n".join(blocks)
+        task=task.strip(), code=code.strip(),
+        note=note_line, failures="\n".join(blocks),
     )

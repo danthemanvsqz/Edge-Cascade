@@ -9,9 +9,9 @@ import replay as R
 from cascade.logfmt import dump_record
 
 
-def _stream(*recs: dict) -> str:
-    """Serialise records into one .rec stream (the real grammar)."""
-    return "".join(dump_record(i, r) for i, r in enumerate(recs))
+def _stream(*recs: dict) -> bytes:
+    """Serialise records into one .rec stream (the real grammar, bytes)."""
+    return b"".join(dump_record(i, r) for i, r in enumerate(recs))
 
 
 def _tool(ts: str | None, run: str = "r1", tool: str = "draft") -> dict:
