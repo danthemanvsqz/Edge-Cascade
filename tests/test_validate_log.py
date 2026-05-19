@@ -1,28 +1,12 @@
 """Regression net for the log/DSL/repair engine (validate_log.py). Pure
-logic, no hardware: log parsing, code extraction + truncation repair,
-defs-only line preservation, located errors, the DSL parser, and run()."""
+logic, no hardware: code extraction + truncation repair, defs-only /
+symbol-slice line preservation, located errors, the DSL parser, and run().
+
+The legacy human-.log regex scraper (parse_records) was retired when the
+byte-framed .rec stream became canonical -- there is nothing to test there."""
 import pytest
 
 import validate_log as V
-
-LOG = """\
-12:00:00 === look-ahead started ===
-12:00:01 ---- QUERY: first task
-12:00:02 ANSWER:
-```python
-a = 1
-```
-12:00:05 ---- QUERY: second task
-12:00:06 ANSWER:
-hello
-"""
-
-
-def test_parse_records_query_boundaries_and_final_flush():
-    recs = V.parse_records(LOG)
-    assert len(recs) == 2
-    assert recs[0][0] == "first task" and "a = 1" in recs[0][1]
-    assert recs[1][0] == "second task" and "hello" in recs[1][1]
 
 
 def test_extract_code_variants():
@@ -129,3 +113,57 @@ def test_is_avl_detects_imbalance():
 
     with pytest.raises(AssertionError):
         V.is_avl(Tree)
+
+
+# ---- symbol slicing + bounded failures (repair-context control) -------------
+
+_PROG = (
+    "import os\n"            # 1  always kept
+    "def add(a, b):\n"       # 2  target
+    "    return a + b\n"     # 3
+    "def mul(a, b):\n"       # 4  not targeted -> blanked
+    "    return a * b\n"     # 5
+    "print(add(1, 2))\n"     # 6  module-level demo -> blanked
+)
+
+
+def test_defs_for_slices_to_named_symbols_only():
+    sliced = V._defs_for(_PROG, {"add"})
+    out = sliced.splitlines()
+    # imports + target kept at their ORIGINAL line numbers (blanking, not
+    # rewriting); splitlines() drops the trailing blanks left by mul/demo.
+    assert out[0] == "import os"          # line 1
+    assert out[1] == "def add(a, b):"     # line 2 -- number preserved
+    assert out[2] == "    return a + b"   # line 3
+    assert "def mul" not in sliced and "return a * b" not in sliced
+    assert "print(add" not in sliced      # module-level demo blanked
+    # no matching top-level symbol -> None (caller falls back to full code)
+    assert V._defs_for(_PROG, {"nope"}) is None
+    assert V._defs_for(_PROG, set()) is None
+    # syms=None keeps everything (this is what _defs_only delegates to)
+    assert V._defs_for(_PROG, None) == V._defs_only(_PROG)
+
+
+def test_slice_for_repair_falls_back_to_full_program():
+    full = V._slice_for_repair(_PROG, [V.Check("<exec>", "x", False, "boom")])
+    assert full == _PROG                                  # <exec> -> whole
+    miss = V._slice_for_repair(_PROG, [V.Check("ghost", "g()", False, "e")])
+    assert miss == _PROG                                  # unknown sym -> whole
+    sl = V._slice_for_repair(_PROG, [V.Check("mul", "mul(2,3)==6", False, "5")])
+    assert "def mul" in sl and "def add" not in sl and "import os" in sl
+
+
+def test_bounded_failures_dedupes_caps_and_notes():
+    fails = [V.Check("f", "long", False, "A" * 1000),      # over the cap
+             V.Check("f", "dup", False, "OLD"),
+             V.Check("f", "dup", False, "NEW")]            # dedupe: latest wins
+    fails += [V.Check("g", f"e{i}", False, "x") for i in range(8)]
+
+    out, note = V._bounded_failures(fails)
+
+    assert len(out) == 6                                   # default count cap
+    dup = next(c for c in out if c.expr == "dup")
+    assert dup.observed == "NEW"                            # latest observed
+    long = next(c for c in out if c.expr == "long")         # in the window
+    assert len(long.observed) == 600 and long.observed.endswith("…")
+    assert "first 6 of 10" in note and "implicated symbol(s)" in note

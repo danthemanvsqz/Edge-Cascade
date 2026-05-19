@@ -242,7 +242,9 @@ def cascade_session(
             "total_latency_s": f"{result.total_latency_s:.2f}",
             "trace": trace,
         })
-        with open(rec_path, "a", encoding="utf-8") as fh:
+        # dump_record is bytes-native (the value is UTF-8 encoded once, inside
+        # logfmt) -- append in binary so there is no text-layer re-encode.
+        with open(rec_path, "ab") as fh:
             fh.write(rec)
 
     def run(query: str) -> CascadeResult:

@@ -73,7 +73,9 @@ def make_recorder(server: str) -> Emit:
             },
         )
         # Single write of the whole record: append-only, single-writer.
-        with open(path, "a", encoding="utf-8") as fh:
+        # dump_record is bytes-native (value UTF-8 encoded once) -> append in
+        # binary so there is no text-layer re-encode.
+        with open(path, "ab") as fh:
             fh.write(rec)
 
     return emit

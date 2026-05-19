@@ -67,6 +67,22 @@ class Config:
     npu_repair_max_tokens: int = 640
     gpu_max_new_tokens: int = 1024
     cloud_max_tokens: int = 16000
+
+    # Repair-prompt budget (offline validate_log repair loop). The prompt is
+    # sliced to the implicated symbols and the failures list deduped/capped so
+    # a deep synthesis run can't blow the local model's context -- decisive for
+    # the npu_repair_max_tokens=640 cap above, where a whole-program prompt
+    # never fits. Tune via CASCADE_REPAIR_MAX_FAILURES / _OBSERVED_MAXLEN.
+    repair_max_failures: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CASCADE_REPAIR_MAX_FAILURES", "6")
+        )
+    )
+    repair_observed_maxlen: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CASCADE_REPAIR_OBSERVED_MAXLEN", "600")
+        )
+    )
     # difficulty < this  -> Tier-1 (NPU/iGPU) draft handles it
     # [this, cloud)       -> Tier-2 (NVIDIA GPU)
     # >= cloud            -> Tier-3 (cloud), skipping the GPU
