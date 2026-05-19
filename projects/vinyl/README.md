@@ -22,6 +22,15 @@ Early development. Built milestone by milestone — see
 - **Node ≥ 20**, ESM-only, TypeScript types shipped.
 - Defaults: vitest, tsup, htmx 2.x, better-sqlite3 (demo only).
 
+## Provenance
+
+Built by **Edge-Cascade — the machine that built the machine.** Vinyl is the
+machine; the local inference mesh that constructs it is the one that built it.
+This source lives *inside* the factory (`projects/vinyl/`, embedded via
+`git subtree`, full M0→ history intact) so the artifact and its build record
+travel together. Per-run build telemetry (the `.rec` recorder, replayed and
+reconciled) is committed under [`../../evidence/`](../../evidence/).
+
 ## License
 
 MIT
