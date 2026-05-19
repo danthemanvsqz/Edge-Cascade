@@ -86,6 +86,9 @@ function isThenable(v: unknown): v is PromiseLike<unknown> {
   );
 }
 
+/** Swallow a throwaway probe promise's settlement (see walkSync). */
+const noop = (): void => {};
+
 function slot(id: string, inner: string, oob: boolean): string {
   const attr = oob ? ` hx-swap-oob="true"` : "";
   return `<${BOUNDARY_TAG} id="${id}"${attr}>${inner}</${BOUNDARY_TAG}>`;
@@ -144,7 +147,14 @@ function* walkSync(node: unknown, idx: number, st: Walk): Generator<string> {
 
   if (typeof type === "function") {
     const result: unknown = type({ ...node.props, children: node.children });
-    if (isThenable(result)) throw PENDING;
+    if (isThenable(result)) {
+      // This call is only a probe — the real async render re-invokes the
+      // component under the enclosing <Suspense>. Swallow this throwaway
+      // promise's settlement so a rejecting component can't escape as an
+      // unhandled rejection before its <ErrorBoundary> ever handles it.
+      result.then(noop, noop);
+      throw PENDING;
+    }
     yield* walkSync(result, idx, { ...st, path: here });
     return;
   }
@@ -178,7 +188,10 @@ function* walkChildrenSync(
  */
 function suspenseString(node: VNode, idx: number, st: Walk): string {
   const props = node.props as SuspenseProps;
-  const key = typeof props.key === "string" ? props.key : null;
+  // The author's `key` lives on the vnode — normalizeProps strips it out of
+  // props. path + key is what keeps a boundary's id stable across re-renders
+  // even when sibling order shifts (locked M3 id-scheme requirement).
+  const key = typeof node.key === "string" ? node.key : null;
   const id = boundaryId(st.path, idx, key);
   const here = childPath(st.path, idx);
 
@@ -305,8 +318,7 @@ class Scheduler {
   private readonly set = new Set<Promise<Settled>>();
 
   register(produce: () => Promise<string>): void {
-    let p!: Promise<Settled>;
-    p = produce().then(
+    const p: Promise<Settled> = produce().then(
       (html) => ({ p, html }),
       // produce() handles its own errors; defensive empty frame.
       () => ({ p, html: "" }),
