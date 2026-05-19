@@ -12,14 +12,25 @@ export {
   isVNode,
   flattenChildren,
   normalizeProps,
+  raw,
+  isRaw,
 } from "./vnode.js";
 export type {
   VNode,
   VNodeChild,
   RawChild,
+  RawNode,
   Props,
   Component,
   VNodeType,
   FragmentType,
 } from "./vnode.js";
 export { jsx, jsxs } from "./jsx-runtime.js";
+export {
+  renderToString,
+  renderToStream,
+  escapeText,
+  escapeAttr,
+  VOID_ELEMENTS,
+} from "./render.js";
+export type { RenderContext } from "./render.js";

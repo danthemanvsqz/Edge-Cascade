@@ -9,6 +9,27 @@
 export const Fragment = Symbol("vinyl.Fragment");
 export type FragmentType = typeof Fragment;
 
+const RAW: unique symbol = Symbol("vinyl.raw");
+
+/** Pre-escaped HTML placed in the tree. The sole bypass of text escaping. */
+export interface RawNode {
+  [RAW]: true;
+  html: string;
+}
+
+/** Explicit, opt-in unescaped HTML escape hatch (renderable as a child). */
+export function raw(html: string): RawNode {
+  return { [RAW]: true, html };
+}
+
+export function isRaw(value: unknown): value is RawNode {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as RawNode)[RAW] === true
+  );
+}
+
 export type Props = Record<string, unknown>;
 export type Component = (
   props: Props,
@@ -23,7 +44,7 @@ export interface VNode {
 }
 
 /** A normalized, renderable child (post-flatten). */
-export type VNodeChild = VNode | string | number;
+export type VNodeChild = VNode | RawNode | string | number;
 /** Accepted child input before flattening. */
 export type RawChild = VNodeChild | boolean | null | undefined | RawChild[];
 
@@ -50,7 +71,7 @@ export function flattenChildren(raw: unknown): VNodeChild[] {
       for (const c of child) walk(c);
     } else if (typeof child === "string" || typeof child === "number") {
       out.push(child);
-    } else if (isVNode(child)) {
+    } else if (isVNode(child) || isRaw(child)) {
       out.push(child);
     }
     // null | undefined | boolean | other → dropped
