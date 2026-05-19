@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "mcp__edge-npu__status",
+      "mcp__edge-gpu__status",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git branch *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'M0: skeleton — ESM/TS/tsup/vitest/eslint/CI + ARCHITECTURE.md *)"
+    ]
+  }
+}
