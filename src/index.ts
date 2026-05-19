@@ -34,3 +34,6 @@ export {
   VOID_ELEMENTS,
 } from "./render.js";
 export type { RenderContext } from "./render.js";
+export { Suspense, ErrorBoundary } from "./suspense.js";
+export type { SuspenseProps, ErrorBoundaryProps } from "./suspense.js";
+export { safeSeg, childPath, boundaryId } from "./ids.js";
