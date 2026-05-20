@@ -18,9 +18,10 @@ def _records(**streams: list[dict]) -> list[dict]:
     })
 
 
-def _t(tool: str, result: str, ok: str = "true", ts: str = "1.0") -> dict:
-    return {"tool": tool, "ok": ok, "ts": ts, "run_id": "r",
-            "latency_ms": "10.0", "result": result}
+def _t(tool: str, result: str, ok: str = "true", ts: str = "1.0",
+       run_id: str = "r", latency_ms: str = "10.0") -> dict:
+    return {"tool": tool, "ok": ok, "ts": ts, "run_id": run_id,
+            "latency_ms": latency_ms, "result": result}
 
 
 # ---- the spend invariant (the headline) -------------------------------------
@@ -117,6 +118,38 @@ def test_pctl_is_total_and_nearest_rank():
     assert D._pctl([1, 2, 3, 4], 0) == 1                # 0th = min
     assert D._pctl([1, 2, 3, 4], 100) == 4              # 100th = max
     assert D._pctl([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 95) == 10.0
+
+
+def test_per_server_separates_cold_from_steady_per_run_id():
+    # Two NPU run_ids, each with a big first-call (the vpux compile / model
+    # load) + small subsequent drafts. Steady percentiles must reflect the
+    # small ones; cold_max must surface the compile.
+    npu = [
+        _t("route", "{}", ts="100.0", run_id="A", latency_ms="20000.0"),  # cold A
+        _t("draft", "{}", ts="101.0", run_id="A", latency_ms="500.0"),
+        _t("draft", "{}", ts="102.0", run_id="A", latency_ms="600.0"),
+        _t("route", "{}", ts="200.0", run_id="B", latency_ms="18000.0"),  # cold B
+        _t("draft", "{}", ts="201.0", run_id="B", latency_ms="700.0"),
+    ]
+    s = D.compute_metrics(_records(**{"edge-npu": npu}))["per_server"]["edge-npu"]
+    # Steady = 500, 600, 700 -> max=700, p95=700.
+    assert s["max_ms"] == 700.0
+    assert s["p95_ms"] == 700.0
+    # Cold pool = {18000, 20000}; the worst observed compile is the headline.
+    assert s["cold_max_ms"] == 20000.0
+
+
+def test_status_calls_excluded_from_latency():
+    # `status` is a cheap probe, NOT generation work; counting it as the cold
+    # call would mask the real compile in the panel.
+    npu = [
+        _t("status", "{}", ts="100.0", run_id="A", latency_ms="5.0"),      # ignored
+        _t("route", "{}", ts="101.0", run_id="A", latency_ms="20000.0"),   # cold
+        _t("draft", "{}", ts="102.0", run_id="A", latency_ms="500.0"),     # steady
+    ]
+    s = D.compute_metrics(_records(**{"edge-npu": npu}))["per_server"]["edge-npu"]
+    assert s["cold_max_ms"] == 20000.0   # the route, not the 5ms status
+    assert s["p50_ms"] == 500.0          # the draft, not the 5ms status
 
 
 def test_render_is_total_and_marks_spend_state():

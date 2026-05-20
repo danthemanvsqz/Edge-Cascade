@@ -66,6 +66,36 @@ def _pctl(values: list[float], q: float) -> float:
     return s[k]
 
 
+def _split_cold_steady(
+    records: list[dict],
+) -> tuple[list[float], list[float]]:
+    """Partition one server's latencies into (cold, steady).
+
+    The NPU's vpux compile (and Ollama's first model load) happens on the
+    FIRST model-touching call per server process; counting it in p50/p95
+    skews the panel into "tier is slow" when steady-state is fine. Per
+    (run_id) cohort -- a run_id is per server process, so it's the cleanest
+    proxy for "one MCP server lifetime" -- the first non-`status` call's
+    latency is the COLD call; subsequent ones feed STEADY. `status` calls
+    are excluded entirely (they are cheap probes, not generation work)."""
+    cohorts: dict[str, list[dict]] = {}
+    for r in records:
+        cohorts.setdefault(r.get("run_id") or "", []).append(r)
+    cold: list[float] = []
+    steady: list[float] = []
+    for cohort in cohorts.values():
+        first = True
+        for r in cohort:
+            if r.get("tool") == "status":
+                continue
+            lat = _f(r, "latency_ms")
+            if lat is None:
+                continue
+            (cold if first else steady).append(lat)
+            first = False
+    return cold, steady
+
+
 def _final_tier(ep: list[dict]) -> str:
     """Episode outcome: exact from a cascade.rec record, else inferred from
     the per-server tool sequence (heuristic -- documented as such)."""
@@ -97,7 +127,7 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
     per_server: dict[str, dict] = {}
     for srv in SERVERS:
         rs = [r for r in records if r.get("_src") == srv]
-        lat = [v for v in (_f(r, "latency_ms") for r in rs) if v is not None]
+        cold_lat, steady_lat = _split_cold_steady(rs)
         ts = [float(r["ts"]) for r in rs if r.get("ts")]
         ok = sum(r.get("ok") == "true" for r in rs)
         err = sum(r.get("ok") == "false" for r in rs)
@@ -107,9 +137,14 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
             "err": err,
             "success_pct": (100.0 * ok / (ok + err)) if (ok + err) else None,
             "age_s": (now - max(ts)) if ts else None,
-            "p50_ms": _pctl(lat, 50),
-            "p95_ms": _pctl(lat, 95),
-            "max_ms": max(lat) if lat else 0.0,
+            # steady-state (post-cold) -- what users actually experience
+            "p50_ms": _pctl(steady_lat, 50),
+            "p95_ms": _pctl(steady_lat, 95),
+            "max_ms": max(steady_lat) if steady_lat else 0.0,
+            # cold-start (first non-status call per run_id) -- compile / model load
+            "cold_p50_ms": _pctl(cold_lat, 50),
+            "cold_p95_ms": _pctl(cold_lat, 95),
+            "cold_max_ms": max(cold_lat) if cold_lat else 0.0,
         }
 
     drafts = [r for r in records if r.get("tool") == "draft"]
@@ -216,15 +251,18 @@ def render(m: dict, color: bool = True) -> str:
         f"{dim}source: runs/*.rec (recorder ground truth, not narration){off}",
         "",
         "MCP LIVENESS              calls   ok  err   succ%   last   "
-        "p50ms  p95ms  maxms",
+        "p50ms  p95ms  maxms  coldmx",
     ]
     for srv, s in m["per_server"].items():
         sp = f"{s['success_pct']:5.0f}" if s["success_pct"] is not None \
             else "  -- "
+        # coldmx = the largest first-non-status call across run_ids (i.e.,
+        # the worst observed model-load / compile latency for that tier).
         out.append(
             f"  {srv:<20} {s['calls']:6d} {s['ok']:4d} {s['err']:4d}  "
             f"{sp}   {_age(s['age_s'])} "
-            f"{s['p50_ms']:6.0f} {s['p95_ms']:6.0f} {s['max_ms']:6.0f}")
+            f"{s['p50_ms']:6.0f} {s['p95_ms']:6.0f} {s['max_ms']:6.0f} "
+            f"{s['cold_max_ms']:6.0f}")
 
     p = m["producing"]
     cats = " ".join(f"{k}:{v}" for k, v in p["route_categories"].items()) \
