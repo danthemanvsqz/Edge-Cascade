@@ -181,6 +181,7 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
     round_hist: dict[int, int] = {}
     cap_hits = 0
     over_cap = 0
+    gpu_unavail_eps = 0
     tier_hist: dict[str, int] = {}
     for ep in episodes:
         rounds = sum(r.get("tool") == "repair_prompt" for r in ep)
@@ -191,6 +192,20 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
         tier_hist[tier] = tier_hist.get(tier, 0) + 1
         if tier == "capped->tier3":
             cap_hits += 1
+        # Per-EPISODE bailout: any GPU `available:false` in the episode is one
+        # takeover for the launched session, regardless of how many times the
+        # tool was retried inside it.
+        if any(
+            r.get("tool") == "generate"
+            and isinstance(_result(r), dict)
+            and _result(r).get("available") is False
+            for r in ep
+        ):
+            gpu_unavail_eps += 1
+    # Aggregate: "GPU couldn't, Claude took over" -- the operationally
+    # interesting handoff (vs. cap_hits' mechanism-named field). Either flavor
+    # (loop exhaustion OR Ollama unreachable) puts the work back on Tier 3.
+    tier3_takeovers = cap_hits + gpu_unavail_eps
     gpu_gen = sum(r.get("tool") == "generate" for r in records)
 
     cloud = [r for r in records if r.get("_src") == "edge-cloud"]
@@ -222,6 +237,8 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
             "repair_round_hist": round_hist,
             "cap_hits": cap_hits,
             "over_cap_episodes": over_cap,
+            "gpu_unavailable_episodes": gpu_unavail_eps,
+            "tier3_takeovers": tier3_takeovers,
             "final_tier": tier_hist,
         },
         "spend": {
@@ -295,12 +312,18 @@ def render(m: dict, color: bool = True) -> str:
     over_tag = (
         f"{red}over-cap={over}{off}" if over > 0 else f"over-cap={over}"
     )
+    # tier3 takeovers = the operationally interesting handoff -- "GPU couldn't,
+    # Claude took over" -- promoted to its own line; cap_hits and
+    # gpu_unavailable shown beneath as drill-down for "which flavor?".
+    takeovers = e["tier3_takeovers"]
     out += [
         "",
         "ESCALATIONS",
+        f"  gpu→tier3 takeovers={takeovers}   "
+        f"(cap_hits={e['cap_hits']}  "
+        f"gpu_unavailable_episodes={e['gpu_unavailable_episodes']})",
         f"  gpu.generate calls={e['gpu_generate_calls']}   "
-        f"repair rounds/episode: {rh or '(none)'}   "
-        f"cap-hits={e['cap_hits']}   {over_tag}",
+        f"repair rounds/episode: {rh or '(none)'}   {over_tag}",
         f"  final tier: {th or '(none)'}",
     ]
 

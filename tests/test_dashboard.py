@@ -73,6 +73,9 @@ def test_cap_hit_when_two_repair_rounds_still_fail():
     assert m["escalations"]["repair_round_hist"] == {2: 1}
     # 2 rounds is EXACTLY at the cap (REPAIR_CAP_MAX=2), not over.
     assert m["escalations"]["over_cap_episodes"] == 0
+    # Cap-hit IS a tier3 takeover (the operationally interesting handoff).
+    assert m["escalations"]["gpu_unavailable_episodes"] == 0
+    assert m["escalations"]["tier3_takeovers"] == 1
 
 
 def test_over_cap_episodes_visible_when_loop_passes_after_3_rounds():
@@ -94,6 +97,40 @@ def test_over_cap_episodes_visible_when_loop_passes_after_3_rounds():
     assert m["escalations"]["cap_hits"] == 0                   # NOT a cap-hit
     assert m["escalations"]["final_tier"] == {"gpu": 1}        # still "gpu"
     assert m["escalations"]["repair_round_hist"] == {3: 1}
+
+
+def test_gpu_unavailable_episode_counts_as_tier3_takeover():
+    # GPU was reached but reported `available:false` (Ollama down /
+    # model missing) -- still a Claude-takes-over event, but a different
+    # flavor than the loop-exhaustion cap_hit case.
+    gpu = [_t("generate", '{"available": false, "text": "[gpu unavailable]"}')]
+    m = D.compute_metrics(_records(**{"edge-gpu": gpu}), gap=300.0)
+    e = m["escalations"]
+    assert e["gpu_unavailable_episodes"] == 1
+    assert e["cap_hits"] == 0
+    assert e["tier3_takeovers"] == 1                # aggregate counts both
+    # Per-record count is still maintained for drill-down.
+    assert m["failures"]["gpu_unavailable"] == 1
+
+
+def test_takeover_aggregate_sums_both_flavors():
+    # Episode A: 2-round loop exhaustion -> cap_hit takeover.
+    # Episode B: gpu-unavailable -> different-flavor takeover.
+    # tier3_takeovers should be 2.
+    ep_a_verify = [_t("verify_functional", '{"passed": false, "applicable": true}', ts="100.0"),
+                   _t("repair_prompt", '"p1"', ts="101.0"),
+                   _t("verify_functional", '{"passed": false, "applicable": true}', ts="102.0"),
+                   _t("repair_prompt", '"p2"', ts="103.0"),
+                   _t("verify_functional", '{"passed": false, "applicable": true}', ts="104.0")]
+    ep_b_gpu = [_t("generate", '{"available": false}', ts="9999.0")]   # far gap
+    m = D.compute_metrics(
+        _records(**{"edge-verify": ep_a_verify, "edge-gpu": ep_b_gpu}),
+        gap=30.0,
+    )
+    e = m["escalations"]
+    assert e["cap_hits"] == 1
+    assert e["gpu_unavailable_episodes"] == 1
+    assert e["tier3_takeovers"] == 2
 
 
 def test_truncated_draft_and_tool_errors_are_detected():
@@ -162,6 +199,16 @@ def test_render_is_total_and_marks_spend_state():
     dirty = D.compute_metrics(_records(**{"edge-cloud": [
         _t("ask", '{"est_cost_usd": 1.5}')]}))
     assert "NONZERO !" in D.render(dirty, color=False)
+
+
+def test_render_surfaces_tier3_takeovers_line():
+    # The "GPU couldn't, Claude took over" question must read at a glance.
+    gpu = [_t("generate", '{"available": false}')]
+    rendered = D.render(D.compute_metrics(_records(**{"edge-gpu": gpu})),
+                        color=False)
+    assert "gpu→tier3 takeovers=1" in rendered
+    assert "cap_hits=0" in rendered                          # drill-down
+    assert "gpu_unavailable_episodes=1" in rendered          # drill-down
 
 
 def test_render_marks_over_cap_red_when_breached():
