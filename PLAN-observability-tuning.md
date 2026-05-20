@@ -207,6 +207,93 @@ has a single number on the dashboard.
 
 ---
 
+### A7 — Local PR reviewer via edge-gpu (preserve the $0-metered invariant)
+
+**Why (grounded):** GitHub Copilot moved to a metered service. Routing every
+PR through it would silently put the project on a paid external code-review
+tier while the entire cascade's load-bearing invariant is `$0 / 0 cloud
+calls` — 170 records of empirically-zero spend, the most-asserted thing on
+the dashboard. Meanwhile `edge-gpu` (qwen2.5-coder:14b via Ollama) has spare
+capacity: it drafted M4's `ws.ts` cleanly and has run 18 successful
+`dijkstra` repairs on record. PR review is structurally the same shape as
+those tasks — read code, identify problems, suggest fixes. The mesh already
+has the capability; what's missing is the integration glue. Per CLAUDE.md's
+"lowest sufficient tier" routing: routine PR review → Tier 2 (this);
+architectural review → Tier 3 (the launched Claude or human); **never**
+Tier 4 (paid API). This closes the cascade's evidence loop — *the machine
+reviews what the machine built*, on the same `.rec` history that already
+audits generation activity.
+
+**Files (MVP scope):**
+- `mcp_servers/review.py` (new) — MCP server with one tool:
+  `review_diff(diff_text: str, context: str = "") -> review_text`. Mirrors
+  the [`mcp_servers/_rec.py`](edge-cascade/mcp_servers/_rec.py) recorder
+  pattern (the `recorded` decorator auto-writes
+  `runs/edge-review.rec`). Wraps
+  [`cascade/gpu_worker.py:make_gpu_worker`](edge-cascade/cascade/gpu_worker.py)
+  with a review-specific system prompt; reuses Ollama keepalive.
+- `cascade/review_prompt.py` (new, small) — pure helper: build the review
+  prompt from `(diff, context)`. Output contract: structured markdown review
+  with `file:line` references where applicable. Testable without the model.
+- `scripts/local_pr_review.py` (new) — CLI wrapper:
+  `python scripts/local_pr_review.py <pr-number> [--dry-run]`. Pulls the
+  diff via `gh pr diff <n>` (or raw GitHub API + `GITHUB_TOKEN` for the
+  no-`gh` fallback), calls `edge-review.review_diff`, posts the result as a
+  PR comment via `gh pr comment <n> --body` (or `POST /repos/.../issues/.../comments`).
+- `scripts/edge-cli.ps1` — extend the catalog: add `edge-review` as an
+  opt-in server (`-WithReview` flag; off by default so it isn't running
+  during construction sessions unless wanted).
+- `dashboard.py` — add `edge-review` to `SERVERS`. Existing per-server panel
+  picks it up automatically; optional small "reviews posted=N" line in
+  ESCALATIONS so the new tier's activity is visible alongside
+  `tier3_takeovers`.
+- `tests/test_review_prompt.py` (new) — prompt builder + result-parser
+  round-trips on synth diffs (small/medium/with-deletions/no-source).
+- `tests/test_local_pr_review.py` (new) — script integration with the gh
+  and Ollama calls mocked; verify `.rec` record gets written; verify comment
+  body matches the model output.
+
+**Approach:** Local-tier PR review as a first-class tier in the existing
+recorder + dashboard architecture. The cascade's "lowest sufficient" policy
+holds: trivial / mechanical reviews land here (cheap, $0, local watts);
+architectural reviews still escalate to Tier 3 (the launched Claude or a
+human reviewer) by exception. The `edge-review.review_diff` tool is the
+analogue of `edge-gpu.generate` — same wrapper, different system prompt.
+Failure handling: oversized diffs get chunked-then-summarised; model returns
+posted verbatim regardless (the human reviewer can use or ignore — no
+gating).
+
+**Verification:**
+- Unit: prompt builder produces stable output for synth diffs.
+- Integration (mocked): `local_pr_review.py <n> --dry-run` produces a
+  review without posting.
+- Smoke (real): run it against one of the project's actual open PRs (e.g.
+  the obs PRs accumulating in this session). Eyeball the resulting comment;
+  the goal isn't "perfect critique," it's "useful enough to catch real
+  issues that would otherwise need a human pass."
+- Dashboard invariant: after the smoke, `runs/edge-review.rec` has grown by
+  one record; `spend.clean=true` is unchanged; `edge-cloud calls=0` is
+  unchanged; `per_server.edge-review.calls` increments.
+
+**Exit:** `python scripts/local_pr_review.py <open-PR>` posts a useful
+review comment on a real PR; `runs/edge-review.rec` records the activity;
+dashboard shows the new tier alongside the others; spend invariant intact.
+
+**Prerequisite (flag for the user, not strictly blocking):** the script's
+default path uses `gh` CLI, which is not currently installed. The MVP can
+ship with a raw-API (`httpx` + `GITHUB_TOKEN` env var) fallback so this item
+doesn't block on a separate install — pick whichever the user prefers at
+implementation time.
+
+**Dependencies:** none.
+**Branch:** `feat/edge-review`. **Status:** `[ ]`
+**Est:** 1–2 sessions for MVP. Natural follow-ups (separate items if pursued):
+structured line-comment reviews via `gh pr review --comment file:line`;
+cron/webhook auto-trigger; an `edge-review.summarize_pr` tool for very
+large diffs that summarises first then comments.
+
+---
+
 ### P2a — Incremental `.rec` tail-parse
 
 **Why:** Phase-1 roadmap. `.rec` is append-only + length-framed; readers
