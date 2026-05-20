@@ -70,6 +70,29 @@ def test_cap_hit_when_two_repair_rounds_still_fail():
     assert m["escalations"]["cap_hits"] == 1
     assert m["escalations"]["final_tier"] == {"capped->tier3": 1}
     assert m["escalations"]["repair_round_hist"] == {2: 1}
+    # 2 rounds is EXACTLY at the cap (REPAIR_CAP_MAX=2), not over.
+    assert m["escalations"]["over_cap_episodes"] == 0
+
+
+def test_over_cap_episodes_visible_when_loop_passes_after_3_rounds():
+    # The policy breach today's dashboard could not see: rounds=3 but the
+    # loop eventually passed -> _final_tier returns "gpu", cap_hits=0 (only
+    # flags loops that ALSO failed). Without over_cap_episodes a 3-round
+    # "GPU succeeded" episode looks healthy, hiding the violation.
+    verify = [_t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p1"'),
+              _t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p2"'),
+              _t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p3"'),                 # round 3 == breach
+              _t("verify_functional", '{"passed": true, "applicable": true}')]
+    gpu = [_t("generate", '{"available": true, "text": "y"}')]
+    m = D.compute_metrics(
+        _records(**{"edge-verify": verify, "edge-gpu": gpu}), gap=300.0)
+    assert m["escalations"]["over_cap_episodes"] == 1
+    assert m["escalations"]["cap_hits"] == 0                   # NOT a cap-hit
+    assert m["escalations"]["final_tier"] == {"gpu": 1}        # still "gpu"
+    assert m["escalations"]["repair_round_hist"] == {3: 1}
 
 
 def test_truncated_draft_and_tool_errors_are_detected():
@@ -100,7 +123,28 @@ def test_render_is_total_and_marks_spend_state():
     clean = D.render(D.compute_metrics([]), color=False)
     assert "MCP LIVENESS" in clean and "SPEND" in clean
     assert "OK (local-first invariant holds)" in clean
+    # over_cap=0 path: no ANSI escape, just plain text.
+    assert "over-cap=0" in clean and "\x1b[31m" not in clean
 
     dirty = D.compute_metrics(_records(**{"edge-cloud": [
         _t("ask", '{"est_cost_usd": 1.5}')]}))
     assert "NONZERO !" in D.render(dirty, color=False)
+
+
+def test_render_marks_over_cap_red_when_breached():
+    # Same 3-round-and-passes pattern as the metric test; the render must
+    # surface the policy breach unmistakably (red when color is on).
+    verify = [_t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p1"'),
+              _t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p2"'),
+              _t("verify_functional", '{"passed": false, "applicable": true}'),
+              _t("repair_prompt", '"p3"'),
+              _t("verify_functional", '{"passed": true, "applicable": true}')]
+    gpu = [_t("generate", '{"available": true, "text": "y"}')]
+    m = D.compute_metrics(
+        _records(**{"edge-verify": verify, "edge-gpu": gpu}), gap=300.0)
+    colored = D.render(m, color=True)
+    assert f"{D._RED}over-cap=1{D._OFF}" in colored
+    plain = D.render(m, color=False)
+    assert "over-cap=1" in plain and "\x1b[31m" not in plain

@@ -33,6 +33,12 @@ _RED, _GRN, _DIM, _OFF = "\x1b[31m", "\x1b[32m", "\x1b[2m", "\x1b[0m"
 DEFAULT_INTERVAL = 2.0
 DEFAULT_GAP = 30.0
 SERVERS = ("edge-npu", "edge-gpu", "edge-verify", "edge-cloud")
+# RUNBOOK + CLAUDE.md policy: after 2 failed local repair rounds, escalate to
+# Tier 3. An episode with >REPAIR_CAP_MAX repair_prompt cycles is a policy
+# breach -- counted in `over_cap_episodes` REGARDLESS of whether it eventually
+# passed (cap_hits only flags loops that ALSO failed; a 3-round loop that
+# eventually passes via GPU is still a breach and must be visible).
+REPAIR_CAP_MAX = 2
 
 
 # ---- pure helpers -----------------------------------------------------------
@@ -139,10 +145,13 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
     episodes = split_episodes(records, gap)
     round_hist: dict[int, int] = {}
     cap_hits = 0
+    over_cap = 0
     tier_hist: dict[str, int] = {}
     for ep in episodes:
         rounds = sum(r.get("tool") == "repair_prompt" for r in ep)
         round_hist[rounds] = round_hist.get(rounds, 0) + 1
+        if rounds > REPAIR_CAP_MAX:
+            over_cap += 1            # policy breach: counted pass-or-fail
         tier = _final_tier(ep)
         tier_hist[tier] = tier_hist.get(tier, 0) + 1
         if tier == "capped->tier3":
@@ -177,6 +186,7 @@ def compute_metrics(records: list[dict], gap: float = DEFAULT_GAP) -> dict:
             "gpu_generate_calls": gpu_gen,
             "repair_round_hist": round_hist,
             "cap_hits": cap_hits,
+            "over_cap_episodes": over_cap,
             "final_tier": tier_hist,
         },
         "spend": {
@@ -240,12 +250,19 @@ def render(m: dict, color: bool = True) -> str:
     e = m["escalations"]
     rh = " ".join(f"{k}r:{v}" for k, v in sorted(e["repair_round_hist"].items()))
     th = " ".join(f"{k}:{v}" for k, v in e["final_tier"].items())
+    # over-cap is the load-bearing policy signal: it fires even when the loop
+    # eventually passed, so a "GPU succeeded" episode that took 3 rounds is
+    # still visibly a breach.
+    over = e["over_cap_episodes"]
+    over_tag = (
+        f"{red}over-cap={over}{off}" if over > 0 else f"over-cap={over}"
+    )
     out += [
         "",
         "ESCALATIONS",
         f"  gpu.generate calls={e['gpu_generate_calls']}   "
         f"repair rounds/episode: {rh or '(none)'}   "
-        f"cap-hits={e['cap_hits']}",
+        f"cap-hits={e['cap_hits']}   {over_tag}",
         f"  final tier: {th or '(none)'}",
     ]
 
