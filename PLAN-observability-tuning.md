@@ -86,7 +86,7 @@ counts policy breach regardless of outcome — that's the whole point.
 metrics yields `over_cap_episodes=1`.
 
 **Exit:** breach visible in dashboard; doc + metric agree.
-**Dependencies:** none. **Branch:** `feat/obs-repair-cap-truth`. **Status:** `[ ]`
+**Dependencies:** none. **Branch:** `feat/obs-repair-cap-truth`. **Status:** `[x] 41758bb` (recomputed against the 00:07 telemetry → `over_cap_episodes=1`)
 
 ---
 
