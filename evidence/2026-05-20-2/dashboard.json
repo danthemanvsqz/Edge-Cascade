@@ -1,0 +1,86 @@
+{
+  "total_records": 1,
+  "episodes": 1,
+  "per_server": {
+    "edge-npu": {
+      "calls": 0,
+      "ok": 0,
+      "err": 0,
+      "success_pct": null,
+      "age_s": null,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.0,
+      "cold_p50_ms": 0.0,
+      "cold_p95_ms": 0.0,
+      "cold_max_ms": 0.0
+    },
+    "edge-gpu": {
+      "calls": 1,
+      "ok": 1,
+      "err": 0,
+      "success_pct": 100.0,
+      "age_s": 484.07836294174194,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.0,
+      "cold_p50_ms": 23096.0,
+      "cold_p95_ms": 23096.0,
+      "cold_max_ms": 23096.0
+    },
+    "edge-verify": {
+      "calls": 0,
+      "ok": 0,
+      "err": 0,
+      "success_pct": null,
+      "age_s": null,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.0,
+      "cold_p50_ms": 0.0,
+      "cold_p95_ms": 0.0,
+      "cold_max_ms": 0.0
+    },
+    "edge-cloud": {
+      "calls": 0,
+      "ok": 0,
+      "err": 0,
+      "success_pct": null,
+      "age_s": null,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.0,
+      "cold_p50_ms": 0.0,
+      "cold_p95_ms": 0.0,
+      "cold_max_ms": 0.0
+    }
+  },
+  "producing": {
+    "drafts": 0,
+    "trunc": 0,
+    "trunc_pct": 0.0,
+    "route_categories": {}
+  },
+  "failures": {
+    "syntax_fail": 0,
+    "func_fail": 0,
+    "tool_errors": {},
+    "gpu_unavailable": 0
+  },
+  "escalations": {
+    "gpu_generate_calls": 1,
+    "repair_round_hist": {
+      "0": 1
+    },
+    "cap_hits": 0,
+    "over_cap_episodes": 0,
+    "final_tier": {
+      "unresolved": 1
+    }
+  },
+  "spend": {
+    "cloud_calls": 0,
+    "usd": 0.0,
+    "clean": true
+  }
+}

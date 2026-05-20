@@ -144,10 +144,15 @@ host config). Gate per milestone: `npm run test:run` + `npm run typecheck` +
 
 **Dependencies:** A3 `[x]`. **Branch:** `feat/m4-htmx-ws-spike` (embed branch was
 squash-merged as #11; new feature branches now base off `main`).
-**Status:** `[~] feat/m4-htmx-ws-spike` — **spike done** (`02e2265`); M4 itself
-remains. Evidence: `evidence/2026-05-20-1/` — spend ✅ clean ($0, 0 cloud calls),
-over_cap_episodes=0, repair converged on round 1, guardrail held (commit
-touched only `projects/vinyl/*`), Vinyl gate 51/51 + tsc + eslint green.
+**Status:** `[x] 07122cb` — htmx-ws spike (`02e2265`) → M4 WS transport + OOB
+framing (`07122cb`). Evidence dirs: `evidence/2026-05-20-1/` (spike) +
+`evidence/2026-05-20-2/` (M4). Across both: spend ✅ clean ($0 / 0 cloud calls),
+over_cap_episodes=0, guardrail held (every changed file under `projects/vinyl/*`,
+zero host writes). Vinyl gate: 51/51 → **65/65** vitest + tsc + eslint clean.
+M4 commit cites the §7 spike findings as the design basis (no envelope; M3
+provisional `<vinyl-slot id hx-swap-oob>` IS the htmx contract). M4's .rec is
+intentionally sparse (1 edge-gpu.generate); M4 is architectural integration
+which CLAUDE.md routes to Tier-3 directly — the commit is the proof of work.
 
 ---
 
