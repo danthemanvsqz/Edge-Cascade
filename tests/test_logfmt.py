@@ -11,7 +11,7 @@ property is asserted adversarially below. This module is inside the 100%
 branch gate; every drop/skip path has a byte-literal case here."""
 import pytest
 
-from cascade.logfmt import dump_record, parse_stream
+from cascade.logfmt import dump_record, parse_stream, parse_stream_incremental
 
 # A model answer engineered to break a delimiter/regex parser: it contains the
 # begin/end sentinels, a fake timestamp line, blank lines, and unicode.
@@ -159,3 +159,61 @@ def test_projection_still_validates_skipped_field_framing():
     recs = parse_stream(b"%%REC v1 0\ntrace 500\nshort\n",
                         keep=frozenset({"query"}))
     assert recs == []
+
+
+# ---- incremental (resumable) parsing ----------------------------------------
+
+def test_incremental_returns_next_offset_past_complete_records():
+    s = dump_record(0, {"q": "one"}) + dump_record(1, {"q": "two"})
+    recs, off = parse_stream_incremental(s)
+    assert [r["_seq"] for r in recs] == ["0", "1"]
+    assert off == len(s)             # safe to resume from EOF; no truncation
+
+
+def test_incremental_resumes_from_start_offset():
+    r0 = dump_record(0, {"q": "zero"})
+    s = r0 + dump_record(1, {"q": "one"}) + dump_record(2, {"q": "two"})
+    # Resume from past r0: should yield only records 1 and 2.
+    recs, off = parse_stream_incremental(s, start_offset=len(r0))
+    assert [r["_seq"] for r in recs] == ["1", "2"]
+    assert off == len(s)
+
+
+def test_incremental_truncation_rewinds_offset_to_record_start():
+    # complete record + partial second record (declared field length exceeds
+    # current file size -- the writer is still mid-emit).
+    r0 = dump_record(0, {"q": "kept"})
+    truncated = b"%%REC v1 1\nq 100\nshort\n"     # declared 100 bytes, only 6
+    s = r0 + truncated
+    recs, off = parse_stream_incremental(s)
+    assert [r["_seq"] for r in recs] == ["0"]
+    # next_offset rewinds to the truncated record's start so it is retried
+    assert off == len(r0)
+
+
+def test_incremental_completes_truncated_record_after_growth():
+    # First call: complete + truncated. Second call: same complete + the
+    # NOW-complete second record. Resuming from the first call's next_offset
+    # must yield exactly the second record (no double-yield of r0, no miss).
+    r0 = dump_record(0, {"q": "kept"})
+    r1 = dump_record(1, {"q": "completed-later"})
+    partial = r1[:len(r1) // 2]      # first-call view: only half of r1
+    recs1, off1 = parse_stream_incremental(r0 + partial)
+    assert [r["_seq"] for r in recs1] == ["0"]
+    # File grows -> contains the full r1 now.
+    full = r0 + r1
+    recs2, off2 = parse_stream_incremental(full, start_offset=off1)
+    assert [r["_seq"] for r in recs2] == ["1"]
+    assert off2 == len(full)
+
+
+def test_incremental_garbage_lines_advance_safe_offset():
+    # A non-record line (e.g., a stray comment) is consumed -- next_offset
+    # advances PAST it so the next call doesn't re-process it.
+    s = b"not a record\n" + dump_record(0, {"q": "real"})
+    recs, off = parse_stream_incremental(s)
+    assert [r["_seq"] for r in recs] == ["0"]
+    assert off == len(s)
+    # Resuming from EOF on the same data: no new records, offset unchanged.
+    recs2, off2 = parse_stream_incremental(s, start_offset=off)
+    assert recs2 == [] and off2 == len(s)

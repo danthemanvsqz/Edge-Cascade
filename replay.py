@@ -40,6 +40,45 @@ DEFAULT_GAP = 30.0
 
 # ---- load + merge + order ---------------------------------------------------
 
+def load_streams_incremental(
+    runs_dir: Path, offsets: dict[str, int],
+) -> dict[str, tuple[bytes, int]]:
+    """Incremental sibling of `load_streams`: read each runs/*.rec from
+    `offsets[stem]` (defaulting 0) to EOF and return only the streams that
+    grew. Returns `{stem: (buf, buf_start_offset)}` where `buf_start_offset`
+    is the FILE-relative position the buffer begins at -- caller uses it to
+    advance its offset tracking:
+
+        new = load_streams_incremental(runs_dir, offsets)
+        for stem, (buf, start) in new.items():
+            records, buf_next = parse_stream_incremental(buf)
+            offsets[stem] = start + buf_next
+
+    Rotation guard: if a file's current size is LESS than `offsets[stem]`,
+    we assume it was rotated/truncated externally and re-read from offset 0
+    (returning the whole file with `buf_start_offset=0`). Files that did not
+    grow since the recorded offset are omitted from the result.
+
+    Empty `.rec` files are omitted (mirrors `load_streams` -- nothing to read,
+    nothing to track).
+    """
+    new: dict[str, tuple[bytes, int]] = {}
+    for p in sorted(runs_dir.glob("*.rec")):
+        size = p.stat().st_size
+        if size == 0:
+            continue
+        prev = offsets.get(p.stem, 0)
+        if size < prev:
+            prev = 0  # rotation -- start over
+        if size <= prev:
+            continue  # no new bytes since last call
+        with open(p, "rb") as fh:
+            fh.seek(prev)
+            buf = fh.read()
+        new[p.stem] = (buf, prev)
+    return new
+
+
 def load_streams(runs_dir: Path) -> dict[str, bytes]:
     """{source_stem: raw bytes} for every runs/*.rec that exists (FS touch).
 

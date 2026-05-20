@@ -61,42 +61,61 @@ def dump_record(seq: int, fields: dict[str, str]) -> bytes:
     return bytes(out)
 
 
-def parse_stream(
-    data: bytes, keep: frozenset[str] | None = None
-) -> list[dict[str, str]]:
-    """Tokenise a record stream deterministically. Unknown/garbage lines
-    between records are skipped; an incomplete trailing record is dropped.
-    Returns each record as an insertion-ordered {key: value} dict (plus
-    "_seq": str).
+def parse_stream_incremental(
+    data: bytes, start_offset: int = 0, keep: frozenset[str] | None = None,
+) -> tuple[list[dict[str, str]], int]:
+    """Resumable parse. Returns `(records, next_offset)`.
+
+    `next_offset` is the byte position from which a future call can safely
+    resume: it points either past the last fully-completed record's
+    `%%END\\n` / past a consumed garbage line, or BACK to the start of an
+    incomplete trailing record so the next call retries it once more bytes
+    arrive. This makes O(new bytes) incremental reads of an append-only
+    `.rec` correct: read from `next_offset`, parse, repeat.
+
+    Two failure modes are distinguished internally:
+      * truncation (incomplete header line, or declared value length runs
+        past EOF) -- the file is still being written; rewind `next_offset`
+        to the record's start so it is retried later.
+      * permanent corruption (no space in field header, non-numeric length,
+        bad LF terminator with full bytes present) -- the outer
+        garbage-line skip self-corrects (consumes line by line); `next_offset`
+        advances past each consumed line.
 
     `keep`: when given, only fields whose key is in the set are decoded and
     stored; other fields are skipped by advancing past their counted value
     (no decode, no allocation) -- their length header and LF terminator are
-    still validated, so projection cannot desync the stream. "_seq" is always
-    present (it is header-derived, not a field)."""
+    still validated, so projection cannot desync the stream. "_seq" is
+    always present (it is header-derived, not a field).
+    """
     records: list[dict[str, str]] = []
-    i = 0
+    i = start_offset
+    safe = start_offset
     n = len(data)
     while i < n:
+        record_start = i
         nl = data.find(b"\n", i)
         if nl == -1:
-            break
+            break  # incomplete header line at tail; safe stays at record_start
         line = data[i:nl]
         if not line.startswith(_BEGIN + b" "):
-            i = nl + 1  # not a record start -- skip this line
+            i = nl + 1
+            safe = i  # garbage line consumed
             continue
         parts = line.split(b" ")
         # %%REC vN SEQ  -> exactly 3 tokens; malformed header => skip the line
         if len(parts) != 3 or not parts[1].startswith(b"v"):
             i = nl + 1
+            safe = i  # malformed begin treated as garbage; consumed
             continue
         rec: dict[str, str] = {"_seq": parts[2].decode("utf-8", "replace")}
         i = nl + 1
+        truncated = False
         ok = True
         while True:
             nl = data.find(b"\n", i)
             if nl == -1:
-                ok = False  # truncated mid-record -> drop it
+                truncated = True  # mid-record, no further LF yet
                 break
             head = data[i:nl]
             if head == _END:
@@ -104,18 +123,40 @@ def parse_stream(
                 break
             sp = head.rfind(b" ")
             if sp == -1 or not head[sp + 1:].isdigit():
-                ok = False
+                ok = False  # permanent: bad field header
                 break
             key = head[:sp].decode("utf-8", "replace")
             length = int(head[sp + 1:])
             vstart = nl + 1
             vend = vstart + length
-            if vend + 1 > n or data[vend:vend + 1] != b"\n":
-                ok = False  # declared length runs past EOF / no LF terminator
+            if vend + 1 > n:
+                truncated = True  # declared length runs past current EOF
+                break
+            if data[vend:vend + 1] != b"\n":
+                ok = False  # permanent: full bytes present, terminator wrong
                 break
             if keep is None or key in keep:
                 rec[key] = data[vstart:vend].decode("utf-8", "replace")
             i = vend + 1
+        if truncated:
+            # rewind so the next call retries this record once data grows
+            i = record_start
+            break
         if ok:
             records.append(rec)
-    return records
+            safe = i  # past `%%END\n`
+        # else (permanent): the outer-while garbage-line skip self-corrects;
+        # `safe` advances one line at a time as those lines are consumed.
+    return records, safe
+
+
+def parse_stream(
+    data: bytes, keep: frozenset[str] | None = None,
+) -> list[dict[str, str]]:
+    """Tokenise a record stream deterministically -- thin wrapper over
+    `parse_stream_incremental` for callers that do not need a resume offset.
+
+    Unknown/garbage lines between records are skipped; an incomplete trailing
+    record is dropped. See `parse_stream_incremental` for the resumable
+    variant and the full semantics of `keep` (field projection)."""
+    return parse_stream_incremental(data, 0, keep)[0]

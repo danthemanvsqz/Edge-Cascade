@@ -189,7 +189,7 @@ round-trip; tail-parse equivalence with full parse; rotation/shrink case);
 shows tail-parse cost flat as history grows.
 
 **Exit:** working incremental path.
-**Dependencies:** none. **Branch:** `feat/obs-incremental-parse`. **Status:** `[ ]`
+**Dependencies:** none. **Branch:** `feat/obs-incremental-parse`. **Status:** `[x] fde78d7` (bench: 21.9× speedup on 50-tick / 5000-record dashboard pattern; 127 passed; logfmt 100% / 28 branches)
 
 ---
 

@@ -95,3 +95,59 @@ def test_is_failure_covers_tool_error_and_failed_gate_only():
     assert R.is_failure(gate_fail) is True
     assert R.is_failure(gate_ok) is False
     assert R.is_failure(plain_ok) is False
+
+
+# ---- load_streams_incremental: offset tracking + rotation guard -------------
+
+def _w(p, data: bytes) -> None:
+    """Append-only write (mirrors the recorder; binary, no newline mangling)."""
+    with open(p, "ab") as fh:
+        fh.write(data)
+
+
+def test_load_streams_incremental_first_call_reads_whole_file(tmp_path):
+    p = tmp_path / "edge-npu.rec"
+    _w(p, _stream(_tool("100.0"), _tool("110.0")))
+    new = R.load_streams_incremental(tmp_path, {})
+    assert "edge-npu" in new
+    buf, start = new["edge-npu"]
+    assert start == 0 and buf == p.read_bytes()
+
+
+def test_load_streams_incremental_returns_only_new_bytes_on_growth(tmp_path):
+    p = tmp_path / "edge-gpu.rec"
+    initial = _stream(_tool("100.0"))
+    _w(p, initial)
+    offsets = {"edge-gpu": len(initial)}    # caller pretends it's parsed up to here
+    # Append more (a second logical record).
+    extra = _stream(_tool("200.0"))
+    _w(p, extra)
+    new = R.load_streams_incremental(tmp_path, offsets)
+    buf, start = new["edge-gpu"]
+    assert start == len(initial)
+    assert buf == extra                     # ONLY the new bytes, not the whole file
+
+
+def test_load_streams_incremental_no_growth_omits_stream(tmp_path):
+    p = tmp_path / "edge-verify.rec"
+    data = _stream(_tool("100.0"))
+    _w(p, data)
+    new = R.load_streams_incremental(tmp_path, {"edge-verify": len(data)})
+    assert new == {}                        # nothing new since last call -> no entry
+
+
+def test_load_streams_incremental_rotation_resets_offset(tmp_path):
+    p = tmp_path / "edge-npu.rec"
+    _w(p, _stream(_tool("100.0"), _tool("200.0")))
+    big_offset = p.stat().st_size + 9999    # pretend caller tracked past EOF
+    # Simulate rotation: rewrite the file fresh (shorter than the tracked offset).
+    p.write_bytes(_stream(_tool("300.0")))
+    new = R.load_streams_incremental(tmp_path, {"edge-npu": big_offset})
+    buf, start = new["edge-npu"]
+    assert start == 0                       # rotation -> read from offset 0
+    assert buf == p.read_bytes()
+
+
+def test_load_streams_incremental_skips_empty_files(tmp_path):
+    (tmp_path / "edge-cloud.rec").write_bytes(b"")
+    assert R.load_streams_incremental(tmp_path, {}) == {}
