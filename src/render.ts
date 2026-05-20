@@ -15,18 +15,18 @@
  * `renderToString` stays strictly synchronous (async is a streaming concept):
  * a pending async subtree throws, directing the caller to `renderToStream`.
  *
- * OOB FRAMING IS PROVISIONAL. The `<vinyl-slot id hx-swap-oob>` wrapper below
- * is a placeholder until the htmx-ws spike (ARCHITECTURE.md §7, gates M4)
- * pins the exact hx-swap-oob contract. Only this constant + the two template
- * literals need to change.
+ * OOB framing is the `<vinyl-slot id hx-swap-oob>` wrapper from `./oob.js`.
+ * The htmx-ws spike (ARCHITECTURE.md §7) pinned this as the contract: every
+ * top-level element of a WS frame is OOB; htmx defaults `hx-swap-oob` to
+ * `"true"` when absent; the shell must contain the same `<vinyl-slot id>` for
+ * the swap to land. M4 reuses this wrapper unchanged.
  */
 import { Fragment, isVNode, isRaw } from "./vnode.js";
 import type { Props, VNode } from "./vnode.js";
 import { Suspense, ErrorBoundary } from "./suspense.js";
 import type { SuspenseProps, ErrorBoundaryProps } from "./suspense.js";
 import { boundaryId, childPath } from "./ids.js";
-
-const BOUNDARY_TAG = "vinyl-slot";
+import { oobOpen, inlineOpen, boundaryClose } from "./oob.js";
 
 export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -90,8 +90,7 @@ function isThenable(v: unknown): v is PromiseLike<unknown> {
 const noop = (): void => {};
 
 function slot(id: string, inner: string, oob: boolean): string {
-  const attr = oob ? ` hx-swap-oob="true"` : "";
-  return `<${BOUNDARY_TAG} id="${id}"${attr}>${inner}</${BOUNDARY_TAG}>`;
+  return `${oob ? oobOpen(id) : inlineOpen(id)}${inner}${boundaryClose()}`;
 }
 
 interface Walk {
