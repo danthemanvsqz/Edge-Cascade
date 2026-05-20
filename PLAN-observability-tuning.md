@@ -142,8 +142,12 @@ host config). Gate per milestone: `npm run test:run` + `npm run typecheck` +
    `projects/vinyl/ARCHITECTURE.md`.
 3. PR `feat/embed-vinyl-subtree`.
 
-**Dependencies:** A3 `[x]`. **Branch:** `feat/embed-vinyl-subtree` (existing).
-**Status:** `[ ]`
+**Dependencies:** A3 `[x]`. **Branch:** `feat/m4-htmx-ws-spike` (embed branch was
+squash-merged as #11; new feature branches now base off `main`).
+**Status:** `[~] feat/m4-htmx-ws-spike` — **spike done** (`02e2265`); M4 itself
+remains. Evidence: `evidence/2026-05-20-1/` — spend ✅ clean ($0, 0 cloud calls),
+over_cap_episodes=0, repair converged on round 1, guardrail held (commit
+touched only `projects/vinyl/*`), Vinyl gate 51/51 + tsc + eslint green.
 
 ---
 
