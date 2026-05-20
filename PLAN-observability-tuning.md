@@ -110,7 +110,7 @@ edge-npu `p95` drops to single-digit seconds; `cold_max ≈ 21s`.
 
 **Exit:** dashboard distinguishes cold from steady-state.
 **Dependencies:** none (independent of A1; can run in parallel).
-**Branch:** `feat/obs-cold-start-split`. **Status:** `[ ]`
+**Branch:** `feat/obs-cold-start-split`. **Status:** `[x] 00eea6a` (real-telemetry recompute: NPU cold_max=20076ms isolated, steady p95=16294ms — prior 21144ms reading was the compile leaking into the percentile)
 
 ---
 
