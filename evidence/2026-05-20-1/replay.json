@@ -1,0 +1,114 @@
+[
+  {
+    "records": 12,
+    "start": 1779240282.197,
+    "end": 1779240338.679,
+    "run_ids": [
+      "3785d2f2e563",
+      "8822865c361c",
+      "c3a513d7c5a2",
+      "eea28a3f7495",
+      "ff71d32b16ea"
+    ],
+    "legacy": false,
+    "has_failure": true,
+    "events": [
+      {
+        "src": "edge-npu",
+        "tool": "status",
+        "ts": 1779240282.197,
+        "run_id": "c3a513d7c5a2",
+        "ok": "true",
+        "desc": "edge-npu.status ok (5159.8ms)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "route",
+        "ts": 1779240283.045,
+        "run_id": "c3a513d7c5a2",
+        "ok": "true",
+        "desc": "route -> difficulty=0.5 category=standard (GPU.0 0.84s)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "draft",
+        "ts": 1779240285.116,
+        "run_id": "c3a513d7c5a2",
+        "ok": "true",
+        "desc": "draft (GPU.0 2.07s) -> 346 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779240286.328,
+        "run_id": "8822865c361c",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "route",
+        "ts": 1779240305.786,
+        "run_id": "ff71d32b16ea",
+        "ok": "true",
+        "desc": "route -> difficulty=0.65 category=standard (NPU 2.79s)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "draft",
+        "ts": 1779240322.181,
+        "run_id": "ff71d32b16ea",
+        "ok": "true",
+        "desc": "draft (NPU 16.39s) -> 1599 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779240324.033,
+        "run_id": "eea28a3f7495",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_functional",
+        "ts": 1779240324.106,
+        "run_id": "eea28a3f7495",
+        "ok": "true",
+        "desc": "verify_functional FAIL: dijkstra -- KeyError: 'E' (in dijkstra(), line 23)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "repair_prompt",
+        "ts": 1779240324.109,
+        "run_id": "eea28a3f7495",
+        "ok": "true",
+        "desc": "repair_prompt built (2266 chars)"
+      },
+      {
+        "src": "edge-gpu",
+        "tool": "generate",
+        "ts": 1779240338.604,
+        "run_id": "3785d2f2e563",
+        "ok": "true",
+        "desc": "gpu.generate (qwen2.5-coder:14b 12.25s, 45.67 tok/s) -> 1320 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779240338.613,
+        "run_id": "eea28a3f7495",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_functional",
+        "ts": 1779240338.679,
+        "run_id": "eea28a3f7495",
+        "ok": "true",
+        "desc": "verify_functional PASS (checked=1)"
+      }
+    ]
+  }
+]

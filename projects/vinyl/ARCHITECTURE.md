@@ -92,8 +92,119 @@ adapters `node:http` / Express / Fastify.
 
 ## 7. htmx-ws spike findings
 
-> **Status: PENDING.** Run before M4 (see `PLAN.md` Risks). Stand up htmx 2.x
-> `hx-ext="ws"`, hand-push a frame, and record here *exactly* how inbound HTML
-> is applied: `hx-swap-oob` semantics, id targeting, multiple OOB elements per
-> frame, and whether the WS extension wraps/unwraps anything. M4's `oob()`
-> framing is designed to these observations, not to assumptions.
+> **Status: COMPLETE (2026-05-20).** htmx 2.0.4 + htmx-ext-ws 2.0.2.
+> Evidence: the official sources, snapshotted in `spike/htmx-ws.ref.js` and
+> `spike/htmx.ref.js`. Reproducible harness: `spike/serve.mjs` (`node
+> spike/serve.mjs`, open `http://localhost:8787`).
+
+### 7.1 The contract — derived from source
+
+Inbound message handling lives in one block of the ws extension
+(`spike/htmx-ws.ref.js:120-149`):
+
+```js
+var fragment = api.makeFragment(response)
+if (fragment.children.length) {
+  var children = Array.from(fragment.children)
+  for (var i = 0; i < children.length; i++) {
+    api.oobSwap(
+      api.getAttributeValue(children[i], 'hx-swap-oob') || 'true',
+      children[i],
+      settleInfo,
+    )
+  }
+}
+api.settleImmediately(settleInfo.tasks)
+```
+
+`oobSwap` (`spike/htmx.ref.js:1466-1515`) does target selection and the actual
+swap. From those two functions, the observed contract is:
+
+1. **Every top-level element of a WS frame is treated as OOB.** The for-loop
+   over `fragment.children` is unconditional; no envelope, no wrapping
+   element. Top-level text/comment nodes are silently discarded (`children`
+   skips non-elements).
+2. **`hx-swap-oob` is optional on those top-level elements.** When absent it
+   defaults to `'true'` (line 143). So `<x id="foo">…</x>` alone is enough to
+   trigger an OOB swap against `#foo`. Emitting `hx-swap-oob="true"` is
+   redundant-but-documentary.
+3. **Default target is `#<id>` taken from the OOB element itself**
+   (`htmx.ref.js:1468`). Default swap style is `outerHTML`
+   (`htmx.ref.js:1470`). Both can be overridden:
+   - `hx-swap-oob="<style>"` — same `#<id>` selector, different style.
+   - `hx-swap-oob="<style>:<selector>"` — custom selector AND style. The
+     selector follows htmx's extended syntax (`closest …`, `next …`, etc.).
+4. **`hx-swap-oob` is stripped from the inserted node**
+   (`htmx.ref.js:1479-1480`), so the wrapper tag goes into the live DOM
+   without that attribute. The `id` survives.
+5. **Multiple OOB elements per frame: fully supported and the design
+   intent.** One WS message can carry any number of top-level elements; each
+   is swapped independently in source order.
+6. **No target → soft error, stream stays open.** If `#<id>` doesn't exist,
+   htmx fires `htmx:oobErrorNoTarget` and removes the orphan
+   (`htmx.ref.js:1510-1513`). Crucially: the socket is not closed and
+   subsequent frames still apply. (Case 4 in the harness exercises this.)
+7. **Settle runs once per frame, not per element**
+   (`htmx-ws.ref.js:147`). Focus restoration, value preservation, and swap
+   classes batch across all OOB elements in the same message — the server
+   side does not call settle.
+8. **No envelope, no wrapping by the ws extension itself.** The only mutation
+   point before parsing is `extension.transformResponse(response, …)`
+   (`htmx-ws.ref.js:133-135`), which only fires if some *other* extension
+   registers it. The ws extension does not wrap, prefix, or re-encode the
+   payload.
+9. **Useful lifecycle hooks for later milestones:**
+   `htmx:wsBeforeMessage` (cancellable, `htmx-ws.ref.js:126`),
+   `htmx:wsAfterMessage` (`:148`), `htmx:oobBeforeSwap`
+   (`htmx.ref.js:1496`), `htmx:oobAfterSwap` (`:1505`). M7 instrumentation
+   should hook these, not invent a parallel observer.
+10. **Single-document scope.** `oobSwap` queries against `getDocument()` by
+    default (`htmx.ref.js:1467`); iframes/shadow-DOM are out of scope —
+    matches React 18 streaming SSR's assumption.
+
+### 7.2 Implications for M4
+
+- **The M3 provisional wrapper is the right shape.**
+  `<vinyl-slot id="…" hx-swap-oob="true">…</vinyl-slot>` is exactly what the
+  contract expects. The `hx-swap-oob="true"` attribute is redundant but
+  documents intent and is stripped on insertion anyway — keep it. Only the
+  TWO template literals and the `BOUNDARY_TAG` constant in
+  `src/render.ts` form the contract surface; nothing else needs to change.
+- **`<vinyl-slot>` MUST be present on the initial shell with the same id.**
+  Since the swap is `outerHTML`, the existing DOM node is *replaced*. M3 and
+  M4 must emit the *same* wrapper element in the shell and in the OOB
+  frame — id-only is not enough. (M3 already does this; this is the rule
+  M4's `oob()` must preserve.)
+- **`oob(id, html)` API is tiny.** It returns
+  `` `<vinyl-slot id="${id}" hx-swap-oob="true">${html}</vinyl-slot>` ``.
+  No protocol prefix, no envelope, no metadata. The scheduler concatenates
+  whatever `oob(...)` strings it has into one WS message and calls
+  `socket.send(message)`. This is the entire framing layer.
+- **Batching for free.** The scheduler in `src/render.ts` may coalesce all
+  boundaries that settle within one event-loop tick into a single frame;
+  htmx will apply them in source order with one settle pass.
+- **`onerror` / target-missing is non-fatal.** Vinyl's push fn doesn't need
+  ack/nack — a stale id race resolves itself on the client. M5's
+  `liveRegion`/`signal` re-pushes will re-target correctly after the next
+  navigation.
+- **Backpressure design hook (M4, enforced M7).** Each frame triggers a full
+  settle. The scheduler's enqueue path is the natural place to coalesce
+  superseded frames by id (drop earlier pending frames for the same id when
+  a newer one is registered). Add the hook in M4; the actual debounce policy
+  lands in M7 along with WS buffer-fullness checks.
+
+### 7.3 Harness layout
+
+- `spike/serve.mjs` — zero-dependency Node http server (port 8787) that
+  serves a page wired with htmx 2.0.4 + ws-ext 2.0.2 from unpkg, accepts
+  the WS upgrade, and hand-pushes four frames covering the contract:
+  implicit OOB, explicit OOB, multi-element frame, missing-target.
+- `spike/htmx-ws.ref.js` — verbatim snapshot of `bigskysoftware/htmx-
+  extensions main/src/ws/ws.js` at fetch time. Line numbers above index this
+  copy.
+- `spike/htmx.ref.js` — verbatim snapshot of `bigskysoftware/htmx
+  master/src/htmx.js` at fetch time. Same indexing convention.
+
+The snapshots are the source of truth for the line-number citations above;
+re-fetch them only when upgrading htmx, then re-validate any claims that
+move.

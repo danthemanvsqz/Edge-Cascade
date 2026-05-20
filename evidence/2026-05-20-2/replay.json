@@ -1,0 +1,22 @@
+[
+  {
+    "records": 1,
+    "start": 1779275100.987,
+    "end": 1779275100.987,
+    "run_ids": [
+      "5f7757e9aa1f"
+    ],
+    "legacy": false,
+    "has_failure": false,
+    "events": [
+      {
+        "src": "edge-gpu",
+        "tool": "generate",
+        "ts": 1779275100.987,
+        "run_id": "5f7757e9aa1f",
+        "ok": "true",
+        "desc": "gpu.generate (qwen2.5-coder:14b 20.86s, 45.06 tok/s) -> 2723 chars"
+      }
+    ]
+  }
+]
