@@ -173,6 +173,40 @@ the data) OR the short-circuit shipped.
 
 ---
 
+### A6 — GPU→Tier-3 takeover visibility (relabel + aggregate)
+
+**Why (grounded):** the signal "GPU couldn't and Claude had to take over"
+already exists as `escalations.cap_hits` (loop hit the 2-round cap →
+`final_tier="capped->tier3"`), but it is labeled by its *mechanism* not its
+*operational meaning*, and the related "GPU unreachable → also a takeover"
+case is buried under `failures.gpu_unavailable` (counted as records, not
+episodes). The all-time log analysis confirms this is the user-relevant
+question: across 170 records / 11 episodes / 19 GPU generates, `cap_hits=1`
+and `edge-cloud=0` — so the operationally interesting tier-handoff is
+GPU→Tier-3, not Tier-3→cloud, but it isn't a first-class panel field.
+
+**Files:** `dashboard.py` —
+- new `gpu_unavailable_episodes` (per-episode: any GPU `available:false` in
+  an episode counts the episode once).
+- new aggregate `tier3_takeovers = cap_hits + gpu_unavailable_episodes`.
+- render: surface `tier3 takeovers=N` on its own line in the ESCALATIONS
+  panel, with `(cap_hits=N  gpu_unavailable=N)` drill-down underneath.
+`tests/test_dashboard.py` — gpu-unavailable-episode counts; cap+unavail
+aggregate; existing tests still green.
+
+**Approach:** semantic rename + one aggregate. No behavior change. Existing
+`cap_hits` / `gpu_unavailable` fields stay (drill-down).
+
+**Verification:** pytest test_dashboard cases green; recompute against
+all-time `.rec` → `tier3_takeovers = 1` (matches the lone historical
+cap-hit; 0 gpu-unavailable episodes ever).
+
+**Exit:** the question "how often does GPU fail and route back to Claude"
+has a single number on the dashboard.
+**Dependencies:** none. **Branch:** `feat/obs-tier3-takeovers`. **Status:** `[x] 97d3de7` (all-time recompute: `tier3_takeovers=1`, `cap_hits=1`, `gpu_unavailable_episodes=0`; spend still clean; 130 passed)
+
+---
+
 ### P2a — Incremental `.rec` tail-parse
 
 **Why:** Phase-1 roadmap. `.rec` is append-only + length-framed; readers
