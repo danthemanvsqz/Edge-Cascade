@@ -110,5 +110,9 @@ hardware.
 - `/mcp` shows `edge-cloud` present → abort: the launcher's spend guard failed.
 - Any tier's narration not backed by a fresh `.rec` → treat the answer as
   unverified and say so.
-- Repair loop exceeds 2 rounds without passing → take it over yourself; do not
-  loop further.
+- **Hard cap on the repair loop.** After round 2 of the local repair loop
+  fails, escalate to Tier 3 — **do NOT begin round 3.** A 3rd `repair_prompt`
+  cycle is a policy breach regardless of whether it eventually passes; the
+  dashboard's `over_cap_episodes` field flags it (red). The existing
+  `cap_hits` metric only fires when the loop *also* fails — `over_cap_episodes`
+  catches the silent breach where a 3-round loop is "saved" by the GPU.
