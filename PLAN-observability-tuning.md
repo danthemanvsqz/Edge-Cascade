@@ -58,7 +58,7 @@ telemetry → produces a valid `evidence/2026-05-19/` parseable by `jq`.
 `spend.clean=true`.
 
 **Exit:** working script + smoke evidence dir committed.
-**Dependencies:** none. **Branch:** `feat/obs-snapshot`. **Status:** `[ ]`
+**Dependencies:** none. **Branch:** `feat/obs-snapshot`. **Status:** `[x] f712c82` (smoke artifact: `evidence/2026-05-20/`)
 
 ---
 
