@@ -1,0 +1,146 @@
+[
+  {
+    "records": 16,
+    "start": 1779235633.275,
+    "end": 1779235695.639,
+    "run_ids": [
+      "5adf9f5091df",
+      "7d9d4fb15feb",
+      "b5cb0b1fac6b",
+      "f75f9ec73bde",
+      "fbab378fb0e8"
+    ],
+    "legacy": false,
+    "has_failure": true,
+    "events": [
+      {
+        "src": "edge-npu",
+        "tool": "status",
+        "ts": 1779235633.275,
+        "run_id": "5adf9f5091df",
+        "ok": "true",
+        "desc": "edge-npu.status ok (4637.9ms)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "route",
+        "ts": 1779235634.093,
+        "run_id": "5adf9f5091df",
+        "ok": "true",
+        "desc": "route -> difficulty=0.5 category=standard (GPU.0 0.81s)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "draft",
+        "ts": 1779235636.069,
+        "run_id": "5adf9f5091df",
+        "ok": "true",
+        "desc": "draft (GPU.0 1.97s) -> 346 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779235637.086,
+        "run_id": "fbab378fb0e8",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "route",
+        "ts": 1779235653.528,
+        "run_id": "7d9d4fb15feb",
+        "ok": "true",
+        "desc": "route -> difficulty=0.65 category=standard (NPU 2.64s)"
+      },
+      {
+        "src": "edge-npu",
+        "tool": "draft",
+        "ts": 1779235669.26,
+        "run_id": "7d9d4fb15feb",
+        "ok": "true",
+        "desc": "draft (NPU 15.73s) -> 1599 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779235670.886,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_functional",
+        "ts": 1779235670.951,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_functional FAIL: dijkstra -- KeyError: 'E' (in dijkstra(), line 23)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "repair_prompt",
+        "ts": 1779235670.954,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "repair_prompt built (2266 chars)"
+      },
+      {
+        "src": "edge-gpu",
+        "tool": "generate",
+        "ts": 1779235684.86,
+        "run_id": "f75f9ec73bde",
+        "ok": "true",
+        "desc": "gpu.generate (qwen2.5-coder:14b 11.61s, 50.12 tok/s) -> 1290 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779235684.866,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_functional",
+        "ts": 1779235684.935,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_functional FAIL: dijkstra -- KeyError: 'E' (in dijkstra(), line 25)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "repair_prompt",
+        "ts": 1779235684.937,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "repair_prompt built (2515 chars)"
+      },
+      {
+        "src": "edge-gpu",
+        "tool": "generate",
+        "ts": 1779235695.572,
+        "run_id": "f75f9ec73bde",
+        "ok": "true",
+        "desc": "gpu.generate (qwen2.5-coder:14b 8.43s, 44.95 tok/s) -> 1298 chars"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_syntax",
+        "ts": 1779235695.575,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_syntax PASS (code parses)"
+      },
+      {
+        "src": "edge-verify",
+        "tool": "verify_functional",
+        "ts": 1779235695.639,
+        "run_id": "b5cb0b1fac6b",
+        "ok": "true",
+        "desc": "verify_functional PASS (checked=1)"
+      }
+    ]
+  }
+]
