@@ -26,6 +26,7 @@ import json
 import sys
 import time
 
+from cascade.config import CONFIG
 from replay import RUNS, load_streams, split_episodes, tag_and_merge
 
 CLEAR = "\x1b[2J\x1b[H"
@@ -33,12 +34,13 @@ _RED, _GRN, _DIM, _OFF = "\x1b[31m", "\x1b[32m", "\x1b[2m", "\x1b[0m"
 DEFAULT_INTERVAL = 2.0
 DEFAULT_GAP = 30.0
 SERVERS = ("edge-npu", "edge-gpu", "edge-verify", "edge-cloud")
-# RUNBOOK + CLAUDE.md policy: after 2 failed local repair rounds, escalate to
+# RUNBOOK + CLAUDE.md policy: after N failed local repair rounds, escalate to
 # Tier 3. An episode with >REPAIR_CAP_MAX repair_prompt cycles is a policy
 # breach -- counted in `over_cap_episodes` REGARDLESS of whether it eventually
 # passed (cap_hits only flags loops that ALSO failed; a 3-round loop that
 # eventually passes via GPU is still a breach and must be visible).
-REPAIR_CAP_MAX = 2
+# Single source of truth with cascade/mesh.py's enforced cap (charter inv. 4).
+REPAIR_CAP_MAX = CONFIG.repair_cap
 
 
 # ---- pure helpers -----------------------------------------------------------
