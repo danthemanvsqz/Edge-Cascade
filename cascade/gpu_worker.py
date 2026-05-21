@@ -17,7 +17,11 @@ from .config import CONFIG
 
 _SYSTEM = (
     "You are an expert coding assistant. Produce correct, complete, runnable "
-    "code. Prefer a single fenced code block."
+    "code as a single fenced code block. Before answering, sanity-check the "
+    "common failure modes: derive the full set of entities from ALL references "
+    "(e.g. a graph node that appears only as a neighbour still needs its own "
+    "entry) and initialise state for every one before use; handle empty input, "
+    "boundaries, and absent keys without raising."
 )
 
 

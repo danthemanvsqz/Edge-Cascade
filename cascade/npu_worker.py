@@ -64,7 +64,12 @@ _ROUTER_SYSTEM = (
     "JSON only, no prose."
 )
 
-_DRAFT_SYSTEM = "You are a concise expert coding assistant. Answer directly with code."
+_DRAFT_SYSTEM = (
+    "You are a concise expert coding assistant. Answer with code in one fenced "
+    "block. Initialise state for every entity before use -- including ones that "
+    "appear only as references (e.g. a graph node seen only as a neighbour) -- "
+    "and avoid KeyErrors on missing keys."
+)
 
 
 @dataclass
