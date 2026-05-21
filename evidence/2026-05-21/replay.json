@@ -1,0 +1,31 @@
+[
+  {
+    "records": 2,
+    "start": 1779334797.062,
+    "end": 1779334819.56,
+    "run_ids": [
+      "549a6adb2c0b",
+      "c2ae01abf6c8"
+    ],
+    "legacy": false,
+    "has_failure": false,
+    "events": [
+      {
+        "src": "edge-npu",
+        "tool": "route",
+        "ts": 1779334797.062,
+        "run_id": "c2ae01abf6c8",
+        "ok": "true",
+        "desc": "route -> difficulty=0.65 category=standard (NPU 2.63s)"
+      },
+      {
+        "src": "edge-gpu",
+        "tool": "generate",
+        "ts": 1779334819.56,
+        "run_id": "549a6adb2c0b",
+        "ok": "true",
+        "desc": "gpu.generate (qwen2.5-coder:14b 11.36s, 43.69 tok/s) -> 1386 chars"
+      }
+    ]
+  }
+]
