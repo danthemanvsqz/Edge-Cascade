@@ -3,6 +3,10 @@
 > Status: **decision doc + Phase-0 spike** (scope locked in review).
 > Verdict: **pursue it** (opt-in; pipes stay default until a topology proves
 > out). Reviewed decisions are recorded below and shape the whole design.
+>
+> **Companion:** [CELERY-READINESS.md](CELERY-READINESS.md) governs the work we
+> do *before* this lands — the invariants that keep in-process stories building
+> the seam this design snaps onto, instead of coupling to unravel.
 
 ## Context
 
