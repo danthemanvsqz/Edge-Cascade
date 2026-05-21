@@ -138,6 +138,19 @@ def test_gpu_unavailable_midway_through_repair_caps():
     assert c["generate"] == 1  # first repair call hit an unreachable GPU
 
 
+def test_balanced_skips_npu_draft_on_hard_route():
+    # difficulty >= balanced.skip_draft_above (0.70) -> no NPU draft, GPU first.
+    ops, c = make_ops(difficulty=0.75, gate_seq=[True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and c["draft"] == 0 and c["generate"] == 1
+
+
+def test_hard_task_goes_straight_to_gpu():
+    ops, c = make_ops(gate_seq=[True])
+    out = mesh.solve("q", "hard_task", ops)
+    assert out.final_tier == "gpu" and c["draft"] == 0 and c["generate"] == 1
+
+
 def test_unknown_topology_name_raises():
     ops, _c = make_ops()
     with pytest.raises(KeyError):

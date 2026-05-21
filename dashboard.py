@@ -117,6 +117,14 @@ def _final_tier(ep: list[dict]) -> str:
         return "capped->tier3"
     if ("edge-cloud", "ask") in tools or ("edge-cloud", "generate") in tools:
         return "cloud"
+    # No gate ran in this window -> it is a 30s-split artifact (a lone status /
+    # generate), NOT a real solve attempt. The 2026-05-20 review found these
+    # inflating "unresolved"; classify them apart so "unresolved" means a real
+    # attempt that genuinely never resolved (and a true Tier-3 takeover is a
+    # cap-out above, or an explicit final_tier record from the run path).
+    if not any(
+        r.get("tool") in ("verify_syntax", "verify_functional") for r in ep):
+        return "fragment"
     return "unresolved"
 
 

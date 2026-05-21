@@ -12,13 +12,20 @@ def test_balanced_is_the_default_cascade():
     assert t.ladder == ("npu", "gpu")
     # repair_cap defaults to the single-source constant (charter inv. 4).
     assert t.repair_cap == CONFIG.repair_cap
-    assert t.skip_draft_above is None
+    # balanced skips the wasted NPU draft on hard tasks (S2, npu:0 finding).
+    assert t.skip_draft_above == CONFIG.escalate_to_gpu_difficulty
 
 
 def test_low_power_is_npu_only_with_no_repair():
     t = topologies.get("low_power")
     assert t.ladder == ("npu",)
     assert t.repair_cap == 0
+
+
+def test_hard_task_is_gpu_only():
+    t = topologies.get("hard_task")
+    assert t.ladder == ("gpu",)  # skips Tier-1 entirely
+    assert t.repair_cap == CONFIG.repair_cap
 
 
 def test_default_topology_name_resolves():
