@@ -294,6 +294,31 @@ large diffs that summarises first then comments.
 
 ---
 
+### A8 — Collision-resistant evidence-dir naming (A3 follow-up)
+
+**Why (grounded, hit live 2026-05-20):** `snapshot_evidence._alloc_dir`
+computes its `-N` suffix from what is on disk **in the current branch**, so
+the same `evidence/<date>-N` name gets allocated independently on two
+branches with *different* content (the M4 branch and the obs branch both
+produced `evidence/2026-05-20-1`). That's a latent path collision when both
+branches merge to `main`. Date-plus-counter is branch-relative; it needs to
+be content/run-relative.
+
+**Files:** `scripts/snapshot_evidence.py` (`_alloc_dir` / dir-name builder):
+suffix the dir with the episode's start-ts (or a short run_id hash) so two
+*different* episodes never collide regardless of branch, and re-snapshotting
+the *same* episode is idempotent (same name). `tests/test_snapshot_evidence.py`
+(cross-"branch" collision case: two different episodes from disjoint runs →
+distinct dir names; same episode twice → same name).
+
+**Verification:** unit test proving distinct episodes get distinct names with
+no shared on-disk state; existing snapshot tests stay green.
+
+**Exit:** evidence dirs are unique per run, merge-safe across branches.
+**Dependencies:** A3 `[x]`. **Branch:** `feat/obs-evidence-naming`. **Status:** `[ ]`
+
+---
+
 ### P2a — Incremental `.rec` tail-parse
 
 **Why:** Phase-1 roadmap. `.rec` is append-only + length-framed; readers
