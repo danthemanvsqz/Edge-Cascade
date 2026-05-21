@@ -1,0 +1,154 @@
+"""Transport-agnostic cascade orchestrator -- the deterministic core.
+
+`solve(query, topology, ops)` runs the cascade as PURE CONTROL FLOW over
+injected tier ops: route -> initial candidate -> bounded GPU repair loop ->
+Tier-3 handoff. It performs no I/O and writes no `.rec` itself -- recording
+stays at the op boundary (mcp_servers/_rec.py), and the ops are injected, so
+this is unit-testable with fakes and equally drivable in-process today or over
+Celery later (the ops become task signatures). See docs/CELERY-READINESS.md.
+
+The repair-round cap is the load-bearing invariant: the loop is
+`range(1, cap+1)`, so a (cap+1)'th round is structurally impossible. The policy
+breach seen in the 2026-05-20 log review -- where the cap lived only as a
+CLAUDE.md prompt rule and the agent ran a 3rd round -- cannot recur here.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from cascade import topologies
+
+
+@dataclass(frozen=True)
+class RouteInfo:
+    """Tier-1 routing verdict (only `difficulty` drives control flow)."""
+
+    difficulty: float
+    category: str = "standard"
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A produced answer from a tier. `available` is False when the tier could
+    not run (e.g. Ollama unreachable) -- the cascade treats that as a hand-off,
+    not an answer."""
+
+    text: str
+    available: bool = True
+
+
+@dataclass(frozen=True)
+class GateInfo:
+    """Verifier verdict for a candidate. `failures` feeds the repair prompt."""
+
+    passed: bool
+    failures: tuple = ()
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class Ops:
+    """The injected tier ops. Each respects the op boundary -- plain data in,
+    plain data out -- so it lifts to a Celery task unchanged (charter inv. 1/2).
+    `solve` calls only these; it never reaches into a worker or transport."""
+
+    route: Callable[[str], RouteInfo]
+    draft: Callable[[str], Candidate]                 # Tier-1 NPU draft
+    generate: Callable[[str], Candidate]              # Tier-2 GPU generate
+    gate: Callable[[str], GateInfo]                   # verify (syntax [+ functional])
+    repair_prompt: Callable[[str, str, tuple], str]   # (query, prior, failures) -> next query
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Result of a solve. `capped` True means the locals are exhausted and
+    Tier-3 (the launched Claude) must take over -- the single signal the agent
+    acts on under model-B."""
+
+    answer: str | None
+    final_tier: str          # "npu" | "gpu" | "capped->tier3"
+    resolved: bool
+    capped: bool
+    repair_rounds: int
+    difficulty: float
+    topology: str
+    trace: tuple[str, ...]
+
+
+def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
+    """Run the cascade for `query` under `topology` using the injected `ops`.
+
+    Returns an `Outcome`: a verified answer attributed to the tier that produced
+    it, or `capped` (Tier-3 takeover) when the NPU draft and the bounded GPU
+    repair loop are exhausted. Accepts a topology name (looked up) or a Topology
+    object (so callers/tests can pass an ad-hoc strategy)."""
+    topo = (topology if isinstance(topology, topologies.Topology)
+            else topologies.get(topology))
+    trace: list[str] = []
+    route = ops.route(query)
+    trace.append(
+        f"route difficulty={route.difficulty:.2f} category={route.category}")
+
+    def capped(rounds: int) -> Outcome:
+        trace.append("-> capped->tier3 (Tier-3 takes over)")
+        return Outcome(None, "capped->tier3", False, True, rounds,
+                       route.difficulty, topo.name, tuple(trace))
+
+    def won(text: str, tier: str, rounds: int) -> Outcome:
+        return Outcome(text, tier, True, False, rounds,
+                       route.difficulty, topo.name, tuple(trace))
+
+    # 1) Initial candidate: the Tier-1 NPU draft, unless this topology has no
+    #    npu tier or skips the draft for this difficulty (the npu:0 finding).
+    prior: str | None = None
+    failures: tuple = ()
+    npu_in_ladder = "npu" in topo.ladder
+    skip = (topo.skip_draft_above is not None
+            and route.difficulty >= topo.skip_draft_above)
+    if npu_in_ladder and not skip:
+        cand = ops.draft(query)
+        trace.append(f"npu draft -> {len(cand.text)} chars")
+        g = ops.gate(cand.text)
+        if g.passed:
+            trace.append("npu gate PASS")
+            return won(cand.text, "npu", 0)
+        trace.append(f"npu gate FAIL: {g.reason}")
+        prior, failures = cand.text, g.failures
+    elif npu_in_ladder:
+        trace.append(f"npu draft skipped (difficulty>={topo.skip_draft_above})")
+
+    # 2) GPU phase -- only if this topology includes a gpu tier.
+    if "gpu" not in topo.ladder:
+        return capped(0)
+
+    # If there is no prior to repair (npu skipped/absent), the first GPU call is
+    # a fresh generate; otherwise every GPU call repairs the best prior.
+    if prior is None:
+        cand = ops.generate(query)
+        trace.append(f"gpu generate -> {len(cand.text)} chars")
+        if not cand.available:
+            trace.append("gpu unavailable")
+            return capped(0)
+        g = ops.gate(cand.text)
+        if g.passed:
+            trace.append("gpu gate PASS")
+            return won(cand.text, "gpu", 0)
+        prior, failures = cand.text, g.failures
+
+    # 3) Bounded repair loop -- the DETERMINISTIC CAP. range stops at cap, so a
+    #    (cap+1)'th round cannot happen, pass-or-fail.
+    for rnd in range(1, topo.repair_cap + 1):
+        rq = ops.repair_prompt(query, prior, failures)
+        cand = ops.generate(rq)
+        trace.append(f"gpu repair round {rnd} -> {len(cand.text)} chars")
+        if not cand.available:
+            trace.append("gpu unavailable")
+            return capped(rnd - 1)
+        g = ops.gate(cand.text)
+        if g.passed:
+            trace.append(f"gpu gate PASS (repair round {rnd})")
+            return won(cand.text, "gpu", rnd)
+        prior, failures = cand.text, g.failures
+
+    return capped(topo.repair_cap)

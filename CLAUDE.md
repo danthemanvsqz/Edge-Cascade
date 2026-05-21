@@ -46,12 +46,18 @@ long sessions.
   `edge-verify.verify_syntax`, then `edge-verify.verify_functional` (sandboxed
   exec vs `checks.dsl`) before chaining a Tier-1/2 result forward. "Parses" ≠
   "correct"; only verified code feeds the next step or lands in the repo.
-- **Repair loop (HARD CAP at 2 rounds):** on a gate failure, build the fix
-  request with `edge-verify.repair_prompt` and feed it back to Tier 2
-  (`generate` with `prior_attempt`). **After 2 failed local repair rounds,
-  take it over yourself (Tier 3). DO NOT begin a 3rd round — it is a policy
-  breach (`over_cap_episodes` will flag it red), even if the 3rd attempt
-  happens to pass.** Only after *you* are deadlocked → Tier 4 (budget-gated).
+- **Repair loop (HARD CAP — single source of truth: `config.repair_cap`,
+  default 2):** the cascade is now defined ONCE in code as `cascade.mesh.solve`
+  (route → NPU draft → bounded GPU repair → "capped → Tier-3"), where the cap
+  is `range(1, cap+1)` — a 3rd round is *structurally impossible*, not just
+  discouraged. When you drive the raw MCP tools by hand, honour that same cap:
+  build the fix with `edge-verify.repair_prompt`, feed it to Tier 2 (`generate`
+  with `prior_attempt`), and **after `repair_cap` failed rounds take it over
+  yourself (Tier 3). DO NOT begin another round — a policy breach
+  (`over_cap_episodes` flags it red even if it would pass).** The deterministic
+  CLI `python cli.py --topology <name> "<task>"` runs this whole loop for you
+  (one Tier-1 compile per process), returning a verified answer or a "capped →
+  your turn" signal. Only after *you* are deadlocked → Tier 4 (budget-gated).
 - **Chunk aggressively.** Break a project goal into sub-tasks sized for the
   lowest tier that can own each; dispatch independent ones in parallel.
 - **You do the building.** Writing/editing files, running commands, and

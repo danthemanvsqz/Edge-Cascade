@@ -1,12 +1,15 @@
 """3-tier escalation cascade: NPU/iGPU -> NVIDIA GPU -> Claude cloud.
 
-Routing: the Tier-1 model scores difficulty up front, so trivial asks never
-spin up the GPU and known-hard asks skip straight to cloud. Every local answer
-is gated by the code verifier; a failed gate escalates and the failed draft is
-handed to the next tier as context.
+The cascade logic now lives in ONE place -- `cascade.mesh.solve(query,
+topology)` -- a transport-agnostic orchestrator (route -> NPU draft -> bounded
+GPU repair loop, repair cap enforced in code). This session BINDS that core to
+the live workers (`cascade.wiring.build_ops`), runs it, and -- since the CLI has
+no Tier-3 agent -- on a local cap-out escalates to the PAID cloud if enabled,
+else returns the best-effort "capped" signal. Every local answer is gated by the
+verifier inside solve before it is trusted.
 
-A live log prints which physical processor is working at each phase so you can
-watch the cascade hop across hardware in real time.
+A live log prints the solve trace so you can watch the cascade hop across
+hardware in real time.
 
 There is no orchestrator *object*: a run is a function pipeline. The one piece
 of genuine state -- the tee logger, which owns an open file handle -- has a
@@ -27,12 +30,13 @@ from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
 
+from . import mesh, topologies
 from .cloud_worker import make_cloud_worker, reason_note
 from .config import CONFIG
 from .gpu_worker import make_gpu_worker
 from .logfmt import dump_record
 from .npu_worker import make_npu_worker
-from .verifier import verify
+from .wiring import build_ops
 
 
 def processor(device: str) -> str:
@@ -89,7 +93,7 @@ class Session:
     """Immutable handle yielded by `cascade_session`: the `run` pipeline plus
     the startup facts the CLI prints. Pure data -- no behavior."""
 
-    run: Callable[[str], CascadeResult]
+    run: Callable[..., CascadeResult]
     log_path: Path
     tier1_device: str
     cloud_status: str
@@ -135,97 +139,50 @@ def cascade_session(
     def done(t0: float, tier: str, note: str, dt: float) -> None:
         log(t0, f"<< {tier:<7} {note}  ({dt:.2f}s)")
 
-    def gpu_then_cloud(
-        query: str, trace: list[Hop], t0: float,
-        fallback_text: str | None = None,
+    ops = build_ops(npu, gpu)
+
+    def run_pipeline(
+        query: str, topology: str = topologies.DEFAULT_TOPOLOGY
     ) -> CascadeResult:
-        prior = fallback_text
-        if gpu.available():
-            start(t0, "GPU", "NVIDIA/")
-            g = gpu.generate(query)
-            v = verify(g.text)
-            note = f"{g.tokens_per_s:.0f} tok/s; gate: {v.reason}"
-            done(t0, "GPU", note, g.latency_s)
-            trace.append(Hop("gpu", f"NVIDIA/{g.model}", g.latency_s, note))
-            if g.available and v.passed:
-                return CascadeResult(
-                    g.text, "gpu", time.perf_counter() - t0, trace
-                )
-            if g.available:
-                prior = g.text
-        else:
-            log(t0, "-- GPU     unavailable (Ollama not reachable) - skipped")
-            trace.append(Hop("gpu", "NVIDIA/Ollama", 0.0, "unavailable - skipped"))
-
-        if not cloud.enabled:
-            log(t0, "-- CLOUD   paid tier disabled - returning best local answer")
-            if prior is not None:
-                trace.append(Hop("local", "best-effort", 0.0,
-                                  "unverified; cloud disabled"))
-                return CascadeResult(
-                    prior, "local (unverified)",
-                    time.perf_counter() - t0, trace,
-                )
-            msg = ("[no local answer passed the gate and the paid cloud tier "
-                   "is disabled. Re-run with --cloud to escalate.]")
-            trace.append(Hop("local", "none", 0.0, "no answer; cloud disabled"))
-            return CascadeResult(msg, "none", time.perf_counter() - t0, trace)
-
-        start(t0, "CLOUD", cloud.model)
-        c = cloud.generate(query, prior_attempt=prior)
-        done(t0, "CLOUD", reason_note(c), c.latency_s)
-        trace.append(Hop("cloud", c.model, c.latency_s, reason_note(c)))
-        return CascadeResult(c.text, "cloud", time.perf_counter() - t0, trace)
-
-    def run_pipeline(query: str) -> CascadeResult:
+        """Run the cascade via the single deterministic orchestrator
+        (cascade.mesh.solve) -- route -> NPU draft -> bounded GPU repair loop.
+        The 2-round cap is enforced inside solve, not here. On a local cap-out
+        the CLI has no Tier-3 agent, so it escalates to the PAID cloud if
+        enabled, else returns the best-effort 'capped' signal."""
         t0 = time.perf_counter()
-        trace: list[Hop] = []
         # Log the full query (single-lined) -- log-driven repair needs the
         # complete task, not a preview.
         logger.info("---- QUERY: " + " ".join(query.split())[:2000])
 
-        start(t0, "ROUTER", npu.device)
-        r = npu.route(query)
-        done(
-            t0, "ROUTER",
-            f"difficulty={r.difficulty:.2f} category={r.category}", r.latency_s,
-        )
-        trace.append(
-            Hop("router", r.device, r.latency_s,
-                f"difficulty={r.difficulty:.2f} category={r.category}")
-        )
+        outcome = mesh.solve(query, topology, ops)
+        for line in outcome.trace:
+            log(t0, line)
+        trace = [Hop("mesh", "-", 0.0, line) for line in outcome.trace]
 
-        if r.difficulty >= CONFIG.escalate_to_cloud_difficulty:
-            if cloud.enabled:
-                log(t0, "   route: clearly hard -> straight to CLOUD")
-                start(t0, "CLOUD", cloud.model)
-                c = cloud.generate(query)
-                done(t0, "CLOUD", reason_note(c), c.latency_s)
-                trace.append(Hop("cloud", c.model, c.latency_s, reason_note(c)))
-                return CascadeResult(
-                    c.text, "cloud", time.perf_counter() - t0, trace
-                )
-            log(t0, "   route: clearly hard, but cloud disabled "
-                    "-> best local (NVIDIA GPU)")
-            return gpu_then_cloud(query, trace, t0)
+        if outcome.resolved:
+            return CascadeResult(
+                outcome.answer, outcome.final_tier,
+                time.perf_counter() - t0, trace,
+            )
 
-        if r.difficulty >= CONFIG.escalate_to_gpu_difficulty:
-            log(t0, "   route: non-trivial -> NVIDIA GPU tier")
-            return gpu_then_cloud(query, trace, t0)
+        # Locals exhausted (cap reached / GPU unavailable).
+        if cloud.enabled:
+            start(t0, "CLOUD", cloud.model)
+            c = cloud.generate(query)
+            done(t0, "CLOUD", reason_note(c), c.latency_s)
+            trace.append(Hop("cloud", c.model, c.latency_s, reason_note(c)))
+            return CascadeResult(c.text, "cloud", time.perf_counter() - t0, trace)
 
-        log(t0, "   route: trivial -> try Tier-1 draft")
-        start(t0, "NPU", npu.device)
-        d = npu.draft(query)
-        v = verify(d.text)
-        done(t0, "NPU", f"gate: {v.reason}", d.latency_s)
-        trace.append(Hop("npu", d.device, d.latency_s, f"gate: {v.reason}"))
-        if v.passed:
-            return CascadeResult(d.text, "npu", time.perf_counter() - t0, trace)
+        log(t0, "-- locals capped and paid cloud disabled -- run with --cloud")
+        msg = ("[locals exhausted (repair cap reached) and the paid cloud tier "
+               "is disabled. Re-run with --cloud to escalate.]")
+        trace.append(Hop("local", "none", 0.0, "capped; cloud disabled"))
+        return CascadeResult(
+            msg, "capped (cloud disabled)", time.perf_counter() - t0, trace)
 
-        log(t0, "   Tier-1 failed gate -> escalating")
-        return gpu_then_cloud(query, trace, t0, fallback_text=d.text)
-
-    def write_record(query: str, result: CascadeResult) -> None:
+    def write_record(
+        query: str, result: CascadeResult, topology: str
+    ) -> None:
         """Append one deterministic record (cascade/logfmt.py grammar). The
         free-text query/answer are length-framed, so a model answer that emits
         fake "%%REC"/timestamp lines can never corrupt the parse."""
@@ -239,6 +196,7 @@ def cascade_session(
             "query": query,
             "answer": result.answer,
             "final_tier": result.final_tier,
+            "topology": topology,
             "total_latency_s": f"{result.total_latency_s:.2f}",
             "trace": trace,
         })
@@ -247,10 +205,12 @@ def cascade_session(
         with open(rec_path, "ab") as fh:
             fh.write(rec)
 
-    def run(query: str) -> CascadeResult:
+    def run(
+        query: str, topology: str = topologies.DEFAULT_TOPOLOGY
+    ) -> CascadeResult:
         """Run the cascade and log the full outcome (trace, summary, answer)."""
-        result = run_pipeline(query)
-        write_record(query, result)
+        result = run_pipeline(query, topology)
+        write_record(query, result, topology)
         logger.info("---- trace ----")
         for h in result.trace:
             logger.info(

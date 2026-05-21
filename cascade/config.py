@@ -83,6 +83,15 @@ class Config:
             os.environ.get("CASCADE_REPAIR_OBSERVED_MAXLEN", "600")
         )
     )
+    # Deterministic repair-ROUND cap for the live cascade (distinct from
+    # repair_max_failures, which bounds failures-per-prompt). After this many
+    # GPU repair rounds without a passing gate, the mesh stops and hands off to
+    # Tier-3; a further round is a policy breach (over_cap_episodes). SINGLE
+    # SOURCE OF TRUTH -- cascade/topologies.py and dashboard.py both read this
+    # (Celery-readiness charter, invariant 4). Tune via CASCADE_REPAIR_CAP.
+    repair_cap: int = field(
+        default_factory=lambda: int(os.environ.get("CASCADE_REPAIR_CAP", "2"))
+    )
     # difficulty < this  -> Tier-1 (NPU/iGPU) draft handles it
     # [this, cloud)       -> Tier-2 (NVIDIA GPU)
     # >= cloud            -> Tier-3 (cloud), skipping the GPU
