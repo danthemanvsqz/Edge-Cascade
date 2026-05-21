@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 
+from cascade import topologies
 from cascade.orchestrator import cascade_session, processor
 
 
@@ -24,6 +25,11 @@ def main() -> None:
     ap.add_argument(
         "--cloud", action="store_true",
         help="enable the PAID Anthropic cloud tier (off by default)",
+    )
+    ap.add_argument(
+        "--topology", default=topologies.DEFAULT_TOPOLOGY,
+        choices=sorted(topologies.TOPOLOGIES),
+        help=f"mesh topology (default: {topologies.DEFAULT_TOPOLOGY})",
     )
     ap.add_argument("query", nargs="*", help="prompt; omit for interactive mode")
     args = ap.parse_args()
@@ -38,7 +44,7 @@ def main() -> None:
         print(f"  Get-Content -Wait -Tail 20 \"{cs.log_path}\"     (PowerShell)")
 
         if args.query:
-            cs.run(" ".join(args.query))  # output is teed to console + log
+            cs.run(" ".join(args.query), args.topology)  # teed to console + log
             return
 
         print("Interactive mode — empty line or Ctrl-C to exit.")
@@ -47,7 +53,7 @@ def main() -> None:
                 q = input("\n> ").strip()
                 if not q:
                     break
-                cs.run(q)  # output is teed to console + log
+                cs.run(q, args.topology)  # output is teed to console + log
         except (KeyboardInterrupt, EOFError):
             print()
 
