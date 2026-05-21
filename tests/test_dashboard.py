@@ -78,6 +78,25 @@ def test_cap_hit_when_two_repair_rounds_still_fail():
     assert m["escalations"]["tier3_takeovers"] == 1
 
 
+def test_stray_records_are_fragments_not_unresolved():
+    # A lone GPU generate with no gate is a 30s-split artifact, not a real solve
+    # attempt -- it must NOT inflate "unresolved" (the 2026-05-20 finding: the
+    # 7 "unresolved" episodes were all tiny fragments).
+    m = D.compute_metrics(_records(**{
+        "edge-gpu": [_t("generate", '{"available": true, "text": "y"}')]}),
+        gap=300.0)
+    assert m["escalations"]["final_tier"] == {"fragment": 1}
+
+
+def test_gated_attempt_that_never_passes_stays_unresolved():
+    # A real attempt (a gate ran) that never passed and didn't hit the cap is
+    # genuinely unresolved -- still counted as such, not reclassified.
+    verify = [_t("verify_syntax", '{"passed": true, "has_code": true}'),
+              _t("verify_functional", '{"passed": false, "applicable": true}')]
+    m = D.compute_metrics(_records(**{"edge-verify": verify}), gap=300.0)
+    assert m["escalations"]["final_tier"] == {"unresolved": 1}
+
+
 def test_over_cap_episodes_visible_when_loop_passes_after_3_rounds():
     # The policy breach today's dashboard could not see: rounds=3 but the
     # loop eventually passed -> _final_tier returns "gpu", cap_hits=0 (only
