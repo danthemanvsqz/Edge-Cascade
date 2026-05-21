@@ -178,7 +178,7 @@ shipping the short-circuit, a regression test for the bypass path.
 **Exit:** either a written "router calibrated, no change needed" note (with
 the data) OR the short-circuit shipped.
 **Dependencies:** A3 `[x]`; ≥ 5 evidence snapshots accumulated.
-**Branch:** `feat/obs-router-study`. **Status:** `[ ]`
+**Branch:** `feat/obs-router-study`. **Status:** `[~] FROZEN` — subsumed by the Celery substrate (low-power topology *is* the route short-circuit); revisit after the C1 Phase-0 decision. See `docs/DESIGN-celery-canvas.md`.
 
 ---
 
@@ -346,7 +346,9 @@ captured in an A3 snapshot.
 **Exit:** ENERGY panel live; baseline number in `evidence/<date>/`.
 **Dependencies:** A2 `[x]` (so steady-state latency is already partitioned;
 joules attribution is cleaner). **Branch:** `feat/obs-energy-accounting`.
-**Status:** `[ ]`
+**Status:** `[~] FROZEN` — re-scope as a per-task metric inside the Celery
+substrate (discarded-`group` joules = a chord callback). Revisit after C1.
+See `docs/DESIGN-celery-canvas.md`.
 
 ---
 
@@ -369,7 +371,10 @@ vs pre-speculation baseline.
 
 **Exit:** speculation live; both branches tested; discarded joules visible.
 **Dependencies:** P2b `[x]` (the user-mandated visibility gate).
-**Branch:** `feat/obs-spec-gpu`. **Status:** `[ ]`
+**Branch:** `feat/obs-spec-gpu`. **Status:** `[~] FROZEN` — this IS the
+Celery `low_latency` topology (group/chord). Do NOT hand-roll futures in
+`orchestrator.py`; build it inside the substrate. Revisit after C1.
+See `docs/DESIGN-celery-canvas.md`.
 
 ---
 
@@ -391,6 +396,64 @@ prompt processing drops with growing program size.
 **Exit:** stateful path used by `repair`; benchmark in evidence.
 **Dependencies:** A1 `[x]` (cap/policy semantics settled first).
 **Branch:** `feat/obs-stateful-repair`. **Status:** `[ ]`
+
+---
+
+## Substrate direction — Celery Canvas (see `docs/DESIGN-celery-canvas.md`)
+
+> Decision doc approved 2026-05-21: **pursue** a Celery Canvas + RabbitMQ
+> substrate to make mesh topology a tunable, distributable knob (multi-box is
+> the goal; streaming traded away; orchestrator-on-Canvas). Opt-in; pipes stay
+> the default until a topology proves out. This subsumes P2c/P2b/A5 (frozen
+> above) — build them *inside* the substrate, not separately.
+
+### C1 — Celery Canvas substrate (Phase-0 spike)
+
+**Why:** tunable topologies (low-power / low-latency) + distributing tier
+workers across the NPU/GPU hosts — neither possible on stdio pipes. Full
+rationale + architecture in `docs/DESIGN-celery-canvas.md`.
+
+**Files (new, opt-in; nothing in the hot path changes):** `docker-compose.yml`
+(RabbitMQ + Redis), `cascade/celery_app.py` (broker+backend, per-tier queues,
+resident workers), `cascade/tasks.py` (wrap `generate` + `verify_functional`
+reusing the existing workers + `.rec`), `cascade/topologies.py` (`balanced`
+chain + `low_latency` chord), `scripts/mesh_solve.py` (CLI dispatcher).
+
+**Verification:** both topologies run the RUNBOOK `dijkstra` task; `low_latency`
+chord races NPU+GPU and returns the first gate-passing result; **`replay.py` /
+`dashboard.py` render the Celery path identically to the pipe path** (same
+`.rec` grammar) — spend `$0`, tiers attributed, `over_cap`/`tier3` intact;
+capture a `snapshot_evidence.py` dir.
+
+**Exit / decision gate:** a topology beats the hardcoded cascade on a real
+metric → Phase 1 (all tiers as tasks) → Phase 2 (selector + model-B
+`mesh.solve`) → Phase 3 (distribute workers + `.rec` aggregation = the
+multi-box payoff). Else keep pipes; the doc stands as the recorded
+investigation.
+**Dependencies:** none. **Branch:** `feat/celery-phase0`. **Status:** `[ ]`
+
+### C2 — Vision tiers: image-gen (GPU) + CV-analysis (NPU)
+
+**Why:** offload image *generation* to the GPU with **Tier-3 (Claude) as the
+prompt mediator** (loose intent → structured spec → generate); add cheap CV
+*analysis* on the NPU (the path to a future image auto-gate). Decisions
+captured 2026-05-21: model-swap on the GPU, `diffusers`+FastAPI, NPU does
+analysis not generation, fold into the Celery substrate.
+
+**Tiers:** `edge-image` (GPU; HF `diffusers` behind a small FastAPI; SDXL-class;
+**model-swap arbitration** with the 14B coder — the GPU can't hold both in
+12 GB, so the queue serializes coder vs image, unloading/loading on switch —
+this is *why* it wants the substrate, the queue is the arbiter). `edge-vision`
+(NPU; OpenVINO classify/detect/caption → future "vision critic" gate, the
+image analog of `verify_functional`).
+
+**Flow:** intent → Tier-3 builds spec `{prompt, negative, w/h, steps, cfg,
+sampler, seed}` → `image.generate(spec)` Canvas task → artifact. PNG →
+`runs/artifacts/`; metadata → `.rec`; spend `$0` (local). A "creative"
+topology chains `image.generate → edge-vision.critique → optional regen`.
+
+**Dependencies:** C1 Phase 1 (tiers-as-tasks). **Branch:** `feat/vision-tiers`.
+**Status:** `[ ]`
 
 ---
 
