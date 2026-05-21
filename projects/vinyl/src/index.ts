@@ -1,9 +1,9 @@
 /**
  * Vinyl — streaming server-rendered async JSX, htmx-driven. Zero client state.
  *
- * Through M4: vnode model + automatic JSX runtime (M1), streaming HTML
+ * Through M5: vnode model + automatic JSX runtime (M1), streaming HTML
  * renderer (M2), Suspense/ErrorBoundary with OOB framing (M3), WS transport
- * + shell handoff (M4). Actions/live regions (M5) land next.
+ * + shell handoff (M4), actions + live regions / signals (M5).
  * See ARCHITECTURE.md.
  */
 export {
@@ -47,3 +47,14 @@ export type {
 } from "./ws.js";
 export { streamShell } from "./shell.js";
 export type { StreamShellOptions } from "./shell.js";
+export { liveRegion, regionId, createSignalHub } from "./live.js";
+export type { LiveRegion, SignalHub } from "./live.js";
+export { defineAction, createActionRouter, parseMessage } from "./actions.js";
+export type {
+  ActionInput,
+  ParsedMessage,
+  ActionContext,
+  ActionHandler,
+  ActionDef,
+  ActionRouterOptions,
+} from "./actions.js";

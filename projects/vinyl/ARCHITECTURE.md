@@ -208,3 +208,69 @@ swap. From those two functions, the observed contract is:
 The snapshots are the source of truth for the line-number citations above;
 re-fetch them only when upgrading htmx, then re-validate any claims that
 move.
+
+## 8. M5 — actions + live regions (the state model)
+
+> **Status: COMPLETE (2026-05-20).** `src/actions.ts`, `src/live.ts`, proof in
+> `demo/todomvc/` + `test/m5-todomvc.test.ts`. Green: vitest + tsc + eslint.
+
+The state model closes the loop opened by M4: inbound htmx frame → action →
+DB write → live regions re-rendered *from the DB* → `hx-swap-oob` frames out.
+The render is a pure function of (DB state); the browser holds no state.
+
+### 8.1 Inbound — actions (`src/actions.ts`)
+
+- `parseMessage(data)` splits an htmx `ws-send` JSON frame into
+  `{ raw, input, headers }`: htmx tucks its metadata under a `HEADERS` key
+  (`HX-Trigger`, `HX-Trigger-Name`, …, values string-or-null), everything else
+  is form `input`.
+- `createActionRouter({ actions, … })` returns the `onMessage` handler for
+  `createWSServer`. It resolves an action name (default: a non-empty
+  `input.action`, else `HEADERS["HX-Trigger-Name"]`; override via `nameFrom`)
+  and dispatches to the matching `defineAction(name, handler)`.
+- **The router never throws into the socket.** Parse failures, unknown actions,
+  and handler exceptions route to overridable callbacks (`onParseError` /
+  `onUnknown` / `onError`, defaulting to console) — one bad frame can't kill the
+  connection. This is the M4 spike's "target-missing is non-fatal" stance
+  carried to the inbound side.
+- The handler gets an `ActionContext`: `conn`, `context` (= `conn.context`:
+  DB handle + authed user from the upgrade), `input`, `headers`, `name`, and
+  `refresh(...regions)` — re-render those regions and push ONE frame to the
+  acting connection.
+
+### 8.2 Outbound — live regions (`src/live.ts`)
+
+- `liveRegion(key, render)` is a named, re-renderable subtree. `render(ctx)` is
+  **synchronous** — the sweet spot is a server round-trip over a synchronous DB
+  (better-sqlite3). Async data for the *initial* paint stays Suspense's job
+  (M3); regions are for the post-action re-render + push.
+- It reuses the M3 id scheme: `regionId(key)` = `vinyl-r-<safeSeg(key)>`, a
+  distinct namespace from Suspense's `vinyl-s-*`. `mount(ctx)` emits the inline
+  shell node `<vinyl-slot id>{content}</vinyl-slot>`; `frame(ctx)` emits the
+  same id as an OOB swap via `oob()`. Same wrapper, same id in shell and
+  frame — exactly the contract §7.2 requires.
+
+### 8.3 Cross-connection — the signal hub
+
+- §3.5 names `signal(key)`; the realization is `createSignalHub()`, a
+  **per-server** pub/sub rather than a module global. Rationale: testability and
+  multi-server isolation — a global channel registry leaks subscriptions across
+  tests and across server instances. (This is an implementation choice for the
+  §4 API sketch, not a change to a §2 locked decision.)
+- `subscribe(key, conn, ...regions)` binds a connection's regions and returns
+  an unsubscribe fn; `emit(key)` re-renders each subscriber's regions **against
+  that subscriber's own context** and pushes one coalesced frame per
+  connection; `remove(conn)` drops a connection's subscriptions (call it from
+  `onClose`). An action mutates the DB then `emit`s — every connected tab
+  updates. That fan-out is the "live" in live regions.
+
+### 8.4 Proof of thesis — `demo/todomvc/`
+
+TodoMVC with **state 100% in better-sqlite3 and zero client JS state**. `db.ts`
+is the only writer; `app.ts` wires the regions, actions, router, and hub;
+`server.ts` is a runnable entry (`node --import tsx demo/todomvc/server.ts`,
+two tabs stay in sync). `test/m5-todomvc.test.ts` drives it over a real
+`ws` socket against an in-memory sqlite DB: add/toggle/clear round-trips,
+output escaping, multi-client broadcast, and subscription cleanup on close.
+better-sqlite3 is a **demo** devDependency — the library itself stays
+bring-your-own-db.
