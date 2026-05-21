@@ -35,13 +35,22 @@ class Topology:
     skip_draft_above: float | None = None
 
 
-# The table. `balanced` reproduces today's cascade (NPU draft -> GPU repair loop
-# -> Tier-3 on cap). `low_power` is NPU-only (repair_cap 0: any gate fail goes
-# straight to Tier-3, never spinning the GPU). S2 adds a `hard_task` row
-# (skip_draft_above) once the skip is validated end-to-end.
+# The table.
 TOPOLOGIES: dict[str, Topology] = {
-    "balanced": Topology("balanced", ("npu", "gpu")),
+    # balanced reproduces the original cascade: NPU draft for routine work, but
+    # SKIP the draft once the router flags a task hard (>= the GPU-escalation
+    # threshold). The 2026-05-20 review found the 1.5B draft never won on hard
+    # tasks (final_tier npu:0), so drafting there was pure latency -- go to GPU.
+    "balanced": Topology(
+        "balanced", ("npu", "gpu"),
+        skip_draft_above=CONFIG.escalate_to_gpu_difficulty,
+    ),
+    # low_power: NPU-only, never spins the GPU (repair_cap 0) -- any gate fail
+    # caps out to Tier-3 immediately. The frugal, lowest-watt strategy.
     "low_power": Topology("low_power", ("npu",), repair_cap=0),
+    # hard_task: skip Tier-1 entirely, GPU-first + repair loop. For a batch you
+    # already know is hard, or to force the GPU without paying for a draft.
+    "hard_task": Topology("hard_task", ("gpu",)),
 }
 
 DEFAULT_TOPOLOGY = "balanced"
