@@ -54,10 +54,14 @@ class Ops:
     `solve` calls only these; it never reaches into a worker or transport."""
 
     route: Callable[[str], RouteInfo]
-    draft: Callable[[str], Candidate]                 # Tier-1 NPU draft
+    draft: Callable[[str], Candidate]                 # Tier-1 NPU draft (1.5B)
     generate: Callable[[str], Candidate]              # Tier-2 GPU generate
     gate: Callable[[str], GateInfo]                   # verify (syntax [+ functional])
     repair_prompt: Callable[[str, str, tuple], str]   # (query, prior, failures) -> next query
+    # Optional Tier-1b: a larger draft model on the Intel iGPU (3B). None when
+    # no iGPU model is configured; a topology naming "igpu" then falls back to
+    # the NPU draft. Default keeps existing Ops construction backward-compatible.
+    igpu_draft: Callable[[str], Candidate] | None = None
 
 
 @dataclass(frozen=True)
@@ -99,24 +103,32 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         return Outcome(text, tier, True, False, rounds,
                        route.difficulty, topo.name, tuple(trace))
 
-    # 1) Initial candidate: the Tier-1 NPU draft, unless this topology has no
-    #    npu tier or skips the draft for this difficulty (the npu:0 finding).
+    # 1) Initial candidate: a Tier-1 draft. The drafter is the first draft-
+    #    capable tier in the ladder -- "igpu" (the larger 3B model) is preferred
+    #    over "npu" (1.5B) when present. An "igpu" tier with no iGPU op wired
+    #    falls back to the NPU draft. Skipped above skip_draft_above (npu:0).
     prior: str | None = None
     failures: tuple = ()
-    npu_in_ladder = "npu" in topo.ladder
+    draft_tier = next((t for t in topo.ladder if t in ("npu", "igpu")), None)
     skip = (topo.skip_draft_above is not None
             and route.difficulty >= topo.skip_draft_above)
-    if npu_in_ladder and not skip:
-        cand = ops.draft(query)
-        trace.append(f"npu draft -> {len(cand.text)} chars")
+    if draft_tier and not skip:
+        if draft_tier == "igpu" and ops.igpu_draft is not None:
+            draft_op, draft_name = ops.igpu_draft, "igpu"
+        else:
+            if draft_tier == "igpu":
+                trace.append("igpu drafter unavailable -> NPU draft")
+            draft_op, draft_name = ops.draft, "npu"
+        cand = draft_op(query)
+        trace.append(f"{draft_name} draft -> {len(cand.text)} chars")
         g = ops.gate(cand.text)
         if g.passed:
-            trace.append("npu gate PASS")
-            return won(cand.text, "npu", 0)
-        trace.append(f"npu gate FAIL: {g.reason}")
+            trace.append(f"{draft_name} gate PASS")
+            return won(cand.text, draft_name, 0)
+        trace.append(f"{draft_name} gate FAIL: {g.reason}")
         prior, failures = cand.text, g.failures
-    elif npu_in_ladder:
-        trace.append(f"npu draft skipped (difficulty>={topo.skip_draft_above})")
+    elif draft_tier:
+        trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above})")
 
     # 2) GPU phase -- only if this topology includes a gpu tier.
     if "gpu" not in topo.ladder:

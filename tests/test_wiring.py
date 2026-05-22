@@ -95,3 +95,15 @@ def test_build_ops_returns_a_complete_ops_bundle():
     # solve only calls these five; all must be present and callable.
     assert all(callable(getattr(ops, n)) for n in
                ("route", "draft", "generate", "gate", "repair_prompt"))
+
+
+def test_build_ops_without_igpu_leaves_drafter_none():
+    ops = wiring.build_ops(_NPU(), _GPU())
+    assert ops.igpu_draft is None
+
+
+def test_build_ops_with_igpu_binds_the_drafter():
+    ops = wiring.build_ops(_NPU(), _GPU(), igpu=_NPU())  # _NPU has .draft
+    assert callable(ops.igpu_draft)
+    c = ops.igpu_draft("q")
+    assert isinstance(c, mesh.Candidate) and c.text == "DRAFT TEXT"

@@ -51,6 +51,11 @@ TOPOLOGIES: dict[str, Topology] = {
     # hard_task: skip Tier-1 entirely, GPU-first + repair loop. For a batch you
     # already know is hard, or to force the GPU without paying for a draft.
     "hard_task": Topology("hard_task", ("gpu",)),
+    # igpu_assist: draft on the larger iGPU 3B model (Tier-1b) instead of the
+    # 1.5B NPU, then GPU repair. The 1.5B fails the dijkstra-class gate 0/9; a
+    # 3B draft is the lever. Requires CASCADE_IGPU_MODEL_DIR; falls back to the
+    # NPU draft if no iGPU model is wired. See PLAN-observability-tuning.md (C3).
+    "igpu_assist": Topology("igpu_assist", ("igpu", "gpu")),
 }
 
 DEFAULT_TOPOLOGY = "balanced"

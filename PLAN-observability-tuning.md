@@ -480,6 +480,41 @@ topology chains `image.generate → edge-vision.critique → optional regen`.
 **Dependencies:** C1 Phase 1 (tiers-as-tasks). **Branch:** `feat/vision-tiers`.
 **Status:** `[ ]`
 
+### C3 — iGPU 3B drafter (Tier-1b) spike
+
+**Why (measured 2026-05-21):** the 1.5B NPU draft fails the dijkstra-class gate
+**0/9** — the bottleneck is *model capability, not compute*, so faster silicon
+running the same 1.5B buys nothing. The idle Intel iGPU (Xe) can host a
+**3B-class INT4** model the NPU can't (vpux quirks + 192–640-tok static-shape
+limit). It's an **energy / parallelism** play, not latency (iGPU shares system
+RAM → slow; the RTX still wins on speed): lift first-draft pass so the RTX does
+fewer repair rounds, and give `low_power` a real low-watt drafter.
+
+**Scaffold — ALREADY MERGED (the charter seam, 100% covered, idle by default):**
+`config.igpu_*`; `mesh.Ops.igpu_draft` + `solve` drafter-tier selection (prefers
+`igpu`, falls back to NPU when no iGPU op is wired); `topologies.igpu_assist`
+(`("igpu","gpu")`); `wiring.build_ops(igpu=...)`. With no model wired,
+`igpu_draft` is None and `igpu_assist` transparently uses the NPU draft — zero
+behaviour change until the spike lands.
+
+**Spike (hardware — this item):** export `qwen2.5-coder-3B` INT4 (sym, GPU-
+friendly) via `optimum-cli export openvino`; `cascade/igpu_worker.py`
+`make_igpu_worker()` (OpenVINO `LLMPipeline` pinned to `GPU.0`, **draft only** —
+routing stays on the NPU); wire into `cascade_session` only when
+`CONFIG.igpu_model_dir` is set → `build_ops(igpu=...)`. (Agentic `edge-igpu`
+MCP surface deferred with the rest of model-B.)
+
+**Verify:** re-run `probe_repair_path.py` / `cli.py --topology igpu_assist` and
+A/B vs the NPU draft: **first-draft functional pass (baseline 0/9)** and GPU
+repair-round count; record draft latency + watts (expect 1–3 min/draft).
+
+**Exit / decision gate:** the 3B draft lifts first-draft pass meaningfully AND
+the latency/energy trade is acceptable → keep it; under C1 Phase-3 it pins to
+its own Celery queue/worker on the iGPU (a distributable tier — *why it belongs
+in the Celery plan*). Else revert to NPU-only; the scaffold stays harmless.
+**Dependencies:** scaffold (merged). **Branch:** `feat/igpu-3b-drafter`.
+**Status:** scaffold `[x]`, hardware spike `[ ]`.
+
 ---
 
 ## Recommended session sequencing
