@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 from cascade.cloud_worker import est_cost_usd, make_cloud_worker  # noqa: E402
 from cascade.config import CONFIG  # noqa: E402
+from cascade.credit_guard import CreditGuard  # noqa: E402
 
 mcp = FastMCP("edge-cloud")
 _REC = make_recorder("edge-cloud")
@@ -37,9 +38,13 @@ _REC = make_recorder("edge-cloud")
 # off-by-default flag. Without a key CloudWorker still safely no-ops.
 _worker = make_cloud_worker(enabled=True)
 
-# Per-process credit-guard accumulator (== one pipeline run).
-_calls_used = 0
-_usd_spent = 0.0
+# Per-process credit guard (== one pipeline run). The single trusted gate,
+# shared with the PR reviewer (cascade.credit_guard) so both enforce identically.
+_guard = CreditGuard(
+    max_calls=CONFIG.cloud_max_calls,
+    usd_budget=CONFIG.cloud_usd_budget,
+    enabled=_worker.enabled,
+)
 
 # A fresh-context preamble for critic mode: drop the deadlocked reasoning, do
 # not anchor on prior attempts -- this is the consensus-inertia breaker.
@@ -52,20 +57,17 @@ _CRITIC_PREAMBLE = (
 
 
 def _budget_state() -> dict:
-    tripped = (
-        _calls_used >= CONFIG.cloud_max_calls
-        or _usd_spent >= CONFIG.cloud_usd_budget
-    )
+    s = _guard.state()
     return {
-        "calls_used": _calls_used,
-        "calls_max": CONFIG.cloud_max_calls,
-        "usd_spent": round(_usd_spent, 6),
-        "usd_budget": CONFIG.cloud_usd_budget,
-        "guard_tripped": tripped,
+        "calls_used": s["calls_used"],
+        "calls_max": s["calls_max"],
+        "usd_spent": s["usd_spent"],
+        "usd_budget": s["usd_budget"],
+        "guard_tripped": s["guard_tripped"],
         "worker_enabled": _worker.enabled,
         "status": _worker.status,
         # allowed == a paid call would actually be attempted right now.
-        "allowed": _worker.enabled and not tripped,
+        "allowed": s["allowed"],
     }
 
 
@@ -99,8 +101,6 @@ def escalate(
     {ok, refused, disabled, text, model, est_cost_usd, in_tok, out_tok,
      budget}.
     """
-    global _calls_used, _usd_spent
-
     # 1. Credit guard FIRST -- the outermost safety. Trips with no key/spend
     #    too (e.g. CASCADE_CLOUD_MAX_CALLS=0), so the budget ceiling can never
     #    be bypassed by ordering.
@@ -134,8 +134,7 @@ def escalate(
 
     res = _worker.generate(user_query, prior_attempt=prior)
     cost = est_cost_usd(res)
-    _calls_used += 1
-    _usd_spent += cost
+    _guard.charge(cost)
     return {
         "ok": res.available, "refused": False, "disabled": False,
         "text": res.text, "model": res.model,

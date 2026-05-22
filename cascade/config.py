@@ -64,6 +64,20 @@ class Config:
         default_factory=lambda: float(os.environ.get("CASCADE_CLOUD_USD", "0.50"))
     )
 
+    # PR review (sanctioned paid lane; the cascade build path stays $0). Reviews
+    # go through the SAME credit guard + cost math and record to a SEPARATE
+    # runs/edge-review.rec stream, so cascade spend ($0) is never conflated with
+    # review spend. Tune via CASCADE_REVIEW_MODEL / _USD / _MAX_DIFF.
+    review_model: str = os.environ.get(
+        "CASCADE_REVIEW_MODEL", "claude-sonnet-4-6")
+    review_usd_budget: float = field(
+        default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "0.50"))
+    )
+    review_max_diff_bytes: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CASCADE_REVIEW_MAX_DIFF", "200000"))
+    )
+
     # Escalation gate thresholds.
     # Live log file — tail -f this while driving the CLI.
     log_path: str = os.environ.get(
