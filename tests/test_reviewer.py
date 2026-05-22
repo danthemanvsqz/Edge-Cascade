@@ -8,7 +8,13 @@ import anthropic
 import httpx
 import pytest
 
-from cascade.reviewer import ReviewResult, build_prompt, est_cost_usd, review
+from cascade.reviewer import (
+    _REVIEW_SYSTEM,
+    ReviewResult,
+    build_prompt,
+    est_cost_usd,
+    review,
+)
 
 # --- fake Anthropic client (same shape as test_cloud_worker) ---------------
 
@@ -45,6 +51,30 @@ class _Messages:
 class _Client:
     def __init__(self, msg=None, exc=None):
         self.messages = _Messages(msg, exc)
+
+
+# --- review focus (the tuned system prompt) --------------------------------
+
+def test_review_focus_priority_order():
+    # deficiencies first, then security, then agent maintainability
+    s = _REVIEW_SYSTEM.lower()
+    assert s.index("deficiencies") < s.index("security") < s.index("agent maintainability")
+
+
+def test_review_focus_security_is_egregious_only_for_sandbox():
+    s = _REVIEW_SYSTEM.lower()
+    assert "egregious only" in s and "sandbox" in s
+
+
+def test_review_focus_targets_agent_not_human_maintainability():
+    s = _REVIEW_SYSTEM.lower()
+    assert "agent maintainability" in s and "not human aesthetics" in s
+
+
+def test_review_focus_keeps_injection_guard_and_verdict_line():
+    assert "untrusted DATA" in _REVIEW_SYSTEM
+    assert _REVIEW_SYSTEM.rstrip().endswith(
+        "VERDICT: APPROVE | APPROVE WITH NITS | REQUEST CHANGES.")
 
 
 # --- prompt + cost ---------------------------------------------------------
