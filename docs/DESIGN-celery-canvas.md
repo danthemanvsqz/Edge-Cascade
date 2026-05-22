@@ -7,6 +7,18 @@
 > **Companion:** [CELERY-READINESS.md](CELERY-READINESS.md) governs the work we
 > do *before* this lands — the invariants that keep in-process stories building
 > the seam this design snaps onto, instead of coupling to unravel.
+>
+> **Phase-0 decision (2026-05-22): Redis for BOTH broker and result backend** —
+> one service instead of RabbitMQ+Redis. The RabbitMQ rationale below (durability,
+> backpressure) holds, but for the spike it's premature: backpressure is preserved
+> with `worker_prefetch_multiplier=1` + `task_acks_late` (not RabbitMQ-exclusive),
+> and the one Redis-broker caveat is `visibility_timeout` (set well above the
+> longest task, ~180s `generate`, to avoid redelivery double-runs). Revisit
+> RabbitMQ only if the decision gate passes *and* durability under real multi-box
+> load becomes the bottleneck (Phase 3). **Iteration 1 shipped + validated:**
+> `verify_functional` runs as a Celery task over Redis and writes
+> `runs/edge-verify.rec` byte-identically to the pipe path (replay/dashboard read
+> it unchanged) — the load-bearing parity proof, at $0.
 
 ## Context
 

@@ -1,0 +1,20 @@
+# Celery Canvas substrate -- dev infra for the C1 Phase-0 spike (opt-in).
+# Redis is BOTH the Celery broker AND the result backend (one service; see
+# docs/DESIGN-celery-canvas.md). Ephemeral on purpose: this is a dev message
+# bus, not a database -- persistence off so a restart is always clean.
+#
+#   docker compose up -d redis
+#   uv sync --extra celery
+#   uv run celery -A cascade.celery_app worker -Q npu,gpu,verify -l info
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: edge-cascade-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

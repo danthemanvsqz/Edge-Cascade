@@ -439,10 +439,20 @@ workers across the NPU/GPU hosts — neither possible on stdio pipes. Full
 rationale + architecture in `docs/DESIGN-celery-canvas.md`.
 
 **Files (new, opt-in; nothing in the hot path changes):** `docker-compose.yml`
-(RabbitMQ + Redis), `cascade/celery_app.py` (broker+backend, per-tier queues,
-resident workers), `cascade/tasks.py` (wrap `generate` + `verify_functional`
-reusing the existing workers + `.rec`), `cascade/topologies.py` (`balanced`
-chain + `low_latency` chord), `scripts/mesh_solve.py` (CLI dispatcher).
+(**Redis: broker + backend**, decision 2026-05-22), `cascade/celery_app.py`
+(broker+backend, per-tier queues, resident workers), `cascade/tasks.py` (wrap
+`generate` + `verify_functional` reusing the existing workers + `.rec`),
+`cascade/topologies.py` (already exists from S1 — add a Canvas builder over the
+table), `scripts/mesh_solve.py` (CLI dispatcher).
+
+**Iteration 1 (DONE 2026-05-22, `feat/celery-phase0`):** `celery` extra +
+`docker-compose.yml` (Redis) + `cascade/celery_app.py` + `cascade/tasks.py`
+(`generate`, `verify_functional`) + `scripts/celery_smoke.py`. **Validated
+end-to-end:** `verify_functional` dispatched over Redis ran as a task and wrote
+`runs/edge-verify.rec` (good→PASS, bad→`KeyError: 'E'`); `replay.py` renders the
+Celery-path episode identically; spend `$0`. **Next iterations:** route/draft
+NPU tasks; Canvas builder mapping the `topologies.py` table → `chain`/`chord`;
+`scripts/mesh_solve.py`; the full `dijkstra` two-topology run + snapshot.
 
 **Verification:** both topologies run the RUNBOOK `dijkstra` task; `low_latency`
 chord races NPU+GPU and returns the first gate-passing result; **`replay.py` /
