@@ -41,12 +41,14 @@ def repair_prompt(query: str, prior: str, failures: tuple) -> str:
     return build_repair_prompt(query, prior, fails)
 
 
-def build_ops(npu, gpu) -> mesh.Ops:
+def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
     """Bind live NPU/GPU worker handles into `mesh.Ops`.
 
     `npu` exposes `.route`/`.draft`; `gpu` exposes `.available()`/`.generate()`.
-    The closures translate worker dataclasses to the mesh boundary types and
-    nothing else -- no control flow (that is `mesh.solve`'s job)."""
+    `igpu` (optional) exposes `.draft` -- the larger Tier-1b model on the iGPU;
+    when None, `igpu_draft` stays None and topologies naming "igpu" fall back to
+    the NPU draft (mesh.solve handles that). The closures translate worker
+    dataclasses to the mesh boundary types and nothing else."""
 
     def route(q: str) -> mesh.RouteInfo:
         r = npu.route(q)
@@ -61,7 +63,12 @@ def build_ops(npu, gpu) -> mesh.Ops:
         g = gpu.generate(q)
         return mesh.Candidate(g.text, available=g.available)
 
+    igpu_draft = None
+    if igpu is not None:
+        def igpu_draft(q: str) -> mesh.Candidate:
+            return mesh.Candidate(igpu.draft(q).text)
+
     return mesh.Ops(
         route=route, draft=draft, generate=generate,
-        gate=gate, repair_prompt=repair_prompt,
+        gate=gate, repair_prompt=repair_prompt, igpu_draft=igpu_draft,
     )

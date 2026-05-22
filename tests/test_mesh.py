@@ -16,10 +16,11 @@ from cascade.mesh import Candidate, GateInfo, Ops, RouteInfo
 
 
 def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
-             gen_text="GEN", gate_seq=None, gen_available=True):
+             gen_text="GEN", gate_seq=None, gen_available=True,
+             igpu_text=None):
     """Build fake Ops + a call Counter. `gate_seq` is the ordered pass/fail of
     each gate call; once exhausted the gate fails (so an empty seq = always
-    fails)."""
+    fails). Pass `igpu_text` to wire a Tier-1b iGPU drafter."""
     counts: Counter = Counter()
     seq = list(gate_seq or [])
 
@@ -45,7 +46,14 @@ def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
         counts["repair_prompt"] += 1
         return f"REPAIR:{q}"
 
-    return Ops(route, draft, generate, gate, repair_prompt), counts
+    igpu_draft = None
+    if igpu_text is not None:
+        def igpu_draft(_q):
+            counts["igpu_draft"] += 1
+            return Candidate(igpu_text)
+
+    return Ops(route, draft, generate, gate, repair_prompt,
+               igpu_draft=igpu_draft), counts
 
 
 def test_balanced_npu_draft_passes_gate():
@@ -149,6 +157,27 @@ def test_hard_task_goes_straight_to_gpu():
     ops, c = make_ops(gate_seq=[True])
     out = mesh.solve("q", "hard_task", ops)
     assert out.final_tier == "gpu" and c["draft"] == 0 and c["generate"] == 1
+
+
+def test_igpu_assist_uses_igpu_drafter_when_present():
+    ops, c = make_ops(igpu_text="IGPU DRAFT", gate_seq=[True])
+    out = mesh.solve("q", "igpu_assist", ops)
+    assert out.final_tier == "igpu" and out.repair_rounds == 0
+    assert c["igpu_draft"] == 1 and c["draft"] == 0
+
+
+def test_igpu_assist_falls_back_to_npu_when_no_igpu_wired():
+    ops, c = make_ops(gate_seq=[True])  # no igpu_text -> ops.igpu_draft is None
+    out = mesh.solve("q", "igpu_assist", ops)
+    assert out.final_tier == "npu" and c["draft"] == 1 and c["igpu_draft"] == 0
+    assert any("unavailable" in line for line in out.trace)
+
+
+def test_igpu_draft_fails_then_gpu_repairs():
+    ops, c = make_ops(igpu_text="IGPU", gate_seq=[False, True])
+    out = mesh.solve("q", "igpu_assist", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    assert c["igpu_draft"] == 1 and c["generate"] == 1
 
 
 def test_unknown_topology_name_raises():

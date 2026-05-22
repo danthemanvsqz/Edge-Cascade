@@ -31,6 +31,15 @@ class Config:
         )
     )
 
+    # Tier 1b (optional) — a larger draft model on the Intel iGPU (Xe) via
+    # OpenVINO. Idle by default: set CASCADE_IGPU_MODEL_DIR to a 3B-class INT4
+    # export to enable a stronger draft than the 1.5B NPU (the 1.5B fails the
+    # dijkstra-class gate 0/9; see PLAN C3 spike). When unset, the iGPU
+    # drafter is not built and topologies that name it fall back to the NPU.
+    igpu_model_dir: str = os.environ.get("CASCADE_IGPU_MODEL_DIR", "")
+    igpu_device: str = os.environ.get("CASCADE_IGPU_DEVICE", "GPU.0")
+    igpu_max_new_tokens: int = 768
+
     # Tier 2 — local GPU via Ollama (NVIDIA/CUDA).
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     gpu_model: str = os.environ.get("CASCADE_GPU_MODEL", "qwen2.5-coder:14b")

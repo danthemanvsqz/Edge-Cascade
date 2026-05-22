@@ -28,6 +28,11 @@ def test_hard_task_is_gpu_only():
     assert t.repair_cap == CONFIG.repair_cap
 
 
+def test_igpu_assist_drafts_on_igpu_then_gpu():
+    t = topologies.get("igpu_assist")
+    assert t.ladder == ("igpu", "gpu")
+
+
 def test_default_topology_name_resolves():
     assert topologies.DEFAULT_TOPOLOGY in topologies.TOPOLOGIES
 
