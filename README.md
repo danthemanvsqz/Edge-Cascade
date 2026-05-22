@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml/badge.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
 [![coverage 100% scoped](https://img.shields.io/badge/coverage-100%25%20scoped%20%C2%B7%20CI--enforced-brightgreen)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
-[![security: bandit](https://img.shields.io/badge/security-bandit%20gated-yellow.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
+[![security: bandit](https://img.shields.io/badge/security-bandit%20(egregious--only)-yellow.svg)](https://github.com/danthemanvsqz/Edge-Cascade/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![uv](https://img.shields.io/badge/deps-uv-DE5FE9)
@@ -234,9 +234,11 @@ uv run pytest
 ```
 
 > **CI** runs this exact suite *and* the bandit security gate on every push
-> and PR (`.github/workflows/ci.yml`, Windows runner). The badges at the top
-> reflect the latest run: a green **CI** badge means the scoped 100% coverage
-> gate held and bandit found no MEDIUM+ issues.
+> and PR (`.github/workflows/ci.yml`, Windows runner). The bandit gate is
+> **loose by design** — edge-cascade is a local, sandboxed, single-user runtime,
+> so it blocks only on *egregious* findings (HIGH severity **and** HIGH
+> confidence); everything else is reported, not gated. A green **CI** badge
+> means the scoped 100% coverage gate held and bandit found no egregious issues.
 
 The suite enforces **`fail_under = 100`** — but *scoped*, not project-wide.
 100% is measured over the pure, safety-critical logic:

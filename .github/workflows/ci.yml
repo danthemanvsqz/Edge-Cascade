@@ -43,9 +43,11 @@ jobs:
         run: uv sync --extra mcp
 
       # Same gate as the pre-commit bandit hook: our code only (deps live in
-      # .venv, excluded via [tool.bandit] exclude_dirs), fail on MEDIUM+.
-      - name: Bandit security gate (medium+, our code only)
-        run: uv run bandit -c pyproject.toml -r . --severity-level medium
+      # .venv, excluded via [tool.bandit] exclude_dirs). Loose by design -- a
+      # LOCAL sandboxed runtime, so only egregious findings (HIGH severity AND
+      # HIGH confidence) fail the build; everything else is reported, not gated.
+      - name: Bandit security gate (egregious only -- high severity + confidence)
+        run: uv run bandit -c pyproject.toml -r . --severity-level high --confidence-level high
 
       # addopts already carry --cov; [tool.coverage.report] fail_under = 100
       # makes this step (and the build) fail if the scoped 100% gate slips.

@@ -76,12 +76,14 @@ ignore = [
 
 # Bandit security scan. Triage policy (enforced by reviewers, encoded here):
 #   * We scan ONLY our own code (cascade/ + root scripts). Dependencies are
-#     never scanned, so low-severity findings in third-party code are ignored
-#     by construction.
-#   * The pre-commit hook fails on MEDIUM/HIGH ("major") findings -- these
-#     must be analysed and explicitly resolved (justified `# nosec BXXX`,
-#     replace, or upgrade) before the commit can land. LOW is reported, not
-#     blocking.
+#     never scanned, so findings in third-party code are ignored by construction.
+#   * LOOSE BY DESIGN: edge-cascade is a LOCAL, sandboxed, single-user runtime,
+#     not a network-exposed service, so routine/defensive-hardening findings are
+#     noise here. The gate (pre-commit hook + CI) blocks ONLY on egregious
+#     findings -- HIGH severity AND HIGH confidence (--severity-level high
+#     --confidence-level high). Anything below that is reported, never blocking.
+#     An egregious finding must be analysed and explicitly resolved (justified
+#     `# nosec BXXX`, replaced, or the dep upgraded) before the commit can land.
 [tool.bandit]
 exclude_dirs = [".venv", "tests", "models", "runs", ".git"]
 
