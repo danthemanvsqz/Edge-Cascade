@@ -33,9 +33,14 @@ _GH = os.environ.get("CASCADE_GH", "gh")
 _REC = make_recorder("edge-review")
 
 
-def _gh(*args: str) -> str:
-    return subprocess.run([_GH, *args], capture_output=True, text=True,
-                          cwd=str(ROOT)).stdout
+def _gh(*args: str, timeout: float = 120.0) -> str:
+    """Run a gh subcommand; empty string on timeout/error (never hang the
+    review — a wedged gh must not block the push)."""
+    try:
+        return subprocess.run([_GH, *args], capture_output=True, text=True,
+                              cwd=str(ROOT), timeout=timeout).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
 
 
 def _verdict(text: str) -> str:
@@ -77,7 +82,7 @@ def main() -> int:
 
     import anthropic
     res = reviewer.review(anthropic.Anthropic(), args.model,
-                          CONFIG.cloud_max_tokens, prompt)
+                          CONFIG.review_max_tokens, prompt)
     cost = reviewer.est_cost_usd(res)
     guard.charge(cost)
 

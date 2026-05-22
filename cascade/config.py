@@ -77,6 +77,8 @@ class Config:
         default_factory=lambda: int(
             os.environ.get("CASCADE_REVIEW_MAX_DIFF", "200000"))
     )
+    # Dedicated review output ceiling (don't borrow the cloud-escalation cap).
+    review_max_tokens: int = 4000
 
     # Escalation gate thresholds.
     # Live log file — tail -f this while driving the CLI.
