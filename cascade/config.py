@@ -95,6 +95,20 @@ class Config:
     )
     # Dedicated review output ceiling (don't borrow the cloud-escalation cap).
     review_max_tokens: int = 4000
+    # Cross-run review guards (cascade.review_ledger, Redis). Beyond the per-call
+    # credit guard: a per-PR ROUND cap and a DAILY USD budget. Fail-soft -- a
+    # down Redis disables the daily cap (the per-call guard still bounds each
+    # review). Reuses CASCADE_REDIS_URL (same Redis as the Celery substrate).
+    review_max_rounds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CASCADE_REVIEW_MAX_ROUNDS", "3"))
+    )
+    review_daily_usd: float = field(
+        default_factory=lambda: float(
+            os.environ.get("CASCADE_REVIEW_DAILY_USD", "5.0"))
+    )
+    review_redis_url: str = os.environ.get(
+        "CASCADE_REDIS_URL", "redis://localhost:6379/0")
 
     # Escalation gate thresholds.
     # Live log file — tail -f this while driving the CLI.
