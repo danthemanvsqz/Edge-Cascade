@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -65,6 +65,14 @@ class Spec(BaseModel):
     steps: int = CONFIG.image_steps
     guidance_scale: float = CONFIG.image_guidance
     seed: int | None = None
+
+    @field_validator("width", "height")
+    @classmethod
+    def _dims_sane(cls, v: int) -> int:
+        # SDXL degrades/OOMs at odd dims or extremes; reject before the GPU call.
+        if v % 8 != 0 or not (512 <= v <= 2048):
+            raise ValueError("width/height must be a multiple of 8 in [512, 2048]")
+        return v
 
 
 @app.get("/health")

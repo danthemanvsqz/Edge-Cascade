@@ -56,9 +56,13 @@ class Config:
         "CASCADE_IMAGE_URL", "http://localhost:8188")
     image_artifacts_dir: str = os.environ.get(
         "CASCADE_IMAGE_ARTIFACTS", str(ROOT / "runs" / "artifacts"))
-    image_steps: int = 30
-    image_guidance: float = 6.5
-    image_size: int = 1024
+    image_steps: int = field(
+        default_factory=lambda: int(os.environ.get("CASCADE_IMAGE_STEPS", "30")))
+    image_guidance: float = field(
+        default_factory=lambda: float(
+            os.environ.get("CASCADE_IMAGE_GUIDANCE", "6.5")))
+    image_size: int = field(
+        default_factory=lambda: int(os.environ.get("CASCADE_IMAGE_SIZE", "1024")))
 
     # Tier 3 — cloud backstop (Anthropic). PAID. Off unless explicitly enabled
     # (Orchestrator(enable_cloud=True) / CLI --cloud / CASCADE_ENABLE_CLOUD=1),
