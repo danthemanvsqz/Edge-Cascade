@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 from cascade import reviewer  # noqa: E402
 from cascade.config import CONFIG  # noqa: E402
 from cascade.credit_guard import CreditGuard  # noqa: E402
+from cascade.review_ledger import ReviewLedger  # noqa: E402
 from mcp_servers._rec import make_recorder  # noqa: E402
 
 _GH = os.environ.get("CASCADE_GH", "gh")
@@ -58,25 +59,47 @@ def main() -> int:
                     help="post the review as a PR comment (default: stdout only)")
     args = ap.parse_args()
 
-    # The guard: one review = one paid call, capped by review_usd_budget. No key
-    # -> disabled -> skip (never block).
+    if not args.pr.isdigit():   # PR ids are numbers; refuse anything that could
+        print(f"[pr_review] invalid PR id {args.pr!r}")  # smuggle a gh flag
+        return 2
+
+    # Per-call guard: one review = one paid call, capped by review_usd_budget.
+    # No key -> disabled -> skip (never block).
     guard = CreditGuard(max_calls=1, usd_budget=CONFIG.review_usd_budget,
                         enabled=bool(CONFIG.anthropic_api_key))
     if not guard.allowed:
         print(f"[pr_review] skipped: guard not allowed ({guard.state()})")
         return 0
 
+    # Cross-run guards (Redis; fail-soft): daily budget + per-PR round cap.
+    ledger = ReviewLedger(CONFIG.review_redis_url, CONFIG.review_daily_usd)
+    if not ledger.daily_ok():
+        print(f"[pr_review] daily review budget ${CONFIG.review_daily_usd:.2f} "
+              f"reached (~${ledger.spent_today():.4f} spent today); skipping.")
+        return 0
+    rounds = ledger.rounds_for(args.pr)
+    if rounds >= CONFIG.review_max_rounds:
+        print(f"[pr_review] round cap reached for PR #{args.pr} "
+              f"({rounds}/{CONFIG.review_max_rounds}); stopping the cycle.")
+        return 0
+
+    meta = _gh("pr", "view", args.pr, "--json", "title,body,headRefOid")
+    title, body, sha = "", "", ""
+    try:
+        m = json.loads(meta)
+        title, body, sha = (m.get("title", ""), m.get("body", ""),
+                            m.get("headRefOid", ""))
+    except (ValueError, TypeError):
+        pass
+    if sha and ledger.last_sha(args.pr) == sha:
+        print(f"[pr_review] HEAD {sha[:8]} already reviewed for PR #{args.pr}; "
+              f"skipping (no new commits).")
+        return 0
+
     diff = _gh("pr", "diff", args.pr)
     if not diff.strip():
         print(f"[pr_review] no diff for PR #{args.pr}; skipping")
         return 0
-    meta = _gh("pr", "view", args.pr, "--json", "title,body")
-    title, body = "", ""
-    try:
-        m = json.loads(meta)
-        title, body = m.get("title", ""), m.get("body", "")
-    except (ValueError, TypeError):
-        pass
 
     prompt = reviewer.build_prompt(diff, title, body, CONFIG.review_max_diff_bytes)
 
@@ -85,6 +108,8 @@ def main() -> int:
                           CONFIG.review_max_tokens, prompt)
     cost = reviewer.est_cost_usd(res)
     guard.charge(cost)
+    if res.available:
+        ledger.record(args.pr, sha, cost)   # persist for daily/round/dedup guards
 
     # Record to the SEPARATE review stream (cascade spend stays $0).
     _REC("review", {
@@ -101,7 +126,10 @@ def main() -> int:
               f"(est ${cost:.4f}, {res.input_tokens}+{res.output_tokens} tok)\n\n")
     out = header + res.text
     print(out)
-    print(f"\n[pr_review] est_cost=${cost:.4f}  guard={guard.state()}")
+    rem = ledger.remaining_today()
+    rem_s = "unknown (redis down)" if rem is None else f"${rem:.4f}"
+    print(f"\n[pr_review] est_cost=${cost:.4f}  daily_remaining={rem_s}  "
+          f"round={rounds + 1}/{CONFIG.review_max_rounds}")
 
     if args.post and res.available:
         _gh("pr", "comment", args.pr, "--body", out)
