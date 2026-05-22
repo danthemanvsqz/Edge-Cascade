@@ -25,6 +25,13 @@ accel = [
 mcp = [
     "mcp>=1.2",
 ]
+# The Celery Canvas substrate (C1 spike). Opt-in; pipes stay the default. Redis
+# is BOTH broker and result backend (Phase-0 decision 2026-05-22 -- one service,
+# revisit RabbitMQ only at the durability/multi-box decision gate).
+#   uv sync --extra celery   +   docker compose up -d redis
+celery = [
+    "celery[redis]>=5.4",
+]
 # The edge-image tier (C2): SDXL via diffusers on the NVIDIA GPU, behind a tiny
 # FastAPI server. Opt-in + heavy. NOTE torch on Windows: the default PyPI wheel
 # may be CPU-only -- install the CUDA build explicitly, e.g.
@@ -97,6 +104,10 @@ omit = [
     "cascade/image_worker.py",
     "cascade/orchestrator.py",
     "cascade/lookahead.py",
+    # Celery substrate: needs a running broker + the hardware workers, like the
+    # MCP servers. Opt-in (the `celery` extra) and live-validated, not unit-cov'd.
+    "cascade/celery_app.py",
+    "cascade/tasks.py",
     "mcp_servers/*",
 ]
 
