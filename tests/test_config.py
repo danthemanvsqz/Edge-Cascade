@@ -60,3 +60,22 @@ def test_credit_guard_env_overrides(mocker):
     c = Config()
     assert c.cloud_max_calls == 7
     assert c.cloud_usd_budget == 1.25
+
+
+def test_image_params_defaults(mocker):
+    _env(mocker)
+    c = Config()
+    assert c.image_steps == 30
+    assert c.image_guidance == 6.5
+    assert c.image_size == 1024
+
+
+def test_image_params_env_overrides(mocker):
+    # The edge-image generation knobs are default_factory fields so they track
+    # the env per Config(), consistent with the other tunable tiers.
+    _env(mocker, CASCADE_IMAGE_STEPS="45", CASCADE_IMAGE_GUIDANCE="8.0",
+         CASCADE_IMAGE_SIZE="1280")
+    c = Config()
+    assert c.image_steps == 45
+    assert c.image_guidance == 8.0
+    assert c.image_size == 1280
