@@ -32,6 +32,20 @@ mcp = [
 celery = [
     "celery[redis]>=5.4",
 ]
+# The edge-image tier (C2): SDXL via diffusers on the NVIDIA GPU, behind a tiny
+# FastAPI server. Opt-in + heavy. NOTE torch on Windows: the default PyPI wheel
+# may be CPU-only -- install the CUDA build explicitly, e.g.
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   uv sync --extra imagegen   (then verify torch.cuda.is_available())
+imagegen = [
+    "torch>=2.2",
+    "diffusers>=0.30",
+    "transformers>=4.44",
+    "accelerate>=0.33",
+    "safetensors>=0.4",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
 
 [dependency-groups]
 dev = [
@@ -87,6 +101,7 @@ omit = [
     "cascade/__init__.py",
     "cascade/npu_worker.py",
     "cascade/gpu_worker.py",
+    "cascade/image_worker.py",
     "cascade/orchestrator.py",
     "cascade/lookahead.py",
     # Celery substrate: needs a running broker + the hardware workers, like the

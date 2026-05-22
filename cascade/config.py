@@ -44,6 +44,22 @@ class Config:
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     gpu_model: str = os.environ.get("CASCADE_GPU_MODEL", "qwen2.5-coder:14b")
 
+    # Tier "edge-image" (optional, C2) — SDXL via diffusers on the NVIDIA GPU,
+    # served by scripts/image_server.py. Opt-in (`imagegen` extra). The agent
+    # (Claude) mediates the prompt and critiques the result with its own vision.
+    # SDXL (~8GB) and the 14b coder (~9GB) can't share 12GB VRAM -- image OR
+    # code, not both (the Celery model-swap arbiter is the future fix).
+    image_model: str = os.environ.get(
+        "CASCADE_IMAGE_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
+    image_device: str = os.environ.get("CASCADE_IMAGE_DEVICE", "cuda")
+    image_base_url: str = os.environ.get(
+        "CASCADE_IMAGE_URL", "http://localhost:8188")
+    image_artifacts_dir: str = os.environ.get(
+        "CASCADE_IMAGE_ARTIFACTS", str(ROOT / "runs" / "artifacts"))
+    image_steps: int = 30
+    image_guidance: float = 6.5
+    image_size: int = 1024
+
     # Tier 3 — cloud backstop (Anthropic). PAID. Off unless explicitly enabled
     # (Orchestrator(enable_cloud=True) / CLI --cloud / CASCADE_ENABLE_CLOUD=1),
     # AND a key is present. A key alone never enables the paid tier.
