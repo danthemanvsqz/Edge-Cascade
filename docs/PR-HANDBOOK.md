@@ -31,6 +31,13 @@ Then **summarize**: what was fixed, what was rejected and why, the per-PR review
 spend. Never loop unbounded — runaway review→fix→review is the failure mode this
 cap prevents (it's real money and it must terminate).
 
+**Spend is triple-bounded (enforced, not trusted):** per-call ≤
+`review_usd_budget` ($0.50, the in-process `CreditGuard`) → per-PR ≤
+`review_max_rounds` (3) → per-day ≤ `review_daily_usd` ($5), the last two tracked
+in Redis (`cascade.review_ledger`). HEAD-dedup skips re-reviewing an unchanged
+commit. All skips are graceful (exit 0, never block); a down Redis fails soft
+(daily cap off, per-call guard still bounds each review).
+
 **Don't re-review trivial pushes.** A doc/comment-only or rename commit carries
 no code risk; re-running a paid review on it is waste. Re-review applies to
 substantive code changes. (Judgment call — state it when skipping.)
@@ -57,6 +64,8 @@ Steps that are **judgment** (triage, implement, reject-with-evidence) are the
 agent's to do and can't be automated — automation can't decide if a suggestion
 is valid. Steps that are **mechanical and spend-bearing** (firing the review
 every time; terminating the loop within budget) are where manual discipline is
-< 100% reliable across sessions, so they get **automated guards** (see
-`pr_review.py`'s per-PR round cap and the optional `scripts/ship.py`). If a
-guard is missing, this handbook is aspirational for that step — say so.
+< 100% reliable across sessions, so they are now **automated**: the round cap +
+daily budget + HEAD-dedup live in `cascade/review_ledger.py` (enforced by
+`pr_review.py`), and `scripts/ship.py` (`git ship`) makes "push → open PR → fire
+review" one command. The only manual-discipline step left is *triage* — which
+can't be automated, and is checked by you when I flag a hallucination.
