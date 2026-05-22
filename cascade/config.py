@@ -47,7 +47,7 @@ class Config:
     # Tier 3 — cloud backstop (Anthropic). PAID. Off unless explicitly enabled
     # (Orchestrator(enable_cloud=True) / CLI --cloud / CASCADE_ENABLE_CLOUD=1),
     # AND a key is present. A key alone never enables the paid tier.
-    cloud_model: str = os.environ.get("CASCADE_CLOUD_MODEL", "claude-sonnet-4-6")
+    cloud_model: str = os.environ.get("CASCADE_CLOUD_MODEL", "claude-opus-4-7")
     anthropic_api_key: str | None = field(
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY") or None
     )
@@ -69,7 +69,7 @@ class Config:
     # runs/edge-review.rec stream, so cascade spend ($0) is never conflated with
     # review spend. Tune via CASCADE_REVIEW_MODEL / _USD / _MAX_DIFF.
     review_model: str = os.environ.get(
-        "CASCADE_REVIEW_MODEL", "claude-sonnet-4-6")
+        "CASCADE_REVIEW_MODEL", "claude-opus-4-7")
     review_usd_budget: float = field(
         default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "0.50"))
     )
