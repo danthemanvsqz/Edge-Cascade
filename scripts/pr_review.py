@@ -59,6 +59,10 @@ def main() -> int:
                     help="post the review as a PR comment (default: stdout only)")
     args = ap.parse_args()
 
+    if not args.pr.isdigit():   # PR ids are numbers; refuse anything that could
+        print(f"[pr_review] invalid PR id {args.pr!r}")  # smuggle a gh flag
+        return 2
+
     # Per-call guard: one review = one paid call, capped by review_usd_budget.
     # No key -> disabled -> skip (never block).
     guard = CreditGuard(max_calls=1, usd_budget=CONFIG.review_usd_budget,
