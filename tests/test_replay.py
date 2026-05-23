@@ -151,3 +151,29 @@ def test_load_streams_incremental_rotation_resets_offset(tmp_path):
 def test_load_streams_incremental_skips_empty_files(tmp_path):
     (tmp_path / "edge-cloud.rec").write_bytes(b"")
     assert R.load_streams_incremental(tmp_path, {}) == {}
+
+
+# ---- experiment-lane segregation (setup PR: experiment label) ---------------
+
+def test_is_experiment_stream_matches_only_the_prefix():
+    assert R.is_experiment_stream("experiment-coder-r1") is True
+    assert R.is_experiment_stream("edge-gpu") is False
+    assert R.is_experiment_stream("cascade") is False
+
+
+def test_load_streams_excludes_experiment_lanes_by_default(tmp_path):
+    (tmp_path / "edge-npu.rec").write_bytes(_stream(_tool("100.0")))
+    (tmp_path / "experiment-foo.rec").write_bytes(_stream(_tool("200.0")))
+    # default: experiment lane skipped so it can't pollute live-mesh metrics
+    assert set(R.load_streams(tmp_path)) == {"edge-npu"}
+    # opt-in: experiment lane loaded (e.g. `replay --experiment`)
+    assert set(R.load_streams(tmp_path, include_experiments=True)) == {
+        "edge-npu", "experiment-foo"}
+
+
+def test_load_streams_incremental_excludes_experiment_by_default(tmp_path):
+    _w(tmp_path / "edge-gpu.rec", _stream(_tool("100.0")))
+    _w(tmp_path / "experiment-bar.rec", _stream(_tool("200.0")))
+    assert set(R.load_streams_incremental(tmp_path, {})) == {"edge-gpu"}
+    assert set(R.load_streams_incremental(
+        tmp_path, {}, include_experiments=True)) == {"edge-gpu", "experiment-bar"}
