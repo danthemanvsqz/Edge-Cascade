@@ -14,6 +14,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -52,6 +53,13 @@ def _verdict(text: str) -> str:
 
 
 def main() -> int:
+    # Windows consoles default to cp1252, which can't encode the review's emoji
+    # header / em-dashes; print() then raised UnicodeEncodeError mid-run -- and
+    # the crash landed BEFORE the PR-comment post, so a review could be paid for
+    # yet never posted. Force UTF-8 (replace the rare unmappable char) so neither
+    # the print nor, therefore, the post can be blocked by the console codec.
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="Credit-guarded PR review")
     ap.add_argument("pr", help="PR number")
     ap.add_argument("--model", default=CONFIG.review_model)
@@ -72,7 +80,7 @@ def main() -> int:
         return 0
 
     # Cross-run guards (Redis; fail-soft): daily budget + per-PR round cap.
-    ledger = ReviewLedger(CONFIG.review_redis_url, CONFIG.review_daily_usd)
+    ledger = ReviewLedger(CONFIG.review_ledger_db, CONFIG.review_daily_usd)
     if not ledger.daily_ok():
         print(f"[pr_review] daily review budget ${CONFIG.review_daily_usd:.2f} "
               f"reached (~${ledger.spent_today():.4f} spent today); skipping.")
