@@ -80,7 +80,7 @@ def main() -> int:
         return 0
 
     # Cross-run guards (Redis; fail-soft): daily budget + per-PR round cap.
-    ledger = ReviewLedger(CONFIG.review_redis_url, CONFIG.review_daily_usd)
+    ledger = ReviewLedger(CONFIG.review_ledger_db, CONFIG.review_daily_usd)
     if not ledger.daily_ok():
         print(f"[pr_review] daily review budget ${CONFIG.review_daily_usd:.2f} "
               f"reached (~${ledger.spent_today():.4f} spent today); skipping.")
