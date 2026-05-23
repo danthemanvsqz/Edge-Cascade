@@ -1,0 +1,19 @@
+{
+  "task": "Write a Python function def dijkstra(graph, start) that returns a dict of shortest-path costs from start for a directed weighted graph given as {node: {neighbor: weight}}.",
+  "cap": 2,
+  "runs_per_model": 2,
+  "ts": 1779548116.5798824,
+  "results": [
+    {
+      "model": "deepseek-r1:14b",
+      "available": true,
+      "runs": 2,
+      "fresh_pass": 2,
+      "resolved": 2,
+      "capped": 0,
+      "avg_rounds_to_pass": 0,
+      "median_tok_s": 41.2,
+      "median_latency_s": 154.4
+    }
+  ]
+}

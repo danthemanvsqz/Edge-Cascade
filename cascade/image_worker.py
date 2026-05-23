@@ -33,13 +33,19 @@ class ImageResult:
 
 
 def _load_pipe(model: str, device: str):
-    """Eager (~30 s) SDXL load. fp16 + attention slicing / VAE tiling so the
-    ~8 GB pipeline fits the 12 GB card. Lazy-imports torch/diffusers."""
+    """Eager (~30 s) load, model-agnostic. fp16 + attention slicing / VAE tiling
+    so the pipeline fits the 12 GB card. AutoPipelineForText2Image picks the right
+    class (SD vs SDXL) from the checkpoint, so CASCADE_IMAGE_MODEL can point at a
+    smaller model (e.g. SD1.5 ~2 GB) without a code change. Lazy-imports torch."""
     import torch  # noqa: PLC0415 - lazy: keep the module importable w/o the extra
-    from diffusers import StableDiffusionXLPipeline  # noqa: PLC0415
+    from diffusers import AutoPipelineForText2Image  # noqa: PLC0415
 
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        model, torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
+    try:
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            model, torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
+    except (ValueError, OSError):  # not every checkpoint ships an fp16 variant (SD1.5)
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            model, torch_dtype=torch.float16, use_safetensors=True)
     pipe = pipe.to(device)
     pipe.enable_attention_slicing()
     try:
