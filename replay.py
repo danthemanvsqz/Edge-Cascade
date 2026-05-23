@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 
 from cascade.logfmt import parse_stream
+from mcp_servers._rec import EXPERIMENT_PREFIX
 
 ROOT = Path(__file__).parent
 RUNS = ROOT / "runs"
@@ -38,10 +39,19 @@ SERVERS = ("edge-npu", "edge-gpu", "edge-verify", "edge-cloud")
 DEFAULT_GAP = 30.0
 
 
+def is_experiment_stream(stem: str) -> bool:
+    """True for an experiment evidence lane (`runs/experiment-<topic>.rec`).
+    These are SEGREGATED from live-mesh metrics: the loaders skip them unless
+    `include_experiments=True`, so an experiment (which reuses tool names like
+    `generate`/`verify_functional`) never pollutes cascade health/spend."""
+    return stem.startswith(EXPERIMENT_PREFIX)
+
+
 # ---- load + merge + order ---------------------------------------------------
 
 def load_streams_incremental(
     runs_dir: Path, offsets: dict[str, int],
+    include_experiments: bool = False,
 ) -> dict[str, tuple[bytes, int]]:
     """Incremental sibling of `load_streams`: read each runs/*.rec from
     `offsets[stem]` (defaulting 0) to EOF and return only the streams that
@@ -64,6 +74,8 @@ def load_streams_incremental(
     """
     new: dict[str, tuple[bytes, int]] = {}
     for p in sorted(runs_dir.glob("*.rec")):
+        if not include_experiments and is_experiment_stream(p.stem):
+            continue  # segregated: experiment lanes excluded from live metrics
         size = p.stat().st_size
         if size == 0:
             continue
@@ -79,8 +91,14 @@ def load_streams_incremental(
     return new
 
 
-def load_streams(runs_dir: Path) -> dict[str, bytes]:
+def load_streams(
+    runs_dir: Path, include_experiments: bool = False,
+) -> dict[str, bytes]:
     """{source_stem: raw bytes} for every runs/*.rec that exists (FS touch).
+
+    Experiment lanes (`experiment-*.rec`) are SKIPPED by default so they never
+    pollute live-mesh metrics; pass `include_experiments=True` to load them
+    (e.g. `replay --experiment`).
 
     Bytes, not text: the .rec grammar is byte-length-framed, so parse_stream
     consumes bytes directly -- reading text here would force a decode now and
@@ -89,6 +107,7 @@ def load_streams(runs_dir: Path) -> dict[str, bytes]:
         p.stem: p.read_bytes()
         for p in sorted(runs_dir.glob("*.rec"))
         if p.stat().st_size
+        and (include_experiments or not is_experiment_stream(p.stem))
     }
 
 
@@ -290,9 +309,15 @@ def main() -> None:
                     help=f"episode idle-gap split (default {DEFAULT_GAP:g}s)")
     ap.add_argument("--json", action="store_true",
                     help="machine-readable episode summaries")
+    ap.add_argument("--experiment", action="store_true",
+                    help="show ONLY experiment lanes (runs/experiment-*.rec); "
+                         "by default they are excluded from the live timeline")
     args = ap.parse_args()
 
-    records = tag_and_merge(load_streams(RUNS))
+    records = tag_and_merge(
+        load_streams(RUNS, include_experiments=args.experiment))
+    if args.experiment:
+        records = [r for r in records if is_experiment_stream(r.get("_src", ""))]
     if args.server:
         records = [r for r in records if r.get("_src") == args.server]
     if args.run:

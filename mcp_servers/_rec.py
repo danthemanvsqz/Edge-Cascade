@@ -36,6 +36,12 @@ from cascade.logfmt import dump_record  # noqa: E402
 
 Emit = Callable[[str, dict[str, str]], None]
 
+# Experiment evidence lanes get this stream-name prefix so the replay/dashboard
+# consumers can SEGREGATE them from live-mesh metrics: an experiment reuses tool
+# names like `generate`/`verify_functional`, so without segregation it would
+# pollute cascade health/spend. Single source of truth for the prefix.
+EXPERIMENT_PREFIX = "experiment-"
+
 
 def _s(obj: object) -> str:
     """Compact, never-raising JSON; falls back to repr for exotic values."""
@@ -79,6 +85,19 @@ def make_recorder(server: str) -> Emit:
             fh.write(rec)
 
     return emit
+
+
+def make_experiment_recorder(topic: str) -> Emit:
+    """Recorder for an EXPERIMENT lane -> `runs/experiment-<topic>.rec`.
+
+    Identical grammar/record shape to any tier recorder; the only difference is
+    the `experiment-` stream prefix (EXPERIMENT_PREFIX), which the consumers use
+    to keep experiment runs OUT of live-mesh metrics. Use this for any
+    experiment so its telemetry is replayable/queryable like every tier without
+    contaminating cascade health."""
+    if not topic or " " in topic or "/" in topic or "\\" in topic:
+        raise ValueError(f"illegal experiment topic: {topic!r}")
+    return make_recorder(f"{EXPERIMENT_PREFIX}{topic}")
 
 
 def recorded(emit: Emit):
