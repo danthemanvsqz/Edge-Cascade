@@ -42,7 +42,19 @@ class Config:
 
     # Tier 2 — local GPU via Ollama (NVIDIA/CUDA).
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    # Standard hard local. Deliberately the 14b coder, NOT the 7b: the 7b is
+    # faster but fails the hard dijkstra-class gate 0/3 (FINDINGS §3) -- quality
+    # over throughput. The 14b resolves it in one repair round.
     gpu_model: str = os.environ.get("CASCADE_GPU_MODEL", "qwen2.5-coder:14b")
+    # Reasoning rung (FINDINGS §5): deepseek-r1:14b is the only local model that
+    # solves the hard gate fresh (2/2, vs the coder's 0/3 fresh). DECLARED here
+    # as the deliberate 3-rung GPU roster -- coder (gpu_model) for standard hard,
+    # this for hardest reasoning, then PAID cloud. NOT yet wired into mesh.solve:
+    # the gate-failure-triggered coder->r1 fallback before cloud is AI-3, gated
+    # on the AI-4 complementarity experiment earning it. (The two 14b models
+    # can't co-reside on 12GB, so AI-3 implies a model swap.)
+    gpu_reasoning_model: str = os.environ.get(
+        "CASCADE_GPU_REASONING_MODEL", "deepseek-r1:14b")
 
     # Tier "edge-image" (optional, C2) — SDXL via diffusers on the NVIDIA GPU,
     # served by scripts/image_server.py. Opt-in (`imagegen` extra). The agent
