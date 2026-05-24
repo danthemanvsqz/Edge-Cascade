@@ -79,7 +79,7 @@ def main() -> int:
         print(f"[pr_review] skipped: guard not allowed ({guard.state()})")
         return 0
 
-    # Cross-run guards (Redis; fail-soft): daily budget + per-PR round cap.
+    # Cross-run guards (SQLite ledger; fail-soft): daily budget + per-PR round cap.
     ledger = ReviewLedger(CONFIG.review_ledger_db, CONFIG.review_daily_usd)
     if not ledger.daily_ok():
         print(f"[pr_review] daily review budget ${CONFIG.review_daily_usd:.2f} "
@@ -135,7 +135,7 @@ def main() -> int:
     out = header + res.text
     print(out)
     rem = ledger.remaining_today()
-    rem_s = "unknown (redis down)" if rem is None else f"${rem:.4f}"
+    rem_s = "unknown (ledger unreadable)" if rem is None else f"${rem:.4f}"
     print(f"\n[pr_review] est_cost=${cost:.4f}  daily_remaining={rem_s}  "
           f"round={rounds + 1}/{CONFIG.review_max_rounds}")
 
