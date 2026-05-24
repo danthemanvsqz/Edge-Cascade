@@ -103,7 +103,11 @@ bounded-context tool.
   `cascade/image_worker.py::_load_pipe` with an fp16-variant fallback (SD1.5 ships no
   fp16 variant). `CASCADE_IMAGE_MODEL` already existed in `config.py`; no config change.
 - **AI-2 — Set the GPU tier deliberately.** Do NOT promote 7b (fails the hard gate). Keep
-  `qwen2.5-coder:14b` as Tier-2; add `deepseek-r1:14b` as the reasoning rung.
+  `qwen2.5-coder:14b` as Tier-2; add `deepseek-r1:14b` as the reasoning rung. **DONE
+  (2026-05-24):** `gpu_model` stays the 14b coder (7b never promoted) and
+  `config.gpu_reasoning_model` (`CASCADE_GPU_REASONING_MODEL`, default `deepseek-r1:14b`)
+  now declares the reasoning rung. Config seam only — the coder→r1 fallback *flow* is
+  AI-3, deferred until AI-4 proves it earns its keep.
 - **AI-3 — Spike the coder→r1 fallback.** Gate-failure-triggered cross-model retry before
   paid cloud. Pending AI-4.
 - **AI-4 — Run the Bayesian-MC complementarity experiment.** Paired trials across several
