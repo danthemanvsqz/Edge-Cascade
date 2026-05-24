@@ -99,7 +99,9 @@ bounded-context tool.
 - **AI-1 — Re-land the model-agnostic image loader.** The `AutoPipelineForText2Image`
   change (lets `CASCADE_IMAGE_MODEL` point at SD1.5 ~2.8 GB vs SDXL ~11.6 GB) currently
   lives only on the evidence branch. Re-implement via a clean PR. *(evidence:
-  `cascade/image_worker.py` @ `399d524`)*
+  `cascade/image_worker.py` @ `399d524`)* **DONE (2026-05-24):** re-landed in
+  `cascade/image_worker.py::_load_pipe` with an fp16-variant fallback (SD1.5 ships no
+  fp16 variant). `CASCADE_IMAGE_MODEL` already existed in `config.py`; no config change.
 - **AI-2 — Set the GPU tier deliberately.** Do NOT promote 7b (fails the hard gate). Keep
   `qwen2.5-coder:14b` as Tier-2; add `deepseek-r1:14b` as the reasoning rung.
 - **AI-3 — Spike the coder→r1 fallback.** Gate-failure-triggered cross-model retry before
@@ -108,7 +110,10 @@ bounded-context tool.
   task types, ~30 runs/cell; estimate `P(r1 resolves | coder capped)` with a credible
   interval. Own evidence branch.
 - **AI-5 — Drop `nvidia-smi memory.used` as a load metric** (caching-muddied); use the
-  GPU/CPU split + task outcome.
+  GPU/CPU split + task outcome. **DONE (2026-05-24):** verified no live consumer — the
+  cascade's only VRAM signal is `mcp_servers/gpu.py::_vram`, which reads Ollama
+  `/api/ps` `size_vram` (the GPU/CPU split), not `nvidia-smi`. `memory.used` only ever
+  lived in the throwaway sweep driver on the evidence branch (§2/§7); nothing to remove.
 
 ## 6. Method notes & caveats
 
