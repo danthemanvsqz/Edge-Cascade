@@ -21,6 +21,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 
 def _today() -> str:
@@ -29,13 +30,28 @@ def _today() -> str:
 
 @dataclass
 class ReviewLedger:
+    """Cross-run review-spend ledger over a single SQLite file.
+
+    Caps are best-effort, NOT transactional: ``daily_ok``/``rounds_for`` read,
+    then the caller decides, then ``record`` writes — a fresh connection per
+    call with no lock spanning read→write. Two concurrent reviewers could both
+    pass the check and both record (slight over-spend). Acceptable here: reviews
+    are me-driven and serial, the per-call credit guard still hard-bounds each
+    one, and the daily cap is budget *health*, not a safety limit."""
+
     db_path: str
     daily_usd: float
 
     def _conn(self) -> sqlite3.Connection:
-        """Open the ledger DB, creating the (single) table on first use. Each
-        call is a short-lived connection — the ledger is touched at most once
-        per review, so simplicity + durability beats a pooled handle."""
+        """Open the ledger DB, creating the parent dir + (single) table on first
+        use. Each call is a short-lived connection — the ledger is touched at
+        most once per review, so simplicity + durability beats a pooled handle.
+
+        The parent-dir mkdir is the fresh-checkout durability fix: without it a
+        clone with no ``runs/`` makes ``sqlite3.connect`` raise, every guard
+        reads fail-soft, and the ledger silently never records — the exact hole
+        the SQLite ledger was meant to close."""
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS reviews ("
@@ -51,7 +67,7 @@ class ReviewLedger:
                     "SELECT COALESCE(SUM(cost_usd), 0.0) FROM reviews "
                     "WHERE day = ?", (_today(),)).fetchone()
             return float(total)
-        except sqlite3.Error:
+        except (sqlite3.Error, OSError):
             return None  # fail-soft: unknown, not a crash
 
     def daily_ok(self) -> bool:
@@ -72,7 +88,7 @@ class ReviewLedger:
                 (n,) = c.execute(
                     "SELECT COUNT(*) FROM reviews WHERE pr = ?", (pr,)).fetchone()
             return int(n)
-        except sqlite3.Error:
+        except (sqlite3.Error, OSError):
             return 0
 
     def last_sha(self, pr: str) -> str:
@@ -83,7 +99,7 @@ class ReviewLedger:
                     "SELECT sha FROM reviews WHERE pr = ? ORDER BY ts DESC "
                     "LIMIT 1", (pr,)).fetchone()
             return row[0] if row else ""
-        except sqlite3.Error:
+        except (sqlite3.Error, OSError):
             return ""
 
     def record(self, pr: str, sha: str, cost_usd: float) -> bool:
@@ -97,5 +113,5 @@ class ReviewLedger:
                     (pr, sha, float(cost_usd), _today(), time.time()))
                 c.commit()
             return True
-        except sqlite3.Error:
+        except (sqlite3.Error, OSError):
             return False

@@ -53,6 +53,16 @@ def test_durable_across_instances(tmp_path):
     assert ReviewLedger(db, 5.0).spent_today() == 0.40
 
 
+def test_creates_missing_parent_dir(tmp_path):
+    # Fresh-checkout durability: a clone with no runs/ dir must still record.
+    # Without the parent-dir mkdir, sqlite3.connect raises, every read fails
+    # soft, and the ledger silently never records -- the exact hole #40 closes.
+    db = str(tmp_path / "runs" / "review-ledger.db")   # parent doesn't exist
+    g = ReviewLedger(db_path=db, daily_usd=5.0)
+    assert g.record("33", "s", 0.25) is True
+    assert g.spent_today() == 0.25
+
+
 def test_db_error_is_fail_soft(tmp_path):
     # Point at a directory -> sqlite can't open a DB there -> every op fails
     # soft (unknown/zero/False), never a crash, so a hosed ledger can't block
