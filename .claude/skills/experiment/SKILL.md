@@ -45,7 +45,7 @@ create a branch or call a model yet.
 - **Don't push.** If it ends up pushed, immediately **CLOSE** any PR (don't merge)
   to freeze the commits.
 - Findings **leave** the branch only via a **clean commit + PR to `main` that
-  CITES the branch + sha** (`docs/FINDINGS-<topic>.md`). Doc-only → no reviewer
+  CITES the branch + sha** (`docs/findings/FINDINGS-<topic>.md`). Doc-only → no reviewer
   spend.
 - `runs/` artifacts are gitignored → `git add -f` the result JSON/`.rec` onto the
   evidence branch (the prior evidence branches did this).
@@ -116,7 +116,7 @@ Local = $0, so run 30+ trials/cell and report posteriors, **never point fraction
 
 ## 7. Write up & decide
 
-`docs/FINDINGS-<topic>.md`: TL;DR/decision first, the posterior table, the method,
+`docs/findings/FINDINGS-<topic>.md`: TL;DR/decision first, the posterior table, the method,
 caveats, reproduce command, and the evidence citation (branch + sha). Then a clean
 commit/PR to `main`. State the **decision** the evidence supports, not just numbers.
 
