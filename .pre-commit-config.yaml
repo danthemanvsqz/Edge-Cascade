@@ -6,8 +6,14 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Skip runs/ : experiment evidence is force-added there, and the .rec
+      # streams are BYTE-LENGTH-framed (cascade/logfmt.py) -- stripping a
+      # trailing space inside a counted value desyncs the parser and corrupts
+      # the evidence. These fixers must never touch force-added artifacts.
       - id: trailing-whitespace
+        exclude: ^runs/
       - id: end-of-file-fixer
+        exclude: ^runs/
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
