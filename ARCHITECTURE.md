@@ -140,13 +140,14 @@ break a genuine deadlock with a clean context window. Wraps `cloud_worker.py`.
 | `escalate` | `(query, prior_attempt?, verifier_reason?, mode="repair"\|"critic") -> {text, model, est_cost_usd, in_tok, out_tok}` | Paid escalation. `critic` = fresh-context second opinion (deadlock breaker). |
 | `budget` | `() -> {calls_used, calls_max, usd_spent, usd_budget, allowed}` | Credit-guard state. The router must check this before `escalate`. |
 
-**Mandatory fix carried in here (latent budget bug):** the cost estimate in
-`cloud_worker.py` is hardcoded to Sonnet rates (`$3/$15` per MTok). Pointing
-Tier 4 at Opus without a **per-model price table keyed on `cloud_model`** makes
-the credit guard under-count spend ~5× and silently blow `cloud_usd_budget`.
-Model id, price constants, and budget must move together. `budget()` is the
-guard the router consults; it refuses once `cloud_max_calls` or
-`cloud_usd_budget` is reached.
+**Budget bug fixed here (was latent):** the cost estimate in `cloud_worker.py`
+uses a **per-model price table** (`_price_for`, keyed on `cloud_model` by id
+prefix): Opus is billed `$15/$75` per MTok, Sonnet `$3/$15`, and an unknown model
+is costed at the dearest known rate so a new model can never under-count. This
+replaced the old hardcoded Sonnet rates, which would have made the guard
+under-count Opus spend ~5× and silently blow `cloud_usd_budget`. Model id, price,
+and budget move together. `budget()` is the guard the router consults; it refuses
+once `cloud_max_calls` or `cloud_usd_budget` is reached.
 
 ---
 

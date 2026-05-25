@@ -1,4 +1,4 @@
-"""Tier 3 — cloud backstop via the Anthropic API (Claude Sonnet 4.6).
+"""Tier 3 — cloud backstop via the Anthropic API (default Claude Opus 4.7).
 
 Invoked only for queries the local NPU/GPU tiers couldn't handle. The API key
 is read from ANTHROPIC_API_KEY (env or .env); if it's absent the tier no-ops
@@ -20,8 +20,8 @@ from functools import partial
 from .config import CONFIG
 
 # Frozen system prompt — kept stable (no timestamps/IDs) so it forms a cacheable
-# prefix. Caching only actually engages once this exceeds Sonnet 4.6's minimum
-# cacheable prefix (~2048 tokens); below that it's a silent no-op, which is fine.
+# prefix. Caching only actually engages once this exceeds the model's minimum
+# cacheable prefix; below that it's a silent no-op, which is fine.
 _SYSTEM = """You are an expert software engineer acting as the final escalation \
 tier in a local-first code-assistant cascade. A small edge model and a 14B local \
 model already tried and either failed verification or flagged the task as too hard. \

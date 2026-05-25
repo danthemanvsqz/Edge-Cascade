@@ -55,7 +55,7 @@ flowchart TD
 | 2 | NVIDIA RTX 5070 Ti — `edge-gpu` | Ollama · `qwen2.5-coder:14b` | free local tokens |
 | 3 | **The Claude CLI session = you, reading this** | Claude Code (your **subscription**) | already paid — the default brain |
 | — | Deterministic gate — `edge-verify` | Intel CPU, **no model** | free (AST + sandboxed exec) |
-| 4 | Anthropic API — `edge-cloud` | `claude-sonnet-4-6`, credit-guarded | **metered $ — genuine last resort** |
+| 4 | Anthropic API — `edge-cloud` | `claude-opus-4-7`, credit-guarded | **metered $ — genuine last resort** |
 
 The key distinction the design enforces: **Tier 3 (CLI-Claude, subscription)
 and Tier 4 (API-Claude, metered) are different tiers.** When the locals can't
