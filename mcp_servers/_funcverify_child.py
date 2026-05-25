@@ -11,6 +11,8 @@ Protocol:  stdin  = JSON {"text": <model answer>, "dsl": <optional override>}
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -22,20 +24,15 @@ if str(ROOT) not in sys.path:
 import validate_log as vl  # noqa: E402  (path set above)
 
 
-def main() -> None:
-    req = json.load(sys.stdin)
-    text: str = req.get("text", "")
-    dsl_override = req.get("dsl")
-
+def _evaluate(text: str, dsl_override: str | None) -> dict:
+    """Run the gate and return the result dict. The `vl.run` call below exec()s
+    the untrusted candidate, which may itself print() -- callers MUST run this
+    with stdout redirected so those prints don't corrupt the JSON result stream."""
     code = vl.extract_code(text)
     if code is None:
-        json.dump(
-            {"ran": False, "applicable": False, "passed": False,
-             "checked": 0, "failures": [],
-             "reason": "no usable code block in answer"},
-            sys.stdout,
-        )
-        return
+        return {"ran": False, "applicable": False, "passed": False,
+                "checked": 0, "failures": [],
+                "reason": "no usable code block in answer"}
 
     dsl_text = dsl_override if dsl_override else vl.DSL.read_text(encoding="utf-8")
     blocks = vl.parse_dsl(dsl_text)
@@ -47,18 +44,27 @@ def main() -> None:
         for c in checks if not c.ok
     ]
     applicable = len(checks) > 0
-    json.dump(
-        {
-            "ran": True,
-            "applicable": applicable,
-            # passed only if something actually exercised the code AND nothing
-            # failed. No matching DSL block => not applicable, not "passed".
-            "passed": applicable and not failures,
-            "checked": len(checks),
-            "failures": failures,
-        },
-        sys.stdout,
-    )
+    return {
+        "ran": True,
+        "applicable": applicable,
+        # passed only if something actually exercised the code AND nothing
+        # failed. No matching DSL block => not applicable, not "passed".
+        "passed": applicable and not failures,
+        "checked": len(checks),
+        "failures": failures,
+    }
+
+
+def main() -> None:
+    req = json.load(sys.stdin)
+    real_stdout = sys.stdout
+    # The candidate exec'd inside _evaluate can print() to stdout; capture that
+    # into a throwaway buffer so ONLY the result JSON reaches the real stdout
+    # (otherwise the parent's json.loads sees "<candidate noise>{json}" and
+    # crashes -- observed on a topological_sort candidate, 2026-05-25).
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = _evaluate(req.get("text", ""), req.get("dsl"))
+    json.dump(result, real_stdout)
 
 
 if __name__ == "__main__":
