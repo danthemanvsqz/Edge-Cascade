@@ -4,3 +4,8 @@
 
 # PowerShell is Windows-only here; keep it CRLF.
 *.ps1 text eol=crlf
+
+# Recorder streams (cascade/logfmt.py) are BYTE-LENGTH-framed and bytes-native:
+# any LF<->CRLF conversion shifts byte offsets vs the declared field lengths and
+# desyncs the parser. Treat as binary so committed evidence round-trips exactly.
+*.rec binary
