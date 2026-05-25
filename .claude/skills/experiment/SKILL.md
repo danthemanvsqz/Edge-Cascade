@@ -16,6 +16,28 @@ Local inference is **$0** and latency is **not** a priority, so experiments run
 MANY stochastic trials and are reasoned about Bayesianly. The point of an
 experiment is durable EVIDENCE and a clear DECISION — not shipped code.
 
+## 0. On invocation (`/experiment <idea>`) — design first, in PLAN MODE
+
+The argument is the experiment **idea**, not a go-ahead to run it. Do **not**
+create a branch or call a model yet.
+
+1. **Enter plan mode immediately** (`EnterPlanMode`) — everything below is
+   design, not execution. (This is the `pacing-small-reviewable-increments` /
+   propose-then-pause rule made structural: never run a design in the same turn.)
+2. **Classify the experiment** so the plan picks the right rigor:
+   - *quantitative* (benchmark / ablation / routing / repair) → full §3–§4
+     rigor: difficulty calibration → 30+ trials/cell → Bayesian posteriors.
+   - *qualitative / creative* (e.g. a cross-tier **persona debate** — NPU=Tier 1
+     `edge-npu`, GPU=Tier 2 `edge-gpu` — or any generation study) → the
+     deliverable is the transcript + a stated finding; skip the posterior table
+     where there is no pass/fail to count, but KEEP the safety, sleep, and
+     telemetry rules (§1, §2, §5).
+3. **Draft the design** against §1–§7: the hypothesis/decision it resolves, the
+   `experiment/<topic>-<YYYY-MM-DD>` branch name, which tiers/models it drives,
+   the trial budget, the telemetry lane, and the write-up target.
+4. **Present it with `ExitPlanMode` and STOP** for approval. Only *after* the
+   user approves do you create the evidence branch and execute §1 onward.
+
 ## 1. Evidence branch (SAFETY — do not violate)
 
 - Run on a **labeled LOCAL branch**: `experiment/<topic>-<YYYY-MM-DD>`.

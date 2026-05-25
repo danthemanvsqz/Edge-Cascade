@@ -123,6 +123,12 @@ on harder tasks, but the cheap tier resolves more prompts on its own than the
   `routing_dispatch` protocol.
 - **`/edge-cascade`** skill — route one task through the mesh on demand once
   the MCP servers are connected (see `ARCHITECTURE.md §7`).
+- **`/experiment`** skill — design and run a LOCAL ($0) benchmark, ablation, or
+  creative cross-tier study (e.g. an NPU-vs-GPU **persona debate**). Invoke as
+  `/experiment <idea>`; it **enters plan mode first** — designing the run
+  (evidence branch, trial budget, Bayesian analysis, telemetry lane) and waiting
+  for your approval before it touches a model — then executes on a labeled
+  evidence branch. See `.claude/skills/experiment/SKILL.md`.
 
 **Observability (read-only over the recorder — not chat narration):**
 
