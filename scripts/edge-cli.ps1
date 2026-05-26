@@ -39,6 +39,13 @@
   ~9s on the first NPU compile of the day; subsequent launches are fast.
   Use during dev when you're relaunching constantly and trust the wiring.
 
+.PARAMETER NoDashboard
+  Skip the SD-3 dashboard auto-launch. The dashboard is normally spawned in a
+  separate PowerShell window with START_FROM_EOF=1 (session-coupled) and the
+  default browser is pointed at http://localhost:8789. Use this when you're
+  driving a non-interactive run, headless CI, or already have the dashboard
+  open and don't want a second instance fighting for port 8789.
+
 .EXAMPLE
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
@@ -52,7 +59,8 @@ param(
   [switch]   $WithCloud,
   [switch]   $SkipSync,
   [switch]   $Check,
-  [switch]   $NoSummary
+  [switch]   $NoSummary,
+  [switch]   $NoDashboard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -157,6 +165,37 @@ if (-not $NoSummary -and -not $Check) {
   $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
   & $VenvPython $SummaryScript $ConfigPath
   Write-Host ""
+}
+
+# --- SD-3: auto-launch the dashboard in a separate console ------------------
+# Spawns a NEW PowerShell window running `npm start` in dashboard/, with
+# RUNS_DIR pinned at the repo's runs/ and START_FROM_EOF=1 so the renderer
+# only shows records appended during THIS edge-cli session (not whatever the
+# gitignored runs/ history carries across launches). Then best-effort opens
+# the default browser at http://localhost:8789.
+#
+# Skipped under -Check (same rationale as the summary -- -Check is a wiring
+# probe, not a full session) and under -NoDashboard (opt-out for headless /
+# non-interactive runs / when the dashboard is already up on 8789).
+if (-not $NoDashboard -and -not $Check) {
+  $DashboardDir = Join-Path $RepoRoot 'dashboard'
+  $RunsDir      = Join-Path $RepoRoot 'runs'
+  if (-not (Test-Path $DashboardDir)) {
+    Write-Warning "[edge-cli] dashboard dir not found at $DashboardDir - skipping auto-launch"
+  } else {
+    Write-Host "[edge-cli] launching dashboard (session-coupled) -> http://localhost:8789" -ForegroundColor Cyan
+    # The child PS process inherits no env that isn't explicitly set in -Command.
+    # Setting `$env:RUNS_DIR` / `$env:START_FROM_EOF` inline here keeps the
+    # to-be-launched Claude session's env completely untouched.
+    $childCmd = "`$env:RUNS_DIR='$RunsDir'; `$env:START_FROM_EOF='1'; npm start"
+    Start-Process powershell `
+      -WorkingDirectory $DashboardDir `
+      -ArgumentList '-NoExit', '-Command', $childCmd | Out-Null
+    # Best-effort browser open (default browser). Non-blocking; failures here
+    # mustn't take down the launch (e.g. headless WSL, no DEFAULT verb).
+    try { Start-Process 'http://localhost:8789' -ErrorAction Stop | Out-Null }
+    catch { Write-Warning "[edge-cli] could not auto-open browser: $($_.Exception.Message)" }
+  }
 }
 
 # --- optional pre-launch smoke ----------------------------------------------

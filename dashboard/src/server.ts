@@ -8,11 +8,20 @@
  * the page.
  *
  * Env knobs:
- *   PORT       -- TCP port (default 8789; deliberately not 8788 so the
- *                 TodoMVC demo can run alongside)
- *   RUNS_DIR   -- where to tail .rec files from (default ../runs, resolved
- *                 from the dashboard package root so a fresh clone "just
- *                 works" when started from `npm run dev`)
+ *   PORT             -- TCP port (default 8789; deliberately not 8788 so the
+ *                       TodoMVC demo can run alongside)
+ *   RUNS_DIR         -- where to tail .rec files from (default ../runs,
+ *                       resolved from the dashboard package root so a fresh
+ *                       clone "just works" when started from `npm run dev`)
+ *   START_FROM_EOF   -- SD-3 session-coupling. When set to a truthy value
+ *                       ("1" / "true" / "yes", case-insensitive), the tailer
+ *                       snapshots each `runs/*.rec` file's current size on
+ *                       the first tick and only emits records APPENDED
+ *                       afterwards. `scripts/edge-cli.ps1` sets this when it
+ *                       auto-launches the dashboard so each session's panel
+ *                       shows only that session's cascade activity, not the
+ *                       gitignored history. Default: false (replay-from-zero,
+ *                       the standalone `npm start` workflow).
  */
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -27,8 +36,11 @@ const STYLE_CSS_PATH = resolve(HERE, "style.css");
 
 const port = Number(process.env.PORT ?? 8789);
 const runsDir = resolve(process.env.RUNS_DIR ?? "../runs");
+const startFromEof = ["1", "true", "yes"].includes(
+  (process.env.START_FROM_EOF ?? "").toLowerCase(),
+);
 
-const app = createDashboardApp({ runsDir });
+const app = createDashboardApp({ runsDir, startFromEof });
 app.tailer.start();
 
 const server = createServer((req, res) => {
@@ -58,7 +70,8 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(port, () => {
+  const mode = startFromEof ? " [session-coupled]" : "";
   console.log(
-    `edge-cascade dashboard on http://localhost:${String(port)} (tailing ${runsDir})`,
+    `edge-cascade dashboard on http://localhost:${String(port)}${mode} (tailing ${runsDir})`,
   );
 });

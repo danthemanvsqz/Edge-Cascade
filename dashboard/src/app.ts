@@ -54,6 +54,10 @@ export interface CreateDashboardOptions {
   /** Poll interval for the tailer (passed straight through). Useful for
    * tests; production uses the default 250ms. */
   readonly tailerIntervalMs?: number;
+  /** Pass-through to the tailer's `startFromEof`. SD-3: when the dashboard is
+   * auto-launched by `scripts/edge-cli.ps1` this is true, so the renderer only
+   * shows records from THIS session, not whatever history `runs/` carries. */
+  readonly startFromEof?: boolean;
 }
 
 export function createDashboardApp(
@@ -70,6 +74,7 @@ export function createDashboardApp(
   const tailer = createTailer({
     runsDir: options.runsDir,
     intervalMs: options.tailerIntervalMs,
+    startFromEof: options.startFromEof,
     onRecord: ({ server, record }) => {
       const particle = store.ingest(server, record);
       // A record from an unknown lane (e.g. experiment-*) still changes the

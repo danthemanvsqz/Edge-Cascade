@@ -220,6 +220,43 @@ describe("tailer -> hub wiring", () => {
     expect(conn.pushed).toEqual([]);
   });
 
+  it("startFromEof plumbs through to the tailer (SD-3 session-coupling)", async () => {
+    // Pre-existing content -- this would render under the default factory.
+    await fs.writeFile(
+      join(runsDir, "edge-npu.rec"),
+      dumpRecord(0, { tool: "route", ts: "100" }),
+    );
+    // Re-create the app with startFromEof; its tailer should snapshot the
+    // existing record away on the first tick. (`app` from beforeEach is
+    // stopped + replaced for this case so the tmp dir cleanup still works.)
+    app.tailer.stop();
+    app = createDashboardApp({
+      runsDir,
+      tailerIntervalMs: 1_000_000,
+      nowMs: () => 100_000,
+      startFromEof: true,
+    });
+    const conn = mockConn(app.ctx);
+    app.ctx.hub.subscribe(
+      TICK,
+      conn,
+      nowPlayingRegion,
+      rateMeterRegion,
+      cascadeHealthRegion,
+      cascadeFlowRegion,
+    );
+    await app.tailer.tick();
+    expect(conn.pushed).toEqual([]); // pre-existing record skipped
+
+    // A record appended AFTER first-tick must still flow through.
+    await fs.appendFile(
+      join(runsDir, "edge-npu.rec"),
+      dumpRecord(1, { tool: "draft", ts: "100" }),
+    );
+    await app.tailer.tick();
+    expect(conn.pushed.length).toBe(1);
+  });
+
   it("drops a connection's subscriptions on onClose", () => {
     const conn = mockConn(app.ctx);
     app.ctx.hub.subscribe(TICK, conn, nowPlayingRegion);
