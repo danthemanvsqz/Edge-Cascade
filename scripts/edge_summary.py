@@ -25,7 +25,7 @@ from pathlib import Path
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-except ImportError as _imp_err:
+except ImportError as _imp_err:  # pragma: no cover -- venv missing `mcp` extra
     # The launch-time summary is a *diagnostic*; never block launch when the
     # `mcp` extra is missing (e.g. -SkipSync against a stale venv). Print a
     # one-line fallback and exit 0 so edge-cli.ps1 proceeds.
@@ -125,10 +125,10 @@ async def _query(name: str, spec: dict) -> tuple[str, str]:
         errlog.close()
 
 
-async def main(config_path: Path) -> int:
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    servers: dict[str, dict] = config.get("mcpServers", {})
-
+async def build_rows(servers: dict[str, dict]) -> list[tuple[str, str, str]]:
+    """Query each wired tier and produce one (name, state, summary) row per
+    server. KNOWN tiers come first in canonical order; unknown extras follow
+    so a forward-added server in the config is still visible, just generic."""
     rows: list[tuple[str, str, str]] = []
     for name in KNOWN:
         if name not in servers:
@@ -137,25 +137,32 @@ async def main(config_path: Path) -> int:
             continue
         state, summary = await _query(name, servers[name])
         rows.append((name, state, summary))
-
-    # Any extra servers in the config that we don't have a formatter for --
-    # render them generically so they're not silently invisible.
     for name in servers:
         if name not in KNOWN:
             state, summary = await _query(name, servers[name])
             rows.append((name, state, summary))
+    return rows
 
+
+def format_rows(rows: list[tuple[str, str, str]]) -> list[str]:
+    """Pad name + bracketed-state columns to their widest entries so all rows
+    line up regardless of what each tier reported."""
     name_w = max(len(r[0]) for r in rows)
-    # Bracketed state column padded to the widest possible label so the
-    # summary columns stay aligned regardless of what each tier reported.
     state_w = max(len(f"[{r[1]}]") for r in rows)
-    for name, state, summary in rows:
-        bracketed = f"[{state}]"
-        print(f"    {name.ljust(name_w)}  {bracketed.ljust(state_w)}  {summary}")
+    return [
+        f"    {name.ljust(name_w)}  {f'[{state}]'.ljust(state_w)}  {summary}"
+        for name, state, summary in rows
+    ]
+
+
+async def main(config_path: Path) -> int:  # pragma: no cover -- launcher glue
+    servers = json.loads(config_path.read_text(encoding="utf-8")).get("mcpServers", {})
+    for line in format_rows(await build_rows(servers)):
+        print(line)
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover -- launcher glue
     if len(sys.argv) != 2:
         print("usage: edge_summary.py <mcp-config.json>", file=sys.stderr)
         sys.exit(2)

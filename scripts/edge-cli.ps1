@@ -137,15 +137,19 @@ if (-not $NoSummary) {
   Write-Host ""
   Write-Host "[edge-cli system summary]" -ForegroundColor Cyan
   Write-Host "  cwd:     $ProjectDir"
+  # Push/Pop in a try/finally so a failure between them never leaves the
+  # location stack imbalanced. -ErrorAction SilentlyContinue on Pop covers
+  # the (rare) case where Push itself failed -- there's nothing to pop.
   try {
     Push-Location $ProjectDir
     $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
     $sha    = (git rev-parse --short HEAD 2>$null)
-    Pop-Location
     if ($LASTEXITCODE -eq 0 -and $branch) {
       Write-Host "  branch:  $branch @ $sha"
     }
-  } catch { Pop-Location }
+  } finally {
+    Pop-Location -ErrorAction SilentlyContinue
+  }
   Write-Host "  cascade:"
   $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
   & $VenvPython $SummaryScript $ConfigPath
