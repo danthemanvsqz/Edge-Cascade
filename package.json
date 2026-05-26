@@ -1,0 +1,16 @@
+{
+  "name": "edge-cascade-workspaces",
+  "private": true,
+  "description": "npm workspaces host for the dashboard (consumer) and the embedded vinyl library (producer). The Python cascade lives at the repo root; this manifest only exists so the TS workspaces resolve.",
+  "workspaces": [
+    "projects/vinyl",
+    "dashboard"
+  ],
+  "scripts": {
+    "prepare": "npm --workspace @danthemanvsqz/vinyl run build",
+    "build:vinyl": "npm --workspace @danthemanvsqz/vinyl run build"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
