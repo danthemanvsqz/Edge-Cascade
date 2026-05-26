@@ -169,6 +169,74 @@ describe("tailer", () => {
     await fs.mkdir(runsDir, { recursive: true });
   });
 
+  it("startFromEof: skips records that were present in the file before the first tick", async () => {
+    // Pre-existing content -- the cascade was running before this dashboard
+    // session came up. SD-3's session-coupling rule: don't render history.
+    await append("edge-npu.rec", dumpRecord(0, { tool: "route" }));
+    await append("edge-npu.rec", dumpRecord(1, { tool: "draft" }));
+    const tailer = createTailer({
+      runsDir,
+      onRecord: (r) => received.push(r),
+      intervalMs: 1_000_000,
+      startFromEof: true,
+    });
+    await tailer.tick();
+    expect(received).toEqual([]);
+
+    // Now append a fresh record during the session -- this one SHOULD render.
+    await append("edge-npu.rec", dumpRecord(2, { tool: "verify" }));
+    await tailer.tick();
+    expect(received).toEqual([
+      { server: "edge-npu", record: { _seq: "2", tool: "verify" } },
+    ]);
+  });
+
+  it("startFromEof: still detects rotation after the EOF snapshot (inode-change reset)", async () => {
+    // Pre-existing content is snapshotted away on the first tick.
+    await append("edge-gpu.rec", dumpRecord(0, { tool: "route" }));
+    const tailer = createTailer({
+      runsDir,
+      onRecord: (r) => received.push(r),
+      intervalMs: 1_000_000,
+      startFromEof: true,
+    });
+    await tailer.tick();
+    expect(received).toEqual([]);
+
+    // Now logrotate-style: unlink + recreate at the same path. The replacement
+    // gets a different inode; under startFromEof the snapshot recorded the
+    // ORIGINAL inode, so the mismatch must still trigger the reset-to-zero
+    // branch and the replacement's content must render in full.
+    await fs.unlink(join(runsDir, "edge-gpu.rec"));
+    await append("edge-gpu.rec", dumpRecord(0, { tool: "draft" }));
+    await tailer.tick();
+    expect(received).toEqual([
+      { server: "edge-gpu", record: { _seq: "0", tool: "draft" } },
+    ]);
+  });
+
+  it("startFromEof: a fresh file (size=0) on the first tick still picks up its first record", async () => {
+    // Edge case: the .rec file doesn't exist at first tick (or is empty),
+    // then the cascade emits its first record. The default-construction path
+    // and the startFromEof path must BOTH render this record -- snapshotting
+    // an empty file as EOF=0 is the same as starting at 0.
+    await fs.writeFile(join(runsDir, "edge-gpu.rec"), new Uint8Array(0));
+    const tailer = createTailer({
+      runsDir,
+      onRecord: (r) => received.push(r),
+      intervalMs: 1_000_000,
+      startFromEof: true,
+    });
+    await tailer.tick();
+    expect(received).toEqual([]);
+
+    await append("edge-gpu.rec", dumpRecord(0, { tool: "route" }));
+    await tailer.tick();
+    expect(received).toEqual([
+      { server: "edge-gpu", record: { _seq: "0", tool: "route" } },
+    ]);
+  });
+
   it("handles byte-by-byte appends without losses or duplicates", async () => {
     const tailer = makeTailer();
     const bytes = concat([
