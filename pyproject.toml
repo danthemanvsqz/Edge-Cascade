@@ -92,13 +92,18 @@ testpaths = ["tests"]
 addopts = "-q --cov --cov-report=term-missing"
 
 [tool.coverage.run]
-source = ["cascade"]
+source = ["cascade", "scripts"]
 branch = true
 # Hardware (NPU/Ollama), orchestration, and entrypoints need real devices,
 # network, or a running __main__/HTTP loop. Mock-theater there adds risk, not
 # safety, so the 100% gate is scoped to the pure, safety-critical logic:
-# config, the repair-feedback protocol, the verifier, and the cloud
-# credit-guard / cost math. See README "Test coverage policy".
+# config, the repair-feedback protocol, the verifier, the cloud credit-guard /
+# cost math, AND scripts/edge_summary.py (added 2026-05-26 -- the SD-1 launch
+# summary's silent-failure modes are exactly the kind of "diagnostic looks
+# fine, real signal lost" gap the gate exists to prevent). Other scripts/
+# entries remain out-of-scope: pr_review.py / probe_repair_path.py / *_smoke
+# are live/hardware/interactive, not unit-coverable. See README "Test coverage
+# policy".
 omit = [
     "cascade/__init__.py",
     "cascade/npu_worker.py",
@@ -111,6 +116,20 @@ omit = [
     "cascade/celery_app.py",
     "cascade/tasks.py",
     "mcp_servers/*",
+    # scripts/: only edge_summary.py is in-scope. Everything else is
+    # live/hardware/interactive (paid API, MCP stdio probes, SDXL server,
+    # benchmark drivers) -- live-validated, not unit-coverable.
+    "scripts/celery_smoke.py",
+    "scripts/debate.py",
+    "scripts/debate_analysis.py",
+    "scripts/e2e_local.py",
+    "scripts/image_server.py",
+    "scripts/model_bench.py",
+    "scripts/pr_review.py",
+    "scripts/probe_repair_path.py",
+    "scripts/ship.py",
+    "scripts/smoke_npu_mcp.py",
+    "scripts/snapshot_evidence.py",
 ]
 
 [tool.coverage.report]
