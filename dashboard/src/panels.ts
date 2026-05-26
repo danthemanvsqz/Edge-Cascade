@@ -10,6 +10,7 @@ import { h, liveRegion } from "@danthemanvsqz/vinyl";
 import type { LiveRegion, VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
+import type { Tier } from "./store.js";
 
 /** The single signal that drives every region (for now). */
 export const TICK = "tick";
@@ -49,6 +50,34 @@ export const rateMeterRegion: LiveRegion<DashContext> = liveRegion(
       h("span", { class: "total" }, `${String(total)} records`),
       h("span", { class: "rate" }, `${rate.toFixed(1)} rec/s`),
       spendBadge(ctx),
+    );
+  },
+);
+
+/** Cascade health: one badge per tier + a container-level `degraded` class
+ * that flips yellow on any tier's most-recent status reporting
+ * `available:false`. Closes the Phase A visibility gap where NPU was down
+ * the entire build and the dashboard had no surface for it. */
+const HEALTH_TIERS: readonly Tier[] = ["npu", "gpu", "verify", "cloud"];
+
+export const cascadeHealthRegion: LiveRegion<DashContext> = liveRegion(
+  "cascade-health",
+  (ctx) => {
+    const report = ctx.store.health();
+    const cls = report.degraded ? "cascade-health degraded" : "cascade-health ok";
+    return h(
+      "div",
+      { class: cls },
+      ...HEALTH_TIERS.map((t) => {
+        const s = report.tiers[t];
+        const state =
+          s.lastSeenMs === null ? "unseen" : s.available ? "up" : "down";
+        return h(
+          "span",
+          { class: `tier-health ${state}`, "data-tier": t, title: state },
+          t,
+        );
+      }),
     );
   },
 );

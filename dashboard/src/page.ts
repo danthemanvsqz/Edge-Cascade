@@ -12,7 +12,11 @@ import type { VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
 import { cascadeFlowRegion, cascadeFlowTopology } from "./flow.js";
-import { nowPlayingRegion, rateMeterRegion } from "./panels.js";
+import {
+  cascadeHealthRegion,
+  nowPlayingRegion,
+  rateMeterRegion,
+} from "./panels.js";
 
 export function page(ctx: DashContext): VNode {
   return h(
@@ -35,6 +39,7 @@ export function page(ctx: DashContext): VNode {
         "header",
         { class: "topbar" },
         h("h1", null, "edge-cascade"),
+        cascadeHealthRegion.mount(ctx),
         rateMeterRegion.mount(ctx),
       ),
       h(

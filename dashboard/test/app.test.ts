@@ -9,7 +9,12 @@ import type { VinylConnection } from "@danthemanvsqz/vinyl";
 import type { DashContext, DashboardApp } from "../src/app.js";
 import { createDashboardApp } from "../src/app.js";
 import { cascadeFlowRegion } from "../src/flow.js";
-import { nowPlayingRegion, rateMeterRegion, TICK } from "../src/panels.js";
+import {
+  cascadeHealthRegion,
+  nowPlayingRegion,
+  rateMeterRegion,
+  TICK,
+} from "../src/panels.js";
 import { dumpRecord } from "./util.js";
 
 let runsDir: string;
@@ -65,6 +70,7 @@ describe("page render", () => {
     expect(html).toContain('id="vinyl-r-now-playing"');
     expect(html).toContain('id="vinyl-r-rate-meter"');
     expect(html).toContain('id="vinyl-r-cascade-flow"');
+    expect(html).toContain('id="vinyl-r-cascade-health"');
     // The static topology lives inline in the initial paint (no live-region
     // wrapper) so search engines / curl see the architecture even pre-WS.
     expect(html).toContain('class="topology"');
@@ -139,15 +145,42 @@ describe("rateMeterRegion", () => {
   });
 });
 
+describe("cascadeHealthRegion", () => {
+  it("renders a baseline-clean row with all four tiers `unseen`", () => {
+    const html = renderToString(cascadeHealthRegion.render(app.ctx));
+    expect(html).toContain('class="cascade-health ok"');
+    for (const t of ["npu", "gpu", "verify", "cloud"]) {
+      expect(html).toContain(`data-tier="${t}"`);
+      expect(html).toContain(`tier-health unseen`);
+    }
+    expect(html).not.toContain("cascade-health degraded");
+  });
+
+  it("flips the row to degraded + the tier to `down` after a status with available:false", () => {
+    app.ctx.store.ingest("edge-npu", {
+      _seq: "0",
+      tool: "status",
+      ts: "100",
+      result: JSON.stringify({ available: false, reason: "model missing" }),
+    });
+    const html = renderToString(cascadeHealthRegion.render(app.ctx));
+    expect(html).toContain('class="cascade-health degraded"');
+    // The NPU badge specifically -- not a generic "any tier" classname.
+    expect(html).toMatch(/tier-health down[^"]*"[^>]*data-tier="npu"|data-tier="npu"[^>]*tier-health down/);
+  });
+});
+
 describe("tailer -> hub wiring", () => {
   it("emits TICK and pushes OOB frames to subscribers after an ingested record", async () => {
     const conn = mockConn(app.ctx);
-    // Mirror what app.ts onConnect actually subscribes (3 regions in slice 6).
+    // Mirror what app.ts onConnect actually subscribes (4 regions after
+    // SD-2 added cascade-health).
     app.ctx.hub.subscribe(
       TICK,
       conn,
       nowPlayingRegion,
       rateMeterRegion,
+      cascadeHealthRegion,
       cascadeFlowRegion,
     );
 
@@ -161,13 +194,15 @@ describe("tailer -> hub wiring", () => {
     const elements = conn.pushed[0];
     expect(elements).toBeDefined();
     // Each subscribed region contributes one OOB string per emit (slice 5
-    // added now-playing + rate-meter; slice 6 added cascade-flow).
-    expect(elements?.length).toBe(3);
+    // added now-playing + rate-meter; slice 6 added cascade-flow; SD-2
+    // added cascade-health).
+    expect(elements?.length).toBe(4);
     // The frames carry the region IDs the htmx-ws contract expects.
     const allFrames = (elements ?? []).join("");
     expect(allFrames).toContain('id="vinyl-r-now-playing"');
     expect(allFrames).toContain('id="vinyl-r-rate-meter"');
     expect(allFrames).toContain('id="vinyl-r-cascade-flow"');
+    expect(allFrames).toContain('id="vinyl-r-cascade-health"');
     // And the newly rendered nowPlaying reflects the just-ingested record.
     expect(allFrames).toContain(">generate<");
   });
