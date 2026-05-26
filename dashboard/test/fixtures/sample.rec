@@ -1,0 +1,18 @@
+%%REC v1 0
+server 8
+edge-npu
+tool 5
+route
+ts 14
+1779801311.851
+run_id 12
+240d4b6d4977
+args 468
+{"prompt": "Port this Python function to idiomatic TypeScript. It must be bytes-native (Uint8Array input), preserve truncated-tail rewind, garbage-line skip, keep-projection semantics, and produce identical records to the Python parser. ~120 LOC.\n\n```python\ndef parse_stream_incremental(\n    data: bytes, start_offset: int = 0, keep: frozenset[str] | None = None,\n) -> tuple[list[dict[str, str]], int]:\n    # ... (the full function from cascade/logfmt.py)\n```"}
+ok 4
+true
+result 357
+{"available": false, "reason": "RuntimeError: No OpenVINO device could load the Tier-1 model: Exception from C:\\Jenkins\\workspace\\private-ci\\ie\\build-windows-vs2022@2\\b\\repos\\openvino.genai\\src\\cpp\\src\\utils.cpp:420:\nCould not find a model in the directory '\"C:\\Users\\danth\\src\\edge-cascade-dashboard\\models\\qwen2.5-coder-1.5b-npu\"'\n"}
+latency_ms 5
+691.7
+%%END
