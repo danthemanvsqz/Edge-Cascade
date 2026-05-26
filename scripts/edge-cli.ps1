@@ -32,6 +32,13 @@
 .PARAMETER Check
   Smoke each wired server (status/no-spend tool) and exit WITHOUT launching.
 
+.PARAMETER NoSummary
+  Skip the launch-time system summary (SD-1). The summary calls each wired
+  server's status tool and prints a per-tier READY/DEGRADED line so a tier
+  outage is visible at launch instead of buried in a `.rec` payload. Costs
+  ~9s on the first NPU compile of the day; subsequent launches are fast.
+  Use during dev when you're relaunching constantly and trust the wiring.
+
 .EXAMPLE
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
@@ -44,7 +51,8 @@ param(
   [string[]] $Servers    = @('edge-npu', 'edge-gpu', 'edge-verify'),
   [switch]   $WithCloud,
   [switch]   $SkipSync,
-  [switch]   $Check
+  [switch]   $Check,
+  [switch]   $NoSummary
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,6 +125,31 @@ $json = @{ mcpServers = $mcpServers } | ConvertTo-Json -Depth 8
 Write-Host "[edge-cli] wired: $($wanted -join ', ')" -ForegroundColor Green
 if (-not $WithCloud) {
   Write-Host "[edge-cli] Tier 4 (edge-cloud / paid API) NOT wired - session cannot spend." -ForegroundColor Yellow
+}
+
+# --- launch-time system summary (SD-1) --------------------------------------
+# Closes the Phase A visibility gap (#57): every wired tier's readiness is
+# printed in plain text BEFORE Claude launches, so an `available:false` tier
+# is impossible to miss. The Python helper speaks real MCP stdio against each
+# server -- same wire path the launched session will use -- so what the
+# operator sees here is exactly what Claude will see.
+if (-not $NoSummary) {
+  Write-Host ""
+  Write-Host "[edge-cli system summary]" -ForegroundColor Cyan
+  Write-Host "  cwd:     $ProjectDir"
+  try {
+    Push-Location $ProjectDir
+    $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
+    $sha    = (git rev-parse --short HEAD 2>$null)
+    Pop-Location
+    if ($LASTEXITCODE -eq 0 -and $branch) {
+      Write-Host "  branch:  $branch @ $sha"
+    }
+  } catch { Pop-Location }
+  Write-Host "  cascade:"
+  $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
+  & $VenvPython $SummaryScript $ConfigPath
+  Write-Host ""
 }
 
 # --- optional pre-launch smoke ----------------------------------------------
