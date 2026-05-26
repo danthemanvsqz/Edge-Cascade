@@ -4,41 +4,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { parseStream, parseStreamIncremental } from "../src/lib/logfmt.js";
+import { concat, dumpRecord } from "./util.js";
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const ENCODER = new TextEncoder();
-
-/** Mirror of `cascade.logfmt.dump_record` — only used by the synthetic tests
- * below. Throws on keys that the parser would reject (whitespace), so a test
- * cannot accidentally fabricate a byte sequence the canonical parser would
- * never produce. */
-function dumpRecord(seq: number, fields: Record<string, string>): Uint8Array {
-  const chunks: Uint8Array[] = [];
-  chunks.push(ENCODER.encode(`%%REC v1 ${String(seq)}\n`));
-  for (const [key, value] of Object.entries(fields)) {
-    if (key === "" || /[ \n]/.test(key)) {
-      throw new Error(`illegal field key: ${JSON.stringify(key)}`);
-    }
-    const body = ENCODER.encode(value);
-    chunks.push(ENCODER.encode(`${key} ${String(body.length)}\n`));
-    chunks.push(body);
-    chunks.push(ENCODER.encode("\n"));
-  }
-  chunks.push(ENCODER.encode("%%END\n"));
-  return concat(chunks);
-}
-
-function concat(chunks: Uint8Array[]): Uint8Array {
-  let n = 0;
-  for (const c of chunks) n += c.length;
-  const out = new Uint8Array(n);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.length;
-  }
-  return out;
-}
 
 describe("parseStream", () => {
   it("round-trips a single well-formed record", () => {
