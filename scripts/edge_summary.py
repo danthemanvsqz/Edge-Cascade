@@ -146,7 +146,11 @@ async def build_rows(servers: dict[str, dict]) -> list[tuple[str, str, str]]:
 
 def format_rows(rows: list[tuple[str, str, str]]) -> list[str]:
     """Pad name + bracketed-state columns to their widest entries so all rows
-    line up regardless of what each tier reported."""
+    line up regardless of what each tier reported. Empty input is allowed --
+    `build_rows` always emits the four KNOWN tiers today, but a future
+    refactor that lets the list be empty must not crash the launcher."""
+    if not rows:
+        return []
     name_w = max(len(r[0]) for r in rows)
     state_w = max(len(f"[{r[1]}]") for r in rows)
     return [

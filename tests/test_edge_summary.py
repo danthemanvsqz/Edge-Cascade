@@ -101,10 +101,13 @@ class _FakeSession:
         if p == "TIMEOUT":
             raise TimeoutError("simulated")
         # Build a MCP-result-like object with structuredContent.
-        return _MCPResult(structured={"result": p or {}})
+        return _Result(structured={"result": p or {}})
 
 
-class _MCPResult:
+class _Result:
+    """Minimal stand-in for the MCP CallToolResult shape we read. Reused by
+    the _payload tests below and by _FakeSession.call_tool's return."""
+
     def __init__(self, structured=None, text=None):
         self.structuredContent = structured
         self.content = [_Text(text)] if text is not None else []
@@ -199,19 +202,7 @@ def test_cloud_blocked_is_degraded(es):
 
 
 # --- _payload extraction ---------------------------------------------------
-
-class _Result:
-    """Minimal stand-in for the MCP CallToolResult shape we read."""
-
-    def __init__(self, structured=None, text=None):
-        self.structuredContent = structured
-        self.content = [_Text(text)] if text is not None else []
-
-
-class _Text:
-    def __init__(self, t):
-        self.text = t
-
+# _Result / _Text live in the async-mock helpers section above; reused here.
 
 def test_payload_prefers_structured_result(es):
     res = _Result(structured={"result": {"available": True, "x": 1}})
@@ -386,3 +377,9 @@ def test_format_rows_aligns_columns(es):
 def test_format_rows_handles_single_row(es):
     lines = es.format_rows([("only", "READY", "msg")])
     assert lines == ["    only  [READY]  msg"]
+
+
+def test_format_rows_empty_input_returns_empty_list(es):
+    """A safety net so a future refactor that lets build_rows return [] can't
+    crash the launcher via max() on an empty sequence."""
+    assert es.format_rows([]) == []

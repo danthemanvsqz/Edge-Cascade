@@ -133,7 +133,10 @@ if (-not $WithCloud) {
 # is impossible to miss. The Python helper speaks real MCP stdio against each
 # server -- same wire path the launched session will use -- so what the
 # operator sees here is exactly what Claude will see.
-if (-not $NoSummary) {
+# Skipped under -Check: -Check's own import-only smoke is the cheaper probe
+# this flag was designed for; running the summary too would spin every MCP
+# server twice (~9s NPU compile doubled).
+if (-not $NoSummary -and -not $Check) {
   Write-Host ""
   Write-Host "[edge-cli system summary]" -ForegroundColor Cyan
   Write-Host "  cwd:     $ProjectDir"
