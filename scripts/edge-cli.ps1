@@ -39,6 +39,13 @@
   ~9s on the first NPU compile of the day; subsequent launches are fast.
   Use during dev when you're relaunching constantly and trust the wiring.
 
+.PARAMETER NoDashboard
+  Skip the SD-3 dashboard auto-launch. The dashboard is normally spawned in a
+  separate PowerShell window with START_FROM_EOF=1 (session-coupled) and the
+  default browser is pointed at http://localhost:8789. Use this when you're
+  driving a non-interactive run, headless CI, or already have the dashboard
+  open and don't want a second instance fighting for port 8789.
+
 .EXAMPLE
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
@@ -52,7 +59,8 @@ param(
   [switch]   $WithCloud,
   [switch]   $SkipSync,
   [switch]   $Check,
-  [switch]   $NoSummary
+  [switch]   $NoSummary,
+  [switch]   $NoDashboard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -157,6 +165,79 @@ if (-not $NoSummary -and -not $Check) {
   $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
   & $VenvPython $SummaryScript $ConfigPath
   Write-Host ""
+}
+
+# --- SD-3: auto-launch the dashboard in a separate console ------------------
+# Spawns a NEW PowerShell window running `npm start` in dashboard/, with
+# RUNS_DIR pinned at the repo's runs/ and START_FROM_EOF=1 so the renderer
+# only shows records appended during THIS edge-cli session (not whatever the
+# gitignored runs/ history carries across launches). Then best-effort opens
+# the default browser at http://localhost:8789 ONLY AFTER the Node server has
+# bound the port (otherwise the first GET races the listen and hits ERR_CONN).
+#
+# Pre-existing listener on 8789 -> skip the spawn entirely with a warning
+# (PR #60 review nit): the silent-collision case (new child crashes on listen,
+# browser opens to the OLD session's dashboard) would silently defeat
+# session-coupling. Better to tell the user the old dashboard is still up.
+#
+# Skipped under -Check (same rationale as the summary -- -Check is a wiring
+# probe, not a full session) and under -NoDashboard (opt-out for headless /
+# non-interactive runs / when the dashboard is already up on 8789).
+
+function Test-EdgeCliPortBound {
+  # Returns $true iff something is accepting on 127.0.0.1:$Port.
+  # Uses raw TcpClient rather than Get-NetTCPConnection so we don't pick up
+  # half-bound IPv6-only listeners as IPv4 ports (and vice versa), and so we
+  # don't depend on the NetTCPIP module (present on Win10+, but the launcher
+  # should be conservative). 200 ms is enough on loopback; longer would block
+  # the launch path for nothing.
+  param([int]$Port = 8789, [int]$TimeoutMs = 200)
+  $tcp = New-Object System.Net.Sockets.TcpClient
+  try {
+    $iar = $tcp.BeginConnect('127.0.0.1', $Port, $null, $null)
+    if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $false }
+    try { $tcp.EndConnect($iar); return $true } catch { return $false }
+  } finally { $tcp.Close() }
+}
+
+if (-not $NoDashboard -and -not $Check) {
+  $DashboardDir = Join-Path $RepoRoot 'dashboard'
+  $RunsDir      = Join-Path $RepoRoot 'runs'
+  if (-not (Test-Path $DashboardDir)) {
+    Write-Warning "[edge-cli] dashboard dir not found at $DashboardDir - skipping auto-launch"
+  } elseif (Test-EdgeCliPortBound -Port 8789) {
+    # Pre-existing dashboard on 8789. Spawning a second one would crash on
+    # listen and leave the browser pointing at the OLD session, silently
+    # defeating session-coupling. Skip + tell the user.
+    Write-Warning "[edge-cli] port 8789 is already bound - a previous dashboard is still running."
+    Write-Warning "[edge-cli] kill that window (or pass -NoDashboard) to silence this; not opening browser."
+  } else {
+    Write-Host "[edge-cli] launching dashboard (session-coupled) -> http://localhost:8789" -ForegroundColor Cyan
+    # The child PS process inherits no env that isn't explicitly set in -Command.
+    # Setting `$env:RUNS_DIR` / `$env:START_FROM_EOF` inline here keeps the
+    # to-be-launched Claude session's env completely untouched.
+    $childCmd = "`$env:RUNS_DIR='$RunsDir'; `$env:START_FROM_EOF='1'; npm start"
+    Start-Process powershell `
+      -WorkingDirectory $DashboardDir `
+      -ArgumentList '-NoExit', '-Command', $childCmd | Out-Null
+    # Poll the port until the child binds (or 5 s elapses) so the browser
+    # doesn't race the listen and get ERR_CONNECTION_REFUSED on first GET.
+    # 5 s covers cold-cache `npm start` on this machine; longer means
+    # something is structurally wrong and the user should look at the new
+    # console themselves rather than wait silently.
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+      if (Test-EdgeCliPortBound -Port 8789) { break }
+      Start-Sleep -Milliseconds 200
+    }
+    if (-not (Test-EdgeCliPortBound -Port 8789)) {
+      Write-Warning "[edge-cli] dashboard did not bind 8789 within 5s - check the spawned console; opening browser anyway"
+    }
+    # Best-effort browser open (default browser). Non-blocking; failures here
+    # mustn't take down the launch (e.g. headless WSL, no DEFAULT verb).
+    try { Start-Process 'http://localhost:8789' -ErrorAction Stop | Out-Null }
+    catch { Write-Warning "[edge-cli] could not auto-open browser: $($_.Exception.Message)" }
+  }
 }
 
 # --- optional pre-launch smoke ----------------------------------------------

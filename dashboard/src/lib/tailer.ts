@@ -39,6 +39,14 @@ export interface TailerOptions {
   readonly intervalMs?: number;
   /** Field projection (passed through to `parseStreamIncremental`). */
   readonly keep?: ReadonlySet<string>;
+  /** When true, on the FIRST encounter of each `.rec` file the tailer snapshots
+   * the file's current size as `offset` (and current inode as `inode`), so only
+   * records APPENDED after the tailer started are emitted. Pre-existing content
+   * is skipped. Rotation/truncation handling AFTER first encounter is unchanged.
+   * Default: false (read from offset 0, current behavior). The edge-cli
+   * launcher uses this so each session's dashboard renders only that session's
+   * cascade activity, not the whole gitignored `runs/` history. */
+  readonly startFromEof?: boolean;
 }
 
 export interface Tailer {
@@ -104,7 +112,15 @@ export function createTailer(options: TailerOptions): Tailer {
     }
     let cur = state.get(path);
     if (!cur) {
-      cur = { offset: 0, pending: new Uint8Array(0), inode: null };
+      // First encounter: either start at 0 (default — replay the whole file
+      // since the dashboard came up) or snapshot the current EOF (startFromEof
+      // — render only records appended during this session). Inode is recorded
+      // immediately under startFromEof so the very first rotate-after-snapshot
+      // is detected; under the default the inode stays null until the next
+      // tick (preserves existing semantics).
+      cur = options.startFromEof
+        ? { offset: size, pending: new Uint8Array(0), inode }
+        : { offset: 0, pending: new Uint8Array(0), inode: null };
       state.set(path, cur);
     }
     const consumed = cur.offset + cur.pending.length;
