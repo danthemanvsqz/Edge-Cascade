@@ -14,11 +14,16 @@
  *                 from the dashboard package root so a fresh clone "just
  *                 works" when started from `npm run dev`)
  */
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { streamShell } from "@danthemanvsqz/vinyl";
 
 import { createDashboardApp } from "./app.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const STYLE_CSS_PATH = resolve(HERE, "style.css");
 
 const port = Number(process.env.PORT ?? 8789);
 const runsDir = resolve(process.env.RUNS_DIR ?? "../runs");
@@ -32,10 +37,16 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && req.url === "/style.css") {
-    // Slice 6 will replace this with a real palette + keyframes. For now we
-    // serve an empty file so the browser doesn't log a 404 in the demo.
-    res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
-    res.end("");
+    void readFile(STYLE_CSS_PATH).then(
+      (body) => {
+        res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+        res.end(body);
+      },
+      () => {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end("style.css missing");
+      },
+    );
     return;
   }
   res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });

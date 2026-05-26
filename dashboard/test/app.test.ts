@@ -8,6 +8,7 @@ import type { VinylConnection } from "@danthemanvsqz/vinyl";
 
 import type { DashContext, DashboardApp } from "../src/app.js";
 import { createDashboardApp } from "../src/app.js";
+import { cascadeFlowRegion } from "../src/flow.js";
 import { nowPlayingRegion, rateMeterRegion, TICK } from "../src/panels.js";
 import { dumpRecord } from "./util.js";
 
@@ -60,12 +61,15 @@ describe("page render", () => {
     // Connect on /ws and mark the body as htmx-ws-aware
     expect(html).toContain('hx-ext="ws"');
     expect(html).toContain('ws-connect="/ws"');
-    // The two Slice-5 region mounts (regionId derives from `vinyl-r-<key>`)
+    // The three live-region mounts (regionId derives from `vinyl-r-<key>`).
     expect(html).toContain('id="vinyl-r-now-playing"');
     expect(html).toContain('id="vinyl-r-rate-meter"');
-    // The Slice-6 cascade-flow placeholder so the user can see Slice 6 is the
-    // next-up gap.
-    expect(html).toContain("cascade-flow SVG lands in slice 6");
+    expect(html).toContain('id="vinyl-r-cascade-flow"');
+    // The static topology lives inline in the initial paint (no live-region
+    // wrapper) so search engines / curl see the architecture even pre-WS.
+    expect(html).toContain('class="topology"');
+    expect(html).toContain("Tier 1 · NPU");
+    expect(html).toContain("Tier 4 · cloud");
   });
 });
 
@@ -138,7 +142,14 @@ describe("rateMeterRegion", () => {
 describe("tailer -> hub wiring", () => {
   it("emits TICK and pushes OOB frames to subscribers after an ingested record", async () => {
     const conn = mockConn(app.ctx);
-    app.ctx.hub.subscribe(TICK, conn, nowPlayingRegion, rateMeterRegion);
+    // Mirror what app.ts onConnect actually subscribes (3 regions in slice 6).
+    app.ctx.hub.subscribe(
+      TICK,
+      conn,
+      nowPlayingRegion,
+      rateMeterRegion,
+      cascadeFlowRegion,
+    );
 
     await fs.writeFile(
       join(runsDir, "edge-gpu.rec"),
@@ -149,18 +160,21 @@ describe("tailer -> hub wiring", () => {
     expect(conn.pushed.length).toBe(1);
     const elements = conn.pushed[0];
     expect(elements).toBeDefined();
-    // Each subscribed region contributes one OOB string per emit.
-    expect(elements?.length).toBe(2);
+    // Each subscribed region contributes one OOB string per emit (slice 5
+    // added now-playing + rate-meter; slice 6 added cascade-flow).
+    expect(elements?.length).toBe(3);
     // The frames carry the region IDs the htmx-ws contract expects.
-    expect(elements?.[0]).toContain('id="vinyl-r-now-playing"');
-    expect(elements?.[1]).toContain('id="vinyl-r-rate-meter"');
+    const allFrames = (elements ?? []).join("");
+    expect(allFrames).toContain('id="vinyl-r-now-playing"');
+    expect(allFrames).toContain('id="vinyl-r-rate-meter"');
+    expect(allFrames).toContain('id="vinyl-r-cascade-flow"');
     // And the newly rendered nowPlaying reflects the just-ingested record.
-    expect(elements?.[0]).toContain(">generate<");
+    expect(allFrames).toContain(">generate<");
   });
 
   it("does NOT emit when an unknown-server record arrives (experiment lane)", async () => {
     const conn = mockConn(app.ctx);
-    app.ctx.hub.subscribe(TICK, conn, nowPlayingRegion);
+    app.ctx.hub.subscribe(TICK, conn, nowPlayingRegion, rateMeterRegion);
 
     await fs.writeFile(
       join(runsDir, "experiment-cp5.rec"),

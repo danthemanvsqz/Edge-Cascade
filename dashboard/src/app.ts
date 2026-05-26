@@ -17,6 +17,7 @@ import type {
   VinylWSServer,
 } from "@danthemanvsqz/vinyl";
 
+import { cascadeFlowRegion } from "./flow.js";
 import { page } from "./page.js";
 import { nowPlayingRegion, rateMeterRegion, TICK } from "./panels.js";
 import { createStore } from "./store.js";
@@ -78,7 +79,13 @@ export function createDashboardApp(
     path: "/ws",
     context: () => ctx,
     onConnect(conn) {
-      hub.subscribe(TICK, conn, nowPlayingRegion, rateMeterRegion);
+      hub.subscribe(
+        TICK,
+        conn,
+        nowPlayingRegion,
+        rateMeterRegion,
+        cascadeFlowRegion,
+      );
     },
     onMessage: () => {
       // Phase A page has no forms / actions; ignore any inbound frame.

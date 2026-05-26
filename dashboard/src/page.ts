@@ -11,6 +11,7 @@ import { h } from "@danthemanvsqz/vinyl";
 import type { VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
+import { cascadeFlowRegion, cascadeFlowTopology } from "./flow.js";
 import { nowPlayingRegion, rateMeterRegion } from "./panels.js";
 
 export function page(ctx: DashContext): VNode {
@@ -39,14 +40,11 @@ export function page(ctx: DashContext): VNode {
       h(
         "main",
         { class: "stage" },
-        // Slice 6 replaces this placeholder with the full <CascadeFlow>
-        // component (SVG topology + particle live region + per-tier
-        // sparklines/stats).
-        h(
-          "div",
-          { id: "cascade-flow-placeholder", class: "placeholder" },
-          "cascade-flow SVG lands in slice 6",
-        ),
+        // Two stacked SVGs sharing the same 800x400 viewport: the static
+        // topology underneath, the live overlay (particles + sparklines +
+        // tier-stats) on top via the `cascade-flow` live region.
+        cascadeFlowTopology(),
+        cascadeFlowRegion.mount(ctx),
       ),
       h(
         "aside",
