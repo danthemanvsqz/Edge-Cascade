@@ -24,3 +24,7 @@ build/
 dist/
 *.egg-info/
 # NB: uv.lock is intentionally committed (reproducible installs).
+
+# Node (workspace root for the TS dashboard + the vinyl workspace)
+node_modules/
+coverage/

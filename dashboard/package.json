@@ -1,0 +1,32 @@
+{
+  "name": "@edge-cascade/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Live, demo-able view of the cascade's nervous system. Tails runs/*.rec, derives per-tier state, streams cascade-flow particles to the browser via Vinyl (htmx-ws).",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@danthemanvsqz/vinyl": "*",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.15.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
