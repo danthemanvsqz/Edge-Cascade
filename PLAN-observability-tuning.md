@@ -1,5 +1,25 @@
 # Edge-Cascade observability + tuning — multi-session backlog
 
+> ⚠️ **SUPERSEDED (2026-05-26).** This file is **NO LONGER** the canonical
+> backlog and is kept only for historical lineage. A fresh session picking it
+> up cold will get an out-of-date view: A7 (local PR reviewer) shipped as
+> `scripts/pr_review.py`; C1 (Celery Canvas) is parked; AI-3 is shelved per
+> the AI-4 findings; CP-1/2/5-P0 are closed; the live priorities are
+> dashboard / EI-1 / PD-1-2 / CP follow-ups.
+>
+> **The current backlog lives in the project auto-memory:**
+> `~/.claude/projects/c--Users-danth-src/memory/edge-cascade-open-threads.md`
+> — re-groomed per session under
+> `~/.claude/projects/c--Users-danth-src/memory/prioritization-protocol.md`.
+> Findings live under `docs/FINDINGS-*.md`. Architectural design docs live
+> under `docs/DESIGN-*.md`.
+>
+> Items A1–A4 / A6 / P2a in this file landed and are reflected in the git
+> history; the **A1/A2/A3/A6** dashboard metric-truth fixes informed the
+> design of `dashboard/` (Phase A, 2026-05-26).
+
+> *Original (now-stale) header preserved below for context:*
+>
 > **This is the canonical, status-tracked backlog.** Any fresh session
 > picking this up cold: read the Cross-session protocol first, then pick the
 > next `[ ]` item whose dependencies are all `[x]`. Update statuses here via
