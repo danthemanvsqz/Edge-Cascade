@@ -94,6 +94,29 @@ describe("tailer", () => {
     expect(received.map((r) => r.record._seq)).toEqual(["0"]);
   });
 
+  it("re-reads from zero when the inode changes (logrotate unlink+recreate, even to a LARGER file)", async () => {
+    await append("edge-gpu.rec", dumpRecord(0, { tool: "route" }));
+    const tailer = makeTailer();
+    await tailer.tick();
+    expect(received.length).toBe(1);
+
+    // logrotate-style: unlink the original (releases the inode), then create
+    // a NEW file at the same path with strictly more content. The size-only
+    // check would silently skip the first record of the replacement; the
+    // inode check catches it.
+    await fs.unlink(join(runsDir, "edge-gpu.rec"));
+    await append(
+      "edge-gpu.rec",
+      concat([
+        dumpRecord(0, { tool: "draft" }),
+        dumpRecord(1, { tool: "verify" }),
+      ]),
+    );
+    await tailer.tick();
+    const tools = received.map((r) => r.record.tool);
+    expect(tools).toEqual(["route", "draft", "verify"]);
+  });
+
   it("re-reads the file from zero when it shrinks (truncation/rotation)", async () => {
     await append("edge-gpu.rec", dumpRecord(0, { tool: "route" }));
     const tailer = makeTailer();

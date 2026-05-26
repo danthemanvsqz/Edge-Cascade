@@ -57,6 +57,11 @@ interface FileState {
   /** Bytes we have read past `offset` but could not yet finish parsing
    * (truncated trailing record). Held for the next tick. */
   pending: Uint8Array;
+  /** Inode (Windows: file index) at the time of the last successful read.
+   * Differs across logrotate-style unlink+recreate even when the new file's
+   * size happens to match the old -- the size-shrink check alone can't catch
+   * that case. `null` on first encounter (no comparison yet). */
+  inode: number | null;
 }
 
 const DEFAULT_PATTERN = /^(.+)\.rec$/;
@@ -88,24 +93,30 @@ export function createTailer(options: TailerOptions): Tailer {
 
   async function ingestFile(server: string, path: string): Promise<void> {
     let size: number;
+    let inode: number;
     try {
       const stat = await fs.stat(path);
       if (!stat.isFile()) return;
       size = stat.size;
+      inode = stat.ino;
     } catch {
       return; // file vanished between readdir and stat
     }
     let cur = state.get(path);
     if (!cur) {
-      cur = { offset: 0, pending: new Uint8Array(0) };
+      cur = { offset: 0, pending: new Uint8Array(0), inode: null };
       state.set(path, cur);
     }
     const consumed = cur.offset + cur.pending.length;
-    if (size < consumed) {
-      // Rotation / truncation. Reset and re-read from zero.
+    const inodeChanged = cur.inode !== null && cur.inode !== inode;
+    if (size < consumed || inodeChanged) {
+      // Rotation / truncation: either size shrank (in-place truncate or
+      // logrotate-truncate) or the inode changed (unlink+recreate even at the
+      // same path). Reset and re-read from zero.
       cur.offset = 0;
       cur.pending = new Uint8Array(0);
     }
+    cur.inode = inode;
     const newBytes = size - (cur.offset + cur.pending.length);
     if (newBytes <= 0) return;
 

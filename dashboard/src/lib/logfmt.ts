@@ -126,6 +126,46 @@ export function parseStream(
   return parseStreamIncremental(data, 0, keep).records;
 }
 
+/** Serialise one record back to wire bytes -- mirror of
+ * `cascade.logfmt.dump_record`. The Python writer is the CANONICAL one used
+ * by the cascade itself (mcp_servers/_rec.py); this TS writer exists for
+ * offline tooling (seed_replay.ts, tests) where we want a writer that lives
+ * in the same module as the parser it round-trips against. Field-order is
+ * insertion order; keys must match the parser's accepted shape (no spaces,
+ * no LF). */
+export function dumpRecord(
+  seq: number,
+  fields: Record<string, string>,
+): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  chunks.push(ENCODER.encode(`%%REC v1 ${String(seq)}\n`));
+  for (const [key, value] of Object.entries(fields)) {
+    if (key === "" || /[ \n]/.test(key)) {
+      throw new Error(`illegal field key: ${JSON.stringify(key)}`);
+    }
+    const body = ENCODER.encode(value);
+    chunks.push(ENCODER.encode(`${key} ${String(body.length)}\n`));
+    chunks.push(body);
+    chunks.push(ENCODER.encode("\n"));
+  }
+  chunks.push(ENCODER.encode("%%END\n"));
+  return concat(chunks);
+}
+
+const ENCODER = new TextEncoder();
+
+function concat(chunks: Uint8Array[]): Uint8Array {
+  let n = 0;
+  for (const c of chunks) n += c.length;
+  const out = new Uint8Array(n);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
+}
+
 function encodeAscii(s: string): Uint8Array {
   const out = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
