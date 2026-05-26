@@ -205,6 +205,85 @@ describe("createStore — spend (the load-bearing invariant)", () => {
   });
 });
 
+describe("createStore — health (cascade-visibility derivation)", () => {
+  it("starts clean: every tier available, none seen, degraded:false", () => {
+    const h = createStore().health();
+    expect(h.degraded).toBe(false);
+    for (const t of ["npu", "gpu", "verify", "cloud"] as const) {
+      expect(h.tiers[t]).toEqual({ available: true, lastSeenMs: null });
+    }
+  });
+
+  it("non-status records do NOT touch health (even if their result carries available:false)", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "route", ts: "100", result: JSON.stringify({ available: false }) }));
+    const h = store.health();
+    expect(h.degraded).toBe(false);
+    expect(h.tiers.npu).toEqual({ available: true, lastSeenMs: null });
+  });
+
+  it("a status record with available:false flips that tier; degraded goes true", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false, reason: "model missing" }) }));
+    const h = store.health();
+    expect(h.tiers.npu).toEqual({ available: false, lastSeenMs: 100_000 });
+    expect(h.tiers.gpu.available).toBe(true);
+    expect(h.degraded).toBe(true);
+  });
+
+  it("a later status with available:true flips the tier back; degraded recovers", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }));
+    expect(store.health().degraded).toBe(true);
+    store.ingest("edge-npu", rec(1, { tool: "status", ts: "200", result: JSON.stringify({ available: true, device: "NPU" }) }));
+    const h = store.health();
+    expect(h.tiers.npu).toEqual({ available: true, lastSeenMs: 200_000 });
+    expect(h.degraded).toBe(false);
+  });
+
+  it("malformed / missing / non-boolean `available` leaves the flag alone but still advances lastSeenMs", () => {
+    const store = createStore();
+    // Seed an explicit-down state.
+    store.ingest("edge-gpu", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }));
+    // Now a status with no parseable signal -- flag must stay false; lastSeenMs advances.
+    store.ingest("edge-gpu", rec(1, { tool: "status", ts: "200", result: "not json {" }));
+    store.ingest("edge-gpu", rec(2, { tool: "status", ts: "300", result: JSON.stringify({ device: "GPU" }) }));
+    store.ingest("edge-gpu", rec(3, { tool: "status", ts: "400", result: JSON.stringify({ available: "yes" }) }));
+    const h = store.health();
+    expect(h.tiers.gpu.available).toBe(false);
+    expect(h.tiers.gpu.lastSeenMs).toBe(400_000);
+  });
+
+  it("degraded reports true if ANY single tier is down", () => {
+    const store = createStore();
+    store.ingest("edge-cloud", rec(0, { tool: "status", ts: "1", result: JSON.stringify({ available: false }) }));
+    expect(store.health().degraded).toBe(true);
+    // Even though the other three are still up:
+    expect(store.health().tiers.npu.available).toBe(true);
+    expect(store.health().tiers.gpu.available).toBe(true);
+    expect(store.health().tiers.verify.available).toBe(true);
+  });
+
+  it("status records from unknown servers do not synthesise tier health", () => {
+    const store = createStore();
+    store.ingest("experiment-foo", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }));
+    const h = store.health();
+    expect(h.degraded).toBe(false);
+    expect(h.tiers.npu.lastSeenMs).toBeNull();
+  });
+
+  it("each call to health() returns a fresh snapshot (mutating it does not affect the next read)", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }));
+    const first = store.health();
+    // Try to tamper -- the returned object is treated as read-only by the
+    // type system, but in practice .tiers.npu is a plain object; cast away
+    // the readonly to confirm the next call yields a fresh copy.
+    (first.tiers.npu as { available: boolean; lastSeenMs: number | null }).available = true;
+    expect(store.health().tiers.npu.available).toBe(false);
+  });
+});
+
 describe("createStore — mostRecent", () => {
   it("returns null initially", () => {
     expect(createStore().mostRecent()).toBeNull();

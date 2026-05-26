@@ -45,6 +45,28 @@ export interface Spend {
   readonly clean: boolean;
 }
 
+/** Per-tier health snapshot, derived from the most-recent `tool=status`
+ * record from that tier. `available` defaults `true` (no signal = no
+ * degradation; a tier we have never polled is not "down", it is just
+ * unknown). A `status` record whose `result.available` is missing,
+ * non-boolean, or unparseable does NOT flip the flag -- only an explicit
+ * `false` does. */
+export interface TierHealth {
+  readonly available: boolean;
+  /** Wall-clock ms of the most-recent status record from this tier, or
+   * null if we have not yet seen one this session. */
+  readonly lastSeenMs: number | null;
+}
+
+/** Cascade health snapshot. `degraded` flips iff any tier's most-recent
+ * status record explicitly carried `available:false`. The visibility
+ * deficiency this closes: Phase A was built with NPU `available:false`
+ * the entire time, and the dashboard had no surface for it. */
+export interface Health {
+  readonly tiers: Readonly<Record<Tier, TierHealth>>;
+  readonly degraded: boolean;
+}
+
 export interface Store {
   /** Ingest one record from the tailer. Returns the particle iff the record
    * mapped to a known tier (so the caller knows whether to push it through
@@ -63,6 +85,8 @@ export interface Store {
   mostRecent(): { particle: Particle; record: Record<string, string> } | null;
   /** Spend snapshot. */
   spend(): Spend;
+  /** Cascade health snapshot. */
+  health(): Health;
   /** Total particles seen across all tiers (for the rate meter). */
   totalCount(): number;
 }
@@ -75,6 +99,8 @@ export interface CreateStoreOptions {
 export const WINDOW_SECONDS = 60;
 const DEFAULT_CEILING = 200;
 const CLOUD_GEN_TOOLS = new Set(["ask", "generate"]);
+const STATUS_TOOL = "status";
+const TIERS: readonly Tier[] = ["npu", "gpu", "verify", "cloud"];
 
 const SERVER_TO_TIER: ReadonlyMap<string, Tier> = new Map([
   ["edge-npu", "npu"],
@@ -101,6 +127,12 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   let cloudCalls = 0;
   let usd = 0;
   let totalParticles = 0;
+  const health: Record<Tier, { available: boolean; lastSeenMs: number | null }> = {
+    npu: { available: true, lastSeenMs: null },
+    gpu: { available: true, lastSeenMs: null },
+    verify: { available: true, lastSeenMs: null },
+    cloud: { available: true, lastSeenMs: null },
+  };
 
   function ingest(
     server: string,
@@ -132,6 +164,17 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       latencyMs,
       ok,
     };
+
+    if ((record.tool ?? "") === STATUS_TOOL) {
+      // Tool=status records are the cascade-health channel. Only an explicit
+      // boolean `available` flips the per-tier flag; anything else leaves it
+      // alone (so a malformed payload is conservatively "no signal", not a
+      // false-alarm flip). lastSeenMs always advances on a status record so
+      // panels can later show staleness.
+      const avail = extractAvailable(record.result);
+      if (avail !== null) health[tier].available = avail;
+      health[tier].lastSeenMs = tsMs;
+    }
 
     queue.push(particle);
     while (queue.length > ceiling) queue.shift();
@@ -167,6 +210,19 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       usd,
       clean: cloudCalls === 0 && usd === 0,
     }),
+    health: () => {
+      let degraded = false;
+      const tiers: Record<Tier, TierHealth> = {
+        npu: { ...health.npu },
+        gpu: { ...health.gpu },
+        verify: { ...health.verify },
+        cloud: { ...health.cloud },
+      };
+      for (const t of TIERS) {
+        if (!tiers[t].available) degraded = true;
+      }
+      return { tiers, degraded };
+    },
     totalCount: () => totalParticles,
   };
 }
@@ -176,6 +232,28 @@ function parseTsMs(raw: string | undefined): number {
   const seconds = Number.parseFloat(raw);
   if (!Number.isFinite(seconds)) return Date.now();
   return Math.round(seconds * 1000);
+}
+
+/** Pull `available` out of the JSON-encoded `result` field on a `.rec` record.
+ * Returns null when there is no usable signal (missing field, non-boolean,
+ * malformed JSON, or an absent `result`). Mirrors `extractCostUsd`'s
+ * defensive pattern -- never throws. */
+function extractAvailable(rawResult: string | undefined): boolean | null {
+  if (rawResult === undefined) return null;
+  try {
+    const parsed = JSON.parse(rawResult) as unknown;
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      "available" in parsed
+    ) {
+      const v = (parsed as { available: unknown }).available;
+      if (typeof v === "boolean") return v;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 /** Pull `est_cost_usd` out of the JSON-encoded `result` field on edge-cloud

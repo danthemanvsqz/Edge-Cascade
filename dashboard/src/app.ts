@@ -19,7 +19,12 @@ import type {
 
 import { cascadeFlowRegion } from "./flow.js";
 import { page } from "./page.js";
-import { nowPlayingRegion, rateMeterRegion, TICK } from "./panels.js";
+import {
+  cascadeHealthRegion,
+  nowPlayingRegion,
+  rateMeterRegion,
+  TICK,
+} from "./panels.js";
 import { createStore } from "./store.js";
 import type { Store } from "./store.js";
 import { createTailer } from "./lib/tailer.js";
@@ -84,6 +89,7 @@ export function createDashboardApp(
         conn,
         nowPlayingRegion,
         rateMeterRegion,
+        cascadeHealthRegion,
         cascadeFlowRegion,
       );
     },
