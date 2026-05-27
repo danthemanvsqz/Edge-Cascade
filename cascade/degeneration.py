@@ -76,14 +76,26 @@ class Thresholds:
 @dataclass(frozen=True)
 class DegenerationResult:
     """Detector verdict. `score` ∈ [0, 1] is a blended quality signal;
-    `degraded` is the boolean trip; `reasons` lists each individual trip with
-    the metric value + threshold; `features` carries the raw metrics for
-    downstream telemetry. Pure data — no I/O on the object."""
+    `degraded` is the boolean trip; `text_reasons` lists draft-quality trips
+    (looping/narrowing); `tier_reasons` lists tier-unavailability trips
+    (cascade health, not draft quality); `features` carries the raw metrics
+    for downstream telemetry. Pure data — no I/O on the object.
+
+    `reasons` is exposed as a property combining the two disjoint tuples so
+    callers / golden-replay records that consume the merged view stay working
+    (recorder, trace strings). Consumers that want only one half should read
+    `text_reasons` or `tier_reasons` directly -- the producer's contract is
+    the split, not the merged string."""
 
     degraded: bool
     score: float
-    reasons: tuple[str, ...]
+    text_reasons: tuple[str, ...] = ()
+    tier_reasons: tuple[str, ...] = ()
     features: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        return self.text_reasons + self.tier_reasons
 
 
 def text_features(text: str) -> dict[str, float]:
@@ -164,11 +176,11 @@ def check_degeneration(
     feats = text_features(text)
     text_reasons, text_score = _text_reasons(feats, thr)
     tier_reasons, tier_score = _tier_reasons(tier_availability)
-    reasons = text_reasons + tier_reasons
     score = thr.text_weight * text_score + thr.tier_weight * tier_score
     return DegenerationResult(
-        degraded=bool(reasons),
+        degraded=bool(text_reasons) or bool(tier_reasons),
         score=score,
-        reasons=reasons,
+        text_reasons=text_reasons,
+        tier_reasons=tier_reasons,
         features=feats,
     )

@@ -45,8 +45,7 @@ def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
     def repair_prompt(q, _prior, _failures, _degen=()):
         counts["repair_prompt"] += 1
         # Stash the degen tuple so warn-prompt tests can assert what mesh.solve
-        # threaded through. Empty tuple is the default when the prior was clean.
-        counts.setdefault("_last_degen", ())
+        # threaded through.
         counts["_last_degen"] = tuple(_degen)
         return f"REPAIR:{q}"
 
@@ -294,6 +293,13 @@ def test_observe_emit_none_is_a_silent_no_op():
 # A trigram-looping NPU draft -- "the cat sat" repeated trips trigram_repeat
 # (Youden's J=0.90) AND ttr (lexical narrowing). Used to force `degraded=True`
 # in tests that need a non-empty `prior_degen` to thread.
+#
+# THRESHOLD COUPLING: this fixture is calibrated against the v2 thresholds in
+# `cascade/degeneration_thresholds.json` (trigram_repeat_max=0.1372,
+# ttr_min=0.3181 as of #66). A v3 re-calibration that loosens these will
+# require regenerating this string. If `test_warn_prompt_threads_text_reasons
+# _into_repair` starts failing on `assert threaded` after a threshold bump,
+# this is the line that needs updating, not the production code.
 _LOOPING_DRAFT = "the cat sat on the mat. " * 8
 
 

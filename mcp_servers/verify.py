@@ -87,11 +87,24 @@ def verify_functional(text: str, dsl: str | None = None) -> dict:
 
 @mcp.tool()
 @recorded(_REC)
-def repair_prompt(task: str, code: str, failures: list[dict]) -> str:
+def repair_prompt(
+    task: str, code: str, failures: list[dict],
+    degen_reasons: list[str] | None = None,
+) -> str:
     """Build the model-legible repair request from validation failures.
 
     `failures`: [{expr, observed, requirement?}] -- e.g. the `failures` array
     returned by verify_functional, or a syntax failure shaped the same way.
+
+    `degen_reasons` (PD-1 v2 warn-prompt channel): optional list of
+    degeneration reasons from the prior draft (e.g. "looping: trigram_repeat
+    =0.20 > 0.14"). When present, a "PRIOR DRAFT QUALITY SIGNAL" block is
+    rendered in the repair prompt so the repair model knows what failure
+    mode to avoid. Default `None` keeps the pre-v2 behaviour byte-identical.
+    External clients driving the cascade by hand can read these reasons from
+    a `degen[<tier>]:` trace line or the `cascade-degeneration.rec` lane and
+    pass them in here -- this parity keeps the MCP cascade aligned with the
+    in-process `mesh.solve` cascade.
     """
     fs = [
         CheckFailure(
@@ -101,7 +114,10 @@ def repair_prompt(task: str, code: str, failures: list[dict]) -> str:
         )
         for f in failures
     ]
-    return build_repair_prompt(task, code, fs)
+    return build_repair_prompt(
+        task, code, fs,
+        degen_reasons=tuple(degen_reasons) if degen_reasons else (),
+    )
 
 
 if __name__ == "__main__":

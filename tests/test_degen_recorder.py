@@ -13,7 +13,7 @@ def _result(score=0.25, degraded=True, reasons=("looping: trigram_repeat=0.10 > 
     return DegenerationResult(
         degraded=degraded,
         score=score,
-        reasons=tuple(reasons),
+        text_reasons=tuple(reasons),
         features={
             "trigram_repeat": 0.1037,
             "max_sent_repeat": 2.0,

@@ -69,11 +69,14 @@ def build_repair_prompt(
     # golden replay logs see no diff.
     degen_block = ""
     if degen_reasons:
+        # Trailing "\n" preserves the section-header convention: every other
+        # block in _PROTOCOL is preceded by a blank line. Without it, the
+        # warn-prompt path glues "Avoid..." straight to "# OUTPUT CONTRACT".
         degen_block = (
             "\n# PRIOR DRAFT QUALITY SIGNAL\n"
             "The prior draft tripped these detectors:\n"
             + "\n".join(f"- {r}" for r in degen_reasons)
-            + "\nAvoid repeating tokens, identifiers, or sentences in the fix."
+            + "\nAvoid repeating tokens, identifiers, or sentences in the fix.\n"
         )
     return _PROTOCOL.format(
         task=task.strip(), code=code.strip(),

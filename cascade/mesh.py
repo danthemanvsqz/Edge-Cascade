@@ -136,13 +136,6 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             ops.observe_emit(tier_name, d)
         return d
 
-    def _text_only(reasons: tuple[str, ...]) -> tuple[str, ...]:
-        """PD-1 v2 warn-prompt: keep only the draft-quality reasons; drop
-        tier-unavailability reasons, which are about cascade health, not the
-        prior draft itself. The "tier:" prefix is the contract from
-        cascade.degeneration._tier_reasons."""
-        return tuple(r for r in reasons if not r.startswith("tier:"))
-
     def capped(rounds: int) -> Outcome:
         trace.append("-> capped->tier3 (Tier-3 takes over)")
         return Outcome(None, "capped->tier3", False, True, rounds,
@@ -181,7 +174,7 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             return won(cand.text, draft_name, 0)
         trace.append(f"{draft_name} gate FAIL: {g.reason}")
         prior, failures = cand.text, g.failures
-        prior_degen = _text_only(d.reasons)
+        prior_degen = d.text_reasons
     elif draft_tier:
         trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above})")
 
@@ -203,7 +196,7 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             trace.append("gpu gate PASS")
             return won(cand.text, "gpu", 0)
         prior, failures = cand.text, g.failures
-        prior_degen = _text_only(d.reasons)
+        prior_degen = d.text_reasons
 
     # 3) Bounded repair loop -- the DETERMINISTIC CAP. range stops at cap, so a
     #    (cap+1)'th round cannot happen, pass-or-fail.
@@ -229,6 +222,6 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             trace.append(f"gpu gate PASS (repair round {rnd})")
             return won(cand.text, "gpu", rnd)
         prior, failures = cand.text, g.failures
-        prior_degen = _text_only(d.reasons)
+        prior_degen = d.text_reasons
 
     return capped(topo.repair_cap)
