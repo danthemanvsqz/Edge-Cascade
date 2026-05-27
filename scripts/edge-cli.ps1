@@ -72,6 +72,19 @@ if (-not (Test-Path $VenvPython)) {
   throw "venv python not found at $VenvPython - run 'uv sync --extra accel --extra mcp' in $RepoRoot first"
 }
 
+# --- Phase 0: propagate main-tree NPU model dir so worktrees with empty
+# models/ still resolve. cascade/config.py reads CASCADE_NPU_MODEL_DIR if set;
+# we point it at $RepoRoot/models/qwen2.5-coder-1.5b-npu (the path lives
+# ALONGSIDE THIS SCRIPT, regardless of which ProjectDir we launch into).
+# Skipped when the user has already exported the var.
+if (-not $env:CASCADE_NPU_MODEL_DIR) {
+  $MainNpuModelDir = Join-Path $RepoRoot 'models\qwen2.5-coder-1.5b-npu'
+  if (Test-Path $MainNpuModelDir) {
+    $env:CASCADE_NPU_MODEL_DIR = $MainNpuModelDir
+    Write-Host "[edge-cli] CASCADE_NPU_MODEL_DIR=$MainNpuModelDir" -ForegroundColor DarkGray
+  }
+}
+
 # --- locate the bundled Claude Code CLI (survives extension updates) ---
 function Resolve-ClaudeCli {
   $cmd = Get-Command claude -ErrorAction SilentlyContinue
@@ -118,11 +131,13 @@ if ($wanted.Count -eq 0) { throw "no valid servers selected" }
 
 $mcpServers = @{}
 foreach ($name in $wanted) {
+  $env_dict = @{ PYTHONPATH = $RepoRoot }
+  if ($env:CASCADE_NPU_MODEL_DIR) { $env_dict.CASCADE_NPU_MODEL_DIR = $env:CASCADE_NPU_MODEL_DIR }
   $mcpServers[$name] = [ordered]@{
     command = $VenvPython
     args    = $catalog[$name]
     cwd     = $RepoRoot
-    env     = @{ PYTHONPATH = $RepoRoot }
+    env     = $env_dict
   }
 }
 $ConfigPath = Join-Path $RepoRoot 'runs\edge-local.mcp.json'

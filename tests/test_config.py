@@ -33,6 +33,17 @@ def test_skip_npu_branch(mocker):
     assert Config().npu_device_order == ("GPU.0", "CPU")  # if arm
 
 
+def test_npu_model_dir_env_override(mocker, tmp_path):
+    """CASCADE_NPU_MODEL_DIR overrides the default model path. Contract pinned
+    because edge-cli.ps1 sets this var to the main-tree models/ path before
+    launching Claude Code, so launches from worktrees (whose models/ is empty
+    by gitignore) still resolve. See scripts/edge-cli.ps1 around the
+    `CASCADE_NPU_MODEL_DIR=` Write-Host."""
+    fake = str(tmp_path / "custom-npu-model")
+    _env(mocker, CASCADE_NPU_MODEL_DIR=fake)
+    assert Config().npu_model_dir == fake
+
+
 def test_cloud_enabled_true(mocker):
     _env(mocker, ANTHROPIC_API_KEY="sk-test", CASCADE_ENABLE_CLOUD="1")
     c = Config()

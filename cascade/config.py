@@ -18,8 +18,15 @@ class Config:
     # NPU-compatible export: symmetric, channel-wise INT4 (--sym --group-size=-1).
     # The default asymmetric/group-quantized int4-ov export crashes the vpux
     # compiler; this one compiles on the NPU.
-    npu_model_dir: str = os.environ.get(
-        "CASCADE_NPU_MODEL_DIR", str(ROOT / "models" / "qwen2.5-coder-1.5b-npu")
+    # `default_factory` (not a frozen class default) so Config() re-reads the
+    # env per instantiation -- edge-cli.ps1 propagates CASCADE_NPU_MODEL_DIR
+    # before launching Claude Code so launches from worktrees (whose models/
+    # is empty by gitignore) still resolve against the main-tree models/.
+    npu_model_dir: str = field(
+        default_factory=lambda: os.environ.get(
+            "CASCADE_NPU_MODEL_DIR",
+            str(ROOT / "models" / "qwen2.5-coder-1.5b-npu"),
+        )
     )
     # Set CASCADE_SKIP_NPU=1 to skip the NPU probe entirely (it crashes on
     # models the vpux compiler can't digest; iGPU is the reliable Tier-1 path).
