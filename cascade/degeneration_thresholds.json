@@ -1,7 +1,7 @@
 {
-  "_notes": "Calibrated on PROSE corpus (persona-debate evidence) for PD-1 v1 telemetry-only use. Thresholds are aggressive against this corpus and may over-trip on code outputs -- benign in v1 (no behavior change). DO NOT ship these unchanged when PD-1 v2 acts on the signal: re-calibrate on a code corpus first.",
-  "distinct_sent_ratio_min": 0.9055,
+  "_notes": "Calibrated on a CODE corpus (PD-1 v2, evidence-branch experiment/pd1-v2-calibration-2026-05-26). Negatives = gate-PASS NPU+GPU outputs from a 15-task code battery. Positives = deterministic synthetic degeneration (loop_body / sentence_repeat / truncate_comments / trigram_explosion) seeded from those negatives. Replaces the prose calibration that over-tripped trigram_repeat on correct code drafts (see docs/FINDINGS-pd1-v1-runtime-verification.md).",
+  "distinct_sent_ratio_min": 0.6453,
   "max_sent_repeat_max": 1.0,
-  "trigram_repeat_max": 0.0367,
-  "ttr_min": 0.411
+  "trigram_repeat_max": 0.1372,
+  "ttr_min": 0.3181
 }
