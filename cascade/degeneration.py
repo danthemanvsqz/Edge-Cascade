@@ -61,11 +61,16 @@ class Thresholds:
 
     @classmethod
     def load(cls, path: Path) -> Thresholds:
-        """Read calibrated thresholds from JSON. Unknown keys are ignored so
-        future fields can be added without breaking older committed files."""
+        """Read calibrated thresholds from JSON.
+
+        Unknown keys are dropped so future fields don't break older files
+        (and so the calibration JSON can carry an in-band `_notes` field).
+        Values are coerced to `float` so a hand-edited string like "0.5"
+        doesn't propagate as a non-numeric into the detector and explode at
+        comparison time, far from the source."""
         raw = json.loads(path.read_text(encoding="utf-8"))
-        valid = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in raw.items() if k in valid})
+        valid = set(cls.__dataclass_fields__)
+        return cls(**{k: float(v) for k, v in raw.items() if k in valid})
 
 
 @dataclass(frozen=True)

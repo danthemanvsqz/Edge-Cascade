@@ -105,18 +105,44 @@ def test_thresholds_defaults():
 
 def test_thresholds_load_round_trip(tmp_path):
     """Persisted thresholds round-trip; unknown keys are ignored so future
-    fields don't break older committed files."""
+    fields (and the in-band `_notes` caveat in the calibrated JSON) don't
+    break older callers."""
     p = tmp_path / "thr.json"
     p.write_text(json.dumps({
         "trigram_repeat_max": 0.5,
         "ttr_min": 0.4,
-        "unknown_future_key": 999,         # ignored
+        "_notes": "drop me",               # dropped
+        "unknown_future_key": 999,         # dropped
     }), encoding="utf-8")
     thr = Thresholds.load(p)
     assert thr.trigram_repeat_max == 0.5
     assert thr.ttr_min == 0.4
     # Unspecified fields keep library defaults.
     assert thr.max_sent_repeat_max == 3.0
+
+
+def test_thresholds_load_coerces_to_float(tmp_path):
+    """Hand-edited JSON with a string-encoded number works -- the coerce step
+    keeps the type contract so downstream comparisons can't silently break."""
+    p = tmp_path / "thr.json"
+    p.write_text(json.dumps({"trigram_repeat_max": "0.5"}), encoding="utf-8")
+    thr = Thresholds.load(p)
+    assert thr.trigram_repeat_max == 0.5
+    assert isinstance(thr.trigram_repeat_max, float)
+
+
+def test_thresholds_load_real_committed_json():
+    """The committed calibration JSON loads cleanly with the in-band `_notes`
+    field. Pins the contract between the calibration script and the loader."""
+    from pathlib import Path as _Path
+    root = _Path(__file__).resolve().parent.parent
+    thr = Thresholds.load(root / "cascade" / "degeneration_thresholds.json")
+    # Calibrated values are in plausible ranges; specific values would
+    # over-constrain (re-calibration would force a test update).
+    assert 0.0 <= thr.trigram_repeat_max <= 1.0
+    assert 0.0 <= thr.ttr_min <= 1.0
+    assert 0.0 <= thr.distinct_sent_ratio_min <= 1.0
+    assert thr.max_sent_repeat_max >= 1.0
 
 
 # ---- check_degeneration ---------------------------------------------------
@@ -140,6 +166,15 @@ def test_check_clean_text_no_tiers_not_degraded():
     # features round-trip
     assert set(r.features) == {"trigram_repeat", "max_sent_repeat",
                                "distinct_sent_ratio", "ttr"}
+
+
+def test_check_empty_text_is_degraded():
+    """An empty draft is itself a signal: zero distinct sentences and zero TTR
+    both trip with default thresholds, so the verdict surfaces it."""
+    r = check_degeneration("")
+    assert r.degraded is True
+    assert any("narrowing: distinct_sent_ratio=" in reason for reason in r.reasons)
+    assert any("narrowing: ttr=" in reason for reason in r.reasons)
 
 
 def test_check_looping_text_trips_text_metrics():
@@ -298,14 +333,22 @@ def test_calibrate_end_to_end_synthetic():
 
 
 def test_write_thresholds_round_trip(tmp_path):
+    """The writer adds an in-band `_notes` caveat alongside the calibrated
+    floats; Thresholds.load drops `_notes` so the load path stays clean."""
     from scripts.calibrate_degeneration_thresholds import write_thresholds
     path = tmp_path / "out.json"
     payload = {"trigram_repeat_max": 0.7, "ttr_min": 0.25}
     write_thresholds(payload, path)
     loaded = json.loads(path.read_text(encoding="utf-8"))
-    assert loaded == payload
+    assert loaded["trigram_repeat_max"] == 0.7
+    assert loaded["ttr_min"] == 0.25
+    assert "_notes" in loaded and "DO NOT ship" in loaded["_notes"]
     # File ends with newline (per Edge-Cascade trim/eof hook).
     assert path.read_text(encoding="utf-8").endswith("\n")
+    # Loader drops `_notes` cleanly.
+    thr = Thresholds.load(path)
+    assert thr.trigram_repeat_max == 0.7
+    assert thr.ttr_min == 0.25
 
 
 # ---- DRY parity: debate_analysis.features() metrics ----------------------

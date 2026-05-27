@@ -91,9 +91,21 @@ def calibrate(pairs: list[tuple[str, bool]]) -> dict[str, float]:
     return out
 
 
+# In-band warning baked into the calibrated JSON. `Thresholds.load` ignores
+# unknown keys, so this travels with the file without breaking the detector.
+_NOTES = (
+    "Calibrated on PROSE corpus (persona-debate evidence) for PD-1 v1 "
+    "telemetry-only use. Thresholds are aggressive against this corpus and "
+    "may over-trip on code outputs -- benign in v1 (no behavior change). "
+    "DO NOT ship these unchanged when PD-1 v2 acts on the signal: "
+    "re-calibrate on a code corpus first."
+)
+
+
 def write_thresholds(thresholds: dict[str, float], path: Path) -> None:
+    payload: dict[str, float | str] = {"_notes": _NOTES, **thresholds}
     path.write_text(
-        json.dumps(thresholds, indent=2, sort_keys=True) + "\n",
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 

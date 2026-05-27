@@ -23,6 +23,11 @@ from cascade.degeneration import Thresholds, check_degeneration
 
 ROOT = Path(__file__).resolve().parent.parent
 _THRESHOLDS_PATH = ROOT / "cascade" / "degeneration_thresholds.json"
+# Load calibrated thresholds ONCE at module import (cheap stat + parse) rather
+# than per-solve. Falls back to library defaults if the JSON is absent (fresh
+# checkouts before calibration has run).
+_THRESHOLDS = (Thresholds.load(_THRESHOLDS_PATH)
+               if _THRESHOLDS_PATH.exists() else Thresholds())
 
 
 @dataclass(frozen=True)
@@ -104,15 +109,13 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     trace.append(
         f"route difficulty={route.difficulty:.2f} category={route.category}")
 
-    # PD-1 v1: passive observer. Load calibrated thresholds if present; snapshot
-    # tier availability once (memoized in ops.tier_status by the wiring layer).
-    # TELEMETRY ONLY -- the verdict feeds a trace line, never control flow.
-    thresholds = (Thresholds.load(_THRESHOLDS_PATH)
-                  if _THRESHOLDS_PATH.exists() else Thresholds())
+    # PD-1 v1: passive observer. Thresholds loaded once at module import; tier
+    # status snapshotted once (already memoized by wiring). TELEMETRY ONLY --
+    # the verdict feeds a trace line, never control flow.
     tiers = ops.tier_status() if ops.tier_status is not None else None
 
     def observe(tier_name: str, text: str) -> None:
-        d = check_degeneration(text, tier_availability=tiers, thresholds=thresholds)
+        d = check_degeneration(text, tier_availability=tiers, thresholds=_THRESHOLDS)
         trace.append(
             f"degen[{tier_name}]: score={d.score:.2f} reasons={list(d.reasons)}"
         )

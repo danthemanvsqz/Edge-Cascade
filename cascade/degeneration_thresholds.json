@@ -1,4 +1,5 @@
 {
+  "_notes": "Calibrated on PROSE corpus (persona-debate evidence) for PD-1 v1 telemetry-only use. Thresholds are aggressive against this corpus and may over-trip on code outputs -- benign in v1 (no behavior change). DO NOT ship these unchanged when PD-1 v2 acts on the signal: re-calibrate on a code corpus first.",
   "distinct_sent_ratio_min": 0.9055,
   "max_sent_repeat_max": 1.0,
   "trigram_repeat_max": 0.0367,
