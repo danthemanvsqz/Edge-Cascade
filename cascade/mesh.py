@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cascade import topologies
+from cascade.config import CONFIG
 from cascade.degeneration import DegenerationResult, Thresholds, check_degeneration
 
 _THRESHOLDS_PATH = Path(__file__).resolve().parent / "degeneration_thresholds.json"
@@ -201,12 +202,15 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     # 3) Bounded repair loop -- the DETERMINISTIC CAP. range stops at cap, so a
     #    (cap+1)'th round cannot happen, pass-or-fail.
     for rnd in range(1, topo.repair_cap + 1):
-        if prior_degen:
+        # PD-1 v2 warn-prompt: REVERTed to default-off (FINDINGS-pd1-v2-warn-
+        # prompt.md). Only thread degen reasons when explicitly enabled.
+        degen_for_repair = prior_degen if CONFIG.warn_prompt_enabled else ()
+        if degen_for_repair:
             trace.append(
                 f"warn-prompt[round {rnd}]: threading "
-                f"{len(prior_degen)} degen reason(s) into repair"
+                f"{len(degen_for_repair)} degen reason(s) into repair"
             )
-        rq = ops.repair_prompt(query, prior, failures, prior_degen)
+        rq = ops.repair_prompt(query, prior, failures, degen_for_repair)
         cand = ops.generate(rq)
         trace.append(f"gpu repair round {rnd} -> {len(cand.text)} chars")
         if not cand.available:
