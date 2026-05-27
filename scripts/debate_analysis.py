@@ -22,6 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
+# Pure metric helpers live in cascade.degeneration so the persona-debate
+# analyzer and the live PD-1 detector share one source of truth.
+from cascade.degeneration import _count, _sentences, _words, text_features
+
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "runs" / "experiment-debate"
 SEED = 7
@@ -65,25 +69,12 @@ class Turn:
     feats: dict = field(default_factory=dict)
 
 
-def _words(t: str) -> list[str]:
-    return re.findall(r"\w+", t.lower())
-
-
-def _sentences(t: str) -> list[str]:
-    return [re.sub(r"\s+", " ", s).strip().lower()
-            for s in re.split(r"[.!?]+", t) if s.strip()]
-
-
-def _count(text: str, terms: list[str]) -> int:
-    low = text.lower()
-    return sum(low.count(term) for term in terms)
-
-
 def features(t: Turn) -> dict:
-    words, sents = _words(t.text), _sentences(t.text)
-    nw, ns = max(len(words), 1), max(len(sents), 1)
-    tris = list(zip(words, words[1:], words[2:], strict=False))
-    sent_counts = Counter(sents)
+    # The four shared metrics (trigram_repeat / max_sent_repeat / ttr /
+    # distinct_sent_ratio) come from text_features() so this analyzer and the
+    # PD-1 detector stay in lockstep. Persona-specific metrics below.
+    nw = max(len(_words(t.text)), 1)
+    ns = max(len(_sentences(t.text)), 1)
     own = _count(t.text, MARKERS[t.speaker])
     opp = _count(t.text, MARKERS[t.opponent])
     util = _count(t.text, UTIL)
@@ -95,10 +86,7 @@ def features(t: Turn) -> dict:
     return {
         "n_words": float(nw),
         "n_sents": float(ns),
-        "distinct_sent_ratio": len(set(sents)) / ns,
-        "max_sent_repeat": float(max(sent_counts.values()) if sents else 1),
-        "trigram_repeat": (1 - len(set(tris)) / len(tris)) if tris else 0.0,
-        "ttr": len(set(words)) / nw,                      # lexical diversity
+        **text_features(t.text),
         "own_per100w": 100 * own / nw,
         "opp_per100w": 100 * opp / nw,
         "capture_ratio": opp / (own + opp) if (own + opp) else 0.0,

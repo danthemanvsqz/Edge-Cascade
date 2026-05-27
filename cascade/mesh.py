@@ -16,8 +16,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from cascade import topologies
+from cascade.degeneration import Thresholds, check_degeneration
+
+_THRESHOLDS_PATH = Path(__file__).resolve().parent / "degeneration_thresholds.json"
+# Load calibrated thresholds ONCE at module import (cheap stat + parse) rather
+# than per-solve. Falls back to library defaults if the JSON is absent (fresh
+# checkouts before calibration has run).
+_THRESHOLDS = (Thresholds.load(_THRESHOLDS_PATH)
+               if _THRESHOLDS_PATH.exists() else Thresholds())
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,11 @@ class Ops:
     # no iGPU model is configured; a topology naming "igpu" then falls back to
     # the NPU draft. Default keeps existing Ops construction backward-compatible.
     igpu_draft: Callable[[str], Candidate] | None = None
+    # Optional PD-1 input: snapshot of tier availability ({name: ok}). When None,
+    # the degeneration detector observes text-only. Memoized by the wiring layer
+    # so calling per observation site is cheap. Default keeps existing Ops
+    # construction backward-compatible.
+    tier_status: Callable[[], dict[str, bool]] | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,17 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     trace.append(
         f"route difficulty={route.difficulty:.2f} category={route.category}")
 
+    # PD-1 v1: passive observer. Thresholds loaded once at module import; tier
+    # status snapshotted once (already memoized by wiring). TELEMETRY ONLY --
+    # the verdict feeds a trace line, never control flow.
+    tiers = ops.tier_status() if ops.tier_status is not None else None
+
+    def observe(tier_name: str, text: str) -> None:
+        d = check_degeneration(text, tier_availability=tiers, thresholds=_THRESHOLDS)
+        trace.append(
+            f"degen[{tier_name}]: score={d.score:.2f} reasons={list(d.reasons)}"
+        )
+
     def capped(rounds: int) -> Outcome:
         trace.append("-> capped->tier3 (Tier-3 takes over)")
         return Outcome(None, "capped->tier3", False, True, rounds,
@@ -121,6 +146,7 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             draft_op, draft_name = ops.draft, "npu"
         cand = draft_op(query)
         trace.append(f"{draft_name} draft -> {len(cand.text)} chars")
+        observe(draft_name, cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append(f"{draft_name} gate PASS")
@@ -142,6 +168,7 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         if not cand.available:
             trace.append("gpu unavailable")
             return capped(0)
+        observe("gpu", cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append("gpu gate PASS")
@@ -157,6 +184,11 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         if not cand.available:
             trace.append("gpu unavailable")
             return capped(rnd - 1)
+        # Tier token stays a clean key ("gpu") so downstream parsers (e.g.
+        # the planned SD-2 dashboard panel) can split degen[<tier>]: by the
+        # bracket contents. The repair-round number is already in the
+        # "gpu repair round {rnd}" trace line emitted just above.
+        observe("gpu", cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append(f"gpu gate PASS (repair round {rnd})")
