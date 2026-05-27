@@ -206,3 +206,69 @@ body.dashboard {
   overflow: hidden;
 }
 .now-playing.fail .tool { color: var(--fail); }
+
+/* --- panels: degeneration (SD-2b) ----------------------------------- */
+/* One row per draft tier; bursty by design (one obs per draft, not regular
+ * cadence), so discrete bars not a smoothed line. Bars tint red on
+ * degraded=true; the `degraded` row class doubles the signal at the row
+ * level. The "tripped count" intentionally shows N/M (degraded over total)
+ * so the over-trip pattern from `FINDINGS-pd1-v1-runtime-verification.md`
+ * is visible peripherally (e.g. "4/4" is the screaming case). */
+.degen-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+}
+.degen-row {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.degen-row.degraded {
+  box-shadow: inset 0 0 0 1px var(--fail);
+}
+.degen-row .badge.tier {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: var(--grid);
+  color: var(--type-dim);
+}
+.degen-row[data-tier="npu"] .badge.tier { background: var(--tier-npu); color: var(--bg); }
+.degen-row[data-tier="gpu"] .badge.tier { background: var(--tier-gpu); color: var(--bg); }
+.degen-row[data-tier="igpu"] .badge.tier { background: var(--tier-tier3); color: var(--bg); }
+.degen-bars {
+  display: block;
+  background: var(--grid);
+  border-radius: 2px;
+}
+.degen-bar.ok { fill: var(--type-dim); }
+.degen-bar.degraded { fill: var(--fail); }
+.degen-tripped {
+  color: var(--type-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 3em;
+  text-align: right;
+}
+.degen-row.degraded .degen-tripped { color: var(--fail); font-weight: 600; }
+.degen-reason {
+  color: var(--type-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.degen-row.empty .degen-status {
+  color: var(--type-dim);
+  opacity: 0.7;
+  font-style: italic;
+}

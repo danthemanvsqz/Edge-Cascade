@@ -306,3 +306,135 @@ describe("createStore — mostRecent", () => {
     expect(store.mostRecent()?.particle.server).toBe("edge-npu");
   });
 });
+
+// SD-2b: cascade-degeneration side-lane -----------------------------------
+
+function degenRec(
+  seq: number,
+  fields: Partial<{
+    ts: string;
+    tier: string;
+    score: string;
+    degraded: string;
+    reasons: string;
+  }> = {},
+): Record<string, string> {
+  return {
+    _seq: String(seq),
+    tool: "observe",
+    ts: "1779801311.5",
+    tier: "npu",
+    score: "0.17",
+    degraded: "true",
+    reasons: '["looping: trigram_repeat=0.10 > 0.04"]',
+    ...fields,
+  };
+}
+
+describe("createStore — degen lane", () => {
+  it("ingests a cascade-degeneration record without producing a particle", () => {
+    const store = createStore();
+    const result = store.ingest("cascade-degeneration", degenRec(0));
+    expect(result).toBeNull();
+    expect(store.particles()).toEqual([]);
+    expect(store.totalCount()).toBe(0);
+  });
+
+  it("appends observations to the per-tier log in arrival order", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { tier: "npu", score: "0.17" }));
+    store.ingest("cascade-degeneration", degenRec(1, { tier: "gpu", score: "0.42" }));
+    store.ingest("cascade-degeneration", degenRec(2, { tier: "npu", score: "0.25" }));
+    expect(store.degen("npu").map((o) => o.score)).toEqual([0.17, 0.25]);
+    expect(store.degen("gpu").map((o) => o.score)).toEqual([0.42]);
+    expect(store.degen("igpu")).toEqual([]);
+  });
+
+  it("parses degraded='true'/'false' to a boolean", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { degraded: "true" }));
+    store.ingest("cascade-degeneration", degenRec(1, { degraded: "false" }));
+    const log = store.degen("npu");
+    expect(log[0]?.degraded).toBe(true);
+    expect(log[1]?.degraded).toBe(false);
+  });
+
+  it("parses reasons as a string array (JSON round-trip)", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, {
+      reasons: '["looping: trigram_repeat=0.10 > 0.04", "tier:gpu unavailable"]',
+    }));
+    expect(store.degen("npu")[0]?.reasons).toEqual([
+      "looping: trigram_repeat=0.10 > 0.04",
+      "tier:gpu unavailable",
+    ]);
+  });
+
+  it("returns an empty reasons array on malformed JSON (never throws)", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { reasons: "{not json" }));
+    expect(store.degen("npu")[0]?.reasons).toEqual([]);
+  });
+
+  it("returns an empty reasons array on a non-array JSON payload", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { reasons: '"a string"' }));
+    expect(store.degen("npu")[0]?.reasons).toEqual([]);
+  });
+
+  it("returns an empty reasons array on an array containing non-strings", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { reasons: '["ok", 42]' }));
+    expect(store.degen("npu")[0]?.reasons).toEqual([]);
+  });
+
+  it("drops records whose tier is not a recognised draft tier", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { tier: "verify" }));
+    store.ingest("cascade-degeneration", degenRec(1, { tier: "cloud" }));
+    store.ingest("cascade-degeneration", degenRec(2, { tier: "" }));
+    expect(store.degen("npu")).toEqual([]);
+    expect(store.degen("gpu")).toEqual([]);
+    expect(store.degen("igpu")).toEqual([]);
+  });
+
+  it("drops records whose score is not parseable", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { score: "" }));
+    store.ingest("cascade-degeneration", degenRec(1, { score: "NaN" }));
+    store.ingest("cascade-degeneration", degenRec(2, { score: "0.5" }));
+    expect(store.degen("npu").map((o) => o.score)).toEqual([0.5]);
+  });
+
+  it("derives tsMs from the record's ts field (seconds → ms)", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { ts: "1779801311.5" }));
+    expect(store.degen("npu")[0]?.tsMs).toBe(Math.round(1779801311.5 * 1000));
+  });
+
+  it("enforces degenCeiling per tier (oldest dropped first)", () => {
+    const store = createStore({ degenCeiling: 3 });
+    for (let i = 0; i < 5; i++) {
+      store.ingest("cascade-degeneration", degenRec(i, { score: String(i / 10) }));
+    }
+    expect(store.degen("npu").map((o) => o.score)).toEqual([0.2, 0.3, 0.4]);
+  });
+
+  it("ignores degen records for spend accounting (clean stays true)", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0));
+    expect(store.spend()).toEqual({ cloudCalls: 0, usd: 0, clean: true });
+  });
+
+  it("degen(tier) returns a snapshot, not a live reference", () => {
+    // Matches the contract of particles()/health()/spend() (all return
+    // fresh copies). A live reference would silently mutate under callers
+    // that captured a previous snapshot -- the trap PR review #65 flagged.
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { score: "0.10" }));
+    const before = store.degen("npu");
+    store.ingest("cascade-degeneration", degenRec(1, { score: "0.20" }));
+    expect(before).toHaveLength(1);
+    expect(store.degen("npu")).toHaveLength(2);
+  });
+});

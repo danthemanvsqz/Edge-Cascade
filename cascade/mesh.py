@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cascade import topologies
-from cascade.degeneration import Thresholds, check_degeneration
+from cascade.degeneration import DegenerationResult, Thresholds, check_degeneration
 
 _THRESHOLDS_PATH = Path(__file__).resolve().parent / "degeneration_thresholds.json"
 # Load calibrated thresholds ONCE at module import (cheap stat + parse) rather
@@ -76,6 +76,12 @@ class Ops:
     # so calling per observation site is cheap. Default keeps existing Ops
     # construction backward-compatible.
     tier_status: Callable[[], dict[str, bool]] | None = None
+    # Optional PD-1 v1 sink: invoked for every observation with (tier_name,
+    # DegenerationResult). Wiring binds this to a recorder writing the
+    # `runs/cascade-degeneration.rec` lane so the SD-2b dashboard panel can
+    # tail it without grepping cascade.log. Default None keeps mesh.solve
+    # pure-functional in tests (no I/O required).
+    observe_emit: Callable[[str, DegenerationResult], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,12 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         trace.append(
             f"degen[{tier_name}]: score={d.score:.2f} reasons={list(d.reasons)}"
         )
+        # Side-channel the verdict to the wired emitter (None in tests) so the
+        # SD-2b dashboard panel can tail a dedicated `.rec` lane instead of
+        # parsing trace strings. Mesh stays pure -- the I/O lives in the
+        # injected callback, not here.
+        if ops.observe_emit is not None:
+            ops.observe_emit(tier_name, d)
 
     def capped(rounds: int) -> Outcome:
         trace.append("-> capped->tier3 (Tier-3 takes over)")

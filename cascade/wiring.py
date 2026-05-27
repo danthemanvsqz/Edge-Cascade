@@ -41,7 +41,7 @@ def repair_prompt(query: str, prior: str, failures: tuple) -> str:
     return build_repair_prompt(query, prior, fails)
 
 
-def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
+def build_ops(npu, gpu, igpu=None, observe_emit=None) -> mesh.Ops:
     """Bind live NPU/GPU worker handles into `mesh.Ops`.
 
     `npu` exposes `.route`/`.draft`; `gpu` exposes `.available()`/`.generate()`.
@@ -89,5 +89,5 @@ def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
     return mesh.Ops(
         route=route, draft=draft, generate=generate,
         gate=gate, repair_prompt=repair_prompt, igpu_draft=igpu_draft,
-        tier_status=tier_status,
+        tier_status=tier_status, observe_emit=observe_emit,
     )

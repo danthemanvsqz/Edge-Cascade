@@ -253,3 +253,32 @@ def test_passive_observer_does_not_change_outcome():
     assert out_no.final_tier == out_yes.final_tier
     assert out_no.resolved == out_yes.resolved
     assert out_no.answer == out_yes.answer
+
+
+# ---- SD-2b: observe_emit side-channel ------------------------------------
+
+
+def test_observe_emit_receives_tier_and_result_per_observation():
+    """The SD-2b recorder sink is invoked once per draft/repair output, with
+    the tier name and the full DegenerationResult (so the recorder doesn't
+    have to re-parse the trace string)."""
+    from cascade.degeneration import DegenerationResult
+    sink: list[tuple[str, DegenerationResult]] = []
+    ops_base, _ = make_ops(gate_seq=[False, True])  # npu fail, gpu repair pass
+    ops = mesh.Ops(
+        route=ops_base.route, draft=ops_base.draft, generate=ops_base.generate,
+        gate=ops_base.gate, repair_prompt=ops_base.repair_prompt,
+        observe_emit=lambda tier, result: sink.append((tier, result)),
+    )
+    mesh.solve("q", "balanced", ops)
+    tiers = [t for t, _ in sink]
+    assert tiers == ["npu", "gpu"]
+    assert all(isinstance(r, DegenerationResult) for _, r in sink)
+
+
+def test_observe_emit_none_is_a_silent_no_op():
+    """The hook is OPTIONAL; tests and the in-process orchestrator may pass
+    None and the cascade still runs to completion."""
+    ops, _ = make_ops(gate_seq=[True])
+    out = mesh.solve("q", "balanced", ops)  # observe_emit defaults to None
+    assert out.resolved and out.final_tier == "npu"
