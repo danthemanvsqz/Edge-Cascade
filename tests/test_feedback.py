@@ -31,3 +31,31 @@ def test_build_prompt_note_renders_when_given():
     assert "fix it without dropping the rest" in out
     # the note sits in the FAILED CHECKS section, before the assertion list
     assert out.index("NOTE:") < out.index("1. assert: x == 1")
+
+
+def test_build_prompt_degen_reasons_render_when_given():
+    """PD-1 v2 warn-prompt: when the prior draft tripped the degen detector,
+    the reasons are rendered between FAILED CHECKS and OUTPUT CONTRACT."""
+    f = [CheckFailure("x == 1", "got 2")]
+    out = build_repair_prompt(
+        "t", "c", f,
+        degen_reasons=("looping: trigram_repeat=0.20 > 0.14",
+                       "narrowing: ttr=0.30 < 0.32"),
+    )
+    assert "# PRIOR DRAFT QUALITY SIGNAL" in out
+    assert "- looping: trigram_repeat=0.20 > 0.14" in out
+    assert "- narrowing: ttr=0.30 < 0.32" in out
+    assert "Avoid repeating tokens, identifiers, or sentences" in out
+    # Block sits AFTER failed checks, BEFORE output contract.
+    assert out.index("# FAILED CHECKS") < out.index("# PRIOR DRAFT QUALITY SIGNAL")
+    assert out.index("# PRIOR DRAFT QUALITY SIGNAL") < out.index("# OUTPUT CONTRACT")
+
+
+def test_build_prompt_no_degen_block_when_empty():
+    """When degen_reasons is empty, the prompt is byte-identical to today's
+    behaviour -- no PRIOR DRAFT QUALITY SIGNAL header, no extra blank line."""
+    f = [CheckFailure("x == 1", "got 2")]
+    with_param = build_repair_prompt("t", "c", f, degen_reasons=())
+    without_param = build_repair_prompt("t", "c", f)
+    assert with_param == without_param
+    assert "PRIOR DRAFT QUALITY SIGNAL" not in with_param

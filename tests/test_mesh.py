@@ -42,8 +42,12 @@ def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
         return GateInfo(passed, () if passed else ("boom",),
                         "" if passed else "gate fail")
 
-    def repair_prompt(q, _prior, _failures):
+    def repair_prompt(q, _prior, _failures, _degen=()):
         counts["repair_prompt"] += 1
+        # Stash the degen tuple so warn-prompt tests can assert what mesh.solve
+        # threaded through. Empty tuple is the default when the prior was clean.
+        counts.setdefault("_last_degen", ())
+        counts["_last_degen"] = tuple(_degen)
         return f"REPAIR:{q}"
 
     igpu_draft = None
@@ -282,3 +286,54 @@ def test_observe_emit_none_is_a_silent_no_op():
     ops, _ = make_ops(gate_seq=[True])
     out = mesh.solve("q", "balanced", ops)  # observe_emit defaults to None
     assert out.resolved and out.final_tier == "npu"
+
+
+# ---- PD-1 v2 warn-prompt action lever -------------------------------------
+
+
+# A trigram-looping NPU draft -- "the cat sat" repeated trips trigram_repeat
+# (Youden's J=0.90) AND ttr (lexical narrowing). Used to force `degraded=True`
+# in tests that need a non-empty `prior_degen` to thread.
+_LOOPING_DRAFT = "the cat sat on the mat. " * 8
+
+
+def test_warn_prompt_threads_text_reasons_into_repair():
+    """When the NPU draft is degraded, mesh.solve must pass the text-only
+    degeneration reasons as the 4th arg to ops.repair_prompt so the repair
+    model knows what failure mode to avoid (PD-1 v2 warn-prompt lever)."""
+    ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    # Degen reasons were captured and threaded -- "looping:" or "narrowing:"
+    # depending on which v2 metric tripped; tier reasons must NOT appear.
+    threaded = c["_last_degen"]
+    assert threaded, "expected non-empty degen reasons threaded into repair"
+    assert all(r.startswith(("looping:", "narrowing:")) for r in threaded)
+    # And the trace records the warn-prompt action so the dashboard can count it.
+    assert any(line.startswith("warn-prompt[round 1]:") for line in out.trace)
+
+
+def test_warn_prompt_threads_empty_when_prior_was_clean():
+    """If the prior draft was clean (no text metric tripped), prior_degen is
+    `()` and the repair prompt is byte-identical to today's behaviour."""
+    ops, c = make_ops(draft_text="def f(): return 1", gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    assert c["_last_degen"] == ()
+    # No warn-prompt trace line emitted when there are no reasons to thread.
+    assert not any(line.startswith("warn-prompt") for line in out.trace)
+
+
+def test_warn_prompt_filters_tier_only_reasons():
+    """A tier-unavailability reason ('tier:gpu unavailable') is about cascade
+    health, not the prior draft -- it must NOT show up in the warn-prompt.
+    Clean draft text + a tier-down signal -> empty `prior_degen`."""
+    ops_base, c = make_ops(draft_text="x = 1", gate_seq=[False, True])
+    ops = mesh.Ops(
+        route=ops_base.route, draft=ops_base.draft, generate=ops_base.generate,
+        gate=ops_base.gate, repair_prompt=ops_base.repair_prompt,
+        igpu_draft=ops_base.igpu_draft,
+        tier_status=lambda: {"npu": True, "gpu": False},
+    )
+    mesh.solve("q", "balanced", ops)
+    assert c["_last_degen"] == ()

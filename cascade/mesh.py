@@ -66,7 +66,11 @@ class Ops:
     draft: Callable[[str], Candidate]                 # Tier-1 NPU draft (1.5B)
     generate: Callable[[str], Candidate]              # Tier-2 GPU generate
     gate: Callable[[str], GateInfo]                   # verify (syntax [+ functional])
-    repair_prompt: Callable[[str, str, tuple], str]   # (query, prior, failures) -> next query
+    # PD-1 v2 warn-prompt: the 4th arg carries the prior draft's text-only
+    # degeneration reasons (empty when the prior was clean). Threaded into the
+    # repair prompt so the repair model knows what failure mode to avoid.
+    # (query, prior, failures, degen) -> next query
+    repair_prompt: Callable[[str, str, tuple, tuple], str]
     # Optional Tier-1b: a larger draft model on the Intel iGPU (3B). None when
     # no iGPU model is configured; a topology naming "igpu" then falls back to
     # the NPU draft. Default keeps existing Ops construction backward-compatible.
@@ -119,7 +123,7 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     # the verdict feeds a trace line, never control flow.
     tiers = ops.tier_status() if ops.tier_status is not None else None
 
-    def observe(tier_name: str, text: str) -> None:
+    def observe(tier_name: str, text: str) -> DegenerationResult:
         d = check_degeneration(text, tier_availability=tiers, thresholds=_THRESHOLDS)
         trace.append(
             f"degen[{tier_name}]: score={d.score:.2f} reasons={list(d.reasons)}"
@@ -130,6 +134,14 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         # injected callback, not here.
         if ops.observe_emit is not None:
             ops.observe_emit(tier_name, d)
+        return d
+
+    def _text_only(reasons: tuple[str, ...]) -> tuple[str, ...]:
+        """PD-1 v2 warn-prompt: keep only the draft-quality reasons; drop
+        tier-unavailability reasons, which are about cascade health, not the
+        prior draft itself. The "tier:" prefix is the contract from
+        cascade.degeneration._tier_reasons."""
+        return tuple(r for r in reasons if not r.startswith("tier:"))
 
     def capped(rounds: int) -> Outcome:
         trace.append("-> capped->tier3 (Tier-3 takes over)")
@@ -146,6 +158,10 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     #    falls back to the NPU draft. Skipped above skip_draft_above (npu:0).
     prior: str | None = None
     failures: tuple = ()
+    # PD-1 v2 warn-prompt: text-only degeneration reasons from the most recent
+    # gated draft, threaded into the next repair_prompt call. Empty when the
+    # draft was clean or no observation has happened yet.
+    prior_degen: tuple[str, ...] = ()
     draft_tier = next((t for t in topo.ladder if t in ("npu", "igpu")), None)
     skip = (topo.skip_draft_above is not None
             and route.difficulty >= topo.skip_draft_above)
@@ -158,13 +174,14 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             draft_op, draft_name = ops.draft, "npu"
         cand = draft_op(query)
         trace.append(f"{draft_name} draft -> {len(cand.text)} chars")
-        observe(draft_name, cand.text)
+        d = observe(draft_name, cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append(f"{draft_name} gate PASS")
             return won(cand.text, draft_name, 0)
         trace.append(f"{draft_name} gate FAIL: {g.reason}")
         prior, failures = cand.text, g.failures
+        prior_degen = _text_only(d.reasons)
     elif draft_tier:
         trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above})")
 
@@ -180,17 +197,23 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         if not cand.available:
             trace.append("gpu unavailable")
             return capped(0)
-        observe("gpu", cand.text)
+        d = observe("gpu", cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append("gpu gate PASS")
             return won(cand.text, "gpu", 0)
         prior, failures = cand.text, g.failures
+        prior_degen = _text_only(d.reasons)
 
     # 3) Bounded repair loop -- the DETERMINISTIC CAP. range stops at cap, so a
     #    (cap+1)'th round cannot happen, pass-or-fail.
     for rnd in range(1, topo.repair_cap + 1):
-        rq = ops.repair_prompt(query, prior, failures)
+        if prior_degen:
+            trace.append(
+                f"warn-prompt[round {rnd}]: threading "
+                f"{len(prior_degen)} degen reason(s) into repair"
+            )
+        rq = ops.repair_prompt(query, prior, failures, prior_degen)
         cand = ops.generate(rq)
         trace.append(f"gpu repair round {rnd} -> {len(cand.text)} chars")
         if not cand.available:
@@ -200,11 +223,12 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         # the planned SD-2 dashboard panel) can split degen[<tier>]: by the
         # bracket contents. The repair-round number is already in the
         # "gpu repair round {rnd}" trace line emitted just above.
-        observe("gpu", cand.text)
+        d = observe("gpu", cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append(f"gpu gate PASS (repair round {rnd})")
             return won(cand.text, "gpu", rnd)
         prior, failures = cand.text, g.failures
+        prior_degen = _text_only(d.reasons)
 
     return capped(topo.repair_cap)

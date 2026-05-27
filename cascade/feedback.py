@@ -31,7 +31,7 @@ You are repairing code that failed automated validation. Fix it.
 # FAILED CHECKS
 {note}Each item is an assertion that MUST hold true. It failed as shown.
 {failures}
-
+{degen}
 # OUTPUT CONTRACT
 Return the complete corrected program as exactly ONE Python code block:
 ```python
@@ -45,7 +45,8 @@ Rules:
 
 
 def build_repair_prompt(
-    task: str, code: str, failures: list[CheckFailure], note: str = ""
+    task: str, code: str, failures: list[CheckFailure], note: str = "",
+    degen_reasons: tuple[str, ...] = (),
 ) -> str:
     blocks = []
     for i, f in enumerate(failures, 1):
@@ -61,7 +62,21 @@ def build_repair_prompt(
         f"larger program; fix it without dropping the rest.\n"
         if note else ""
     )
+    # PD-1 v2 warn-prompt: when the prior draft tripped the degeneration
+    # detector, tell the repair model what failure mode to avoid. The {degen}
+    # placeholder is empty when no reasons are passed -- the resulting prompt
+    # is byte-identical to the pre-v2 behaviour, so existing callers and
+    # golden replay logs see no diff.
+    degen_block = ""
+    if degen_reasons:
+        degen_block = (
+            "\n# PRIOR DRAFT QUALITY SIGNAL\n"
+            "The prior draft tripped these detectors:\n"
+            + "\n".join(f"- {r}" for r in degen_reasons)
+            + "\nAvoid repeating tokens, identifiers, or sentences in the fix."
+        )
     return _PROTOCOL.format(
         task=task.strip(), code=code.strip(),
         note=note_line, failures="\n".join(blocks),
+        degen=degen_block,
     )

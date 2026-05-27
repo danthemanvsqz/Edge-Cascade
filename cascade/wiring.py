@@ -32,13 +32,18 @@ def gate(text: str) -> mesh.GateInfo:
     return mesh.GateInfo(False, (fail,), v.reason)
 
 
-def repair_prompt(query: str, prior: str, failures: tuple) -> str:
+def repair_prompt(
+    query: str, prior: str, failures: tuple, degen_reasons: tuple = (),
+) -> str:
     """Build the model-legible repair request (cascade.feedback) from the
-    gate's failures, defaulting to a generic note if none were supplied."""
+    gate's failures, defaulting to a generic note if none were supplied.
+    `degen_reasons` is the PD-1 v2 warn-prompt channel: text-only degeneration
+    reasons from the prior draft, threaded into the repair prompt so the
+    repair model knows what failure mode to avoid."""
     fails = list(failures) or [
         CheckFailure("verification", "the previous answer failed the gate", "")
     ]
-    return build_repair_prompt(query, prior, fails)
+    return build_repair_prompt(query, prior, fails, degen_reasons=degen_reasons)
 
 
 def build_ops(npu, gpu, igpu=None, observe_emit=None) -> mesh.Ops:
