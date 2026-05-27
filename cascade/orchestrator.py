@@ -33,6 +33,7 @@ from pathlib import Path
 from . import mesh, topologies
 from .cloud_worker import make_cloud_worker, reason_note
 from .config import CONFIG
+from .degen_recorder import make_degen_recorder
 from .gpu_worker import make_gpu_worker
 from .logfmt import dump_record
 from .npu_worker import make_npu_worker
@@ -139,7 +140,12 @@ def cascade_session(
     def done(t0: float, tier: str, note: str, dt: float) -> None:
         log(t0, f"<< {tier:<7} {note}  ({dt:.2f}s)")
 
-    ops = build_ops(npu, gpu)
+    # PD-1 v1 → SD-2b: dedicated .rec lane for degeneration observations. One
+    # recorder per session (run_id + seq live in its closure); mesh.solve calls
+    # it via the observe_emit op for each draft/repair output.
+    degen_path = log_path.parent / "cascade-degeneration.rec"
+    degen_emit = make_degen_recorder(degen_path)
+    ops = build_ops(npu, gpu, observe_emit=degen_emit)
 
     def run_pipeline(
         query: str, topology: str = topologies.DEFAULT_TOPOLOGY

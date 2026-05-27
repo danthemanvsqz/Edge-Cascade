@@ -21,11 +21,12 @@ import { cascadeFlowRegion } from "./flow.js";
 import { page } from "./page.js";
 import {
   cascadeHealthRegion,
+  degenPanelRegion,
   nowPlayingRegion,
   rateMeterRegion,
   TICK,
 } from "./panels.js";
-import { createStore } from "./store.js";
+import { createStore, DEGEN_SERVER } from "./store.js";
 import type { Store } from "./store.js";
 import { createTailer } from "./lib/tailer.js";
 import type { Tailer } from "./lib/tailer.js";
@@ -77,11 +78,11 @@ export function createDashboardApp(
     startFromEof: options.startFromEof,
     onRecord: ({ server, record }) => {
       const particle = store.ingest(server, record);
-      // A record from an unknown lane (e.g. experiment-*) still changes the
-      // store iff it was an edge-cloud spend event -- but those are caught
-      // by serverToTier inside ingest, and unknown lanes don't touch state
-      // at all. So only emit when a particle was produced.
-      if (particle !== null) hub.emit(TICK);
+      // Emit on (a) any particle (the live cascade-flow + rate meter need
+      // it) OR (b) any degen-lane record (SD-2b panel paints from a side
+      // queue that `ingest` populates but doesn't surface via the return
+      // value). Experiment lanes and unknown servers still emit nothing.
+      if (particle !== null || server === DEGEN_SERVER) hub.emit(TICK);
     },
   });
 
@@ -96,6 +97,7 @@ export function createDashboardApp(
         rateMeterRegion,
         cascadeHealthRegion,
         cascadeFlowRegion,
+        degenPanelRegion,
       );
     },
     onMessage: () => {

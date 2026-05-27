@@ -17,6 +17,29 @@
 
 export type Tier = "npu" | "gpu" | "verify" | "cloud";
 
+/** Tiers that actually produce drafted output (and therefore degeneration
+ * observations). The verify tier is a gate, the cloud tier is escalation;
+ * neither runs through `cascade.mesh.solve`'s PD-1 observer. */
+export type DegenTier = "npu" | "gpu" | "igpu";
+
+/** One PD-1 v1 observation as the dashboard sees it. Mirrors the field shape
+ * written by `cascade.degen_recorder.make_degen_recorder`. Field types match
+ * the parsed `.rec` projection (strings → numbers/bools at ingest time so the
+ * panel doesn't reparse on every render). */
+export interface DegenObservation {
+  /** Wall-clock ms (derived from the record's `ts`, same fallback rules as
+   * `Particle.tsMs`). */
+  readonly tsMs: number;
+  readonly tier: DegenTier;
+  /** Blended quality signal in [0, 1] — 0 clean, 1 every metric tripped. */
+  readonly score: number;
+  /** Trip flag — true iff any text metric or tier-availability check fires. */
+  readonly degraded: boolean;
+  /** Human-legible reason tags from the detector. May be empty when
+   * `degraded` is false. */
+  readonly reasons: readonly string[];
+}
+
 /** A particle is the dashboard's view of a single `.rec` record: just the
  * fields the cascade-flow SVG renders + enough provenance to derive a stable
  * DOM id. */
@@ -87,6 +110,10 @@ export interface Store {
   spend(): Spend;
   /** Cascade health snapshot. */
   health(): Health;
+  /** Per-tier degeneration history (oldest → newest). Bounded by
+   * `degenCeiling`. Empty when no PD-1 observation has been seen yet for
+   * `tier`. */
+  degen(tier: DegenTier): readonly DegenObservation[];
   /** Total particles seen across all tiers (for the rate meter). */
   totalCount(): number;
 }
@@ -94,10 +121,20 @@ export interface Store {
 export interface CreateStoreOptions {
   /** Max particles retained in the queue. Default 200. */
   readonly particleCeiling?: number;
+  /** Max degeneration observations retained per tier. Default 60. The
+   * SD-2b panel renders a score-history bar with one slot per observation,
+   * so 60 is "newest first 60 obs since session start." */
+  readonly degenCeiling?: number;
 }
 
 export const WINDOW_SECONDS = 60;
 const DEFAULT_CEILING = 200;
+const DEFAULT_DEGEN_CEILING = 60;
+/** The server name written by `cascade.degen_recorder` — the dashboard side
+ * lane for PD-1 observations. Exported so callers wiring TICK emission can
+ * recognise these records as "accepted but not a particle". */
+export const DEGEN_SERVER = "cascade-degeneration";
+const DEGEN_TIERS: readonly DegenTier[] = ["npu", "gpu", "igpu"];
 const CLOUD_GEN_TOOLS = new Set(["ask", "generate"]);
 const STATUS_TOOL = "status";
 const TIERS: readonly Tier[] = ["npu", "gpu", "verify", "cloud"];
@@ -115,6 +152,7 @@ export function serverToTier(server: string): Tier | null {
 
 export function createStore(options: CreateStoreOptions = {}): Store {
   const ceiling = options.particleCeiling ?? DEFAULT_CEILING;
+  const degenCeiling = options.degenCeiling ?? DEFAULT_DEGEN_CEILING;
   const queue: Particle[] = [];
   const buckets: Record<Tier, Map<number, number>> = {
     npu: new Map(),
@@ -133,6 +171,11 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     verify: { available: true, lastSeenMs: null },
     cloud: { available: true, lastSeenMs: null },
   };
+  const degenLog: Record<DegenTier, DegenObservation[]> = {
+    npu: [],
+    gpu: [],
+    igpu: [],
+  };
 
   function ingest(
     server: string,
@@ -145,6 +188,15 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       if (CLOUD_GEN_TOOLS.has(tool)) cloudCalls += 1;
       const cost = extractCostUsd(record.result);
       if (cost > 0) usd += cost;
+    }
+
+    // SD-2b: degeneration lane is a side-channel, not a particle producer.
+    // The panel reads from `degen(tier)`; the cascade-flow SVG and rate
+    // meter never see these records. `app.ts` watches `server` directly
+    // (not the return value) to know whether to fire TICK.
+    if (server === DEGEN_SERVER) {
+      ingestDegen(record);
+      return null;
     }
 
     const tier = serverToTier(server);
@@ -189,6 +241,23 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     return particle;
   }
 
+  function ingestDegen(record: Record<string, string>): void {
+    const tier = record.tier;
+    if (!isDegenTier(tier)) return;
+    const score = Number.parseFloat(record.score ?? "");
+    if (!Number.isFinite(score)) return;
+    const obs: DegenObservation = {
+      tsMs: parseTsMs(record.ts),
+      tier,
+      score,
+      degraded: record.degraded === "true",
+      reasons: parseReasons(record.reasons),
+    };
+    const log = degenLog[tier];
+    log.push(obs);
+    while (log.length > degenCeiling) log.shift();
+  }
+
   function sparkline(tier: Tier, nowMs: number): readonly number[] {
     const endBucket = Math.floor(nowMs / 1000);
     const out: number[] = new Array(WINDOW_SECONDS) as number[];
@@ -223,8 +292,29 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       }
       return { tiers, degraded };
     },
+    degen: (tier: DegenTier) => degenLog[tier],
     totalCount: () => totalParticles,
   };
+}
+
+function isDegenTier(s: string | undefined): s is DegenTier {
+  return s !== undefined && (DEGEN_TIERS as readonly string[]).includes(s);
+}
+
+/** Parse the JSON-encoded reasons array. Returns an empty list on any
+ * unparseable payload — a malformed reasons field downgrades the obs to
+ * "no annotation", never throws. Mirrors `extractAvailable` defensiveness. */
+function parseReasons(raw: string | undefined): readonly string[] {
+  if (raw === undefined) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+      return parsed as readonly string[];
+    }
+  } catch {
+    return [];
+  }
+  return [];
 }
 
 function parseTsMs(raw: string | undefined): number {

@@ -11,6 +11,7 @@ import { createDashboardApp } from "../src/app.js";
 import { cascadeFlowRegion } from "../src/flow.js";
 import {
   cascadeHealthRegion,
+  degenPanelRegion,
   nowPlayingRegion,
   rateMeterRegion,
   TICK,
@@ -71,6 +72,7 @@ describe("page render", () => {
     expect(html).toContain('id="vinyl-r-rate-meter"');
     expect(html).toContain('id="vinyl-r-cascade-flow"');
     expect(html).toContain('id="vinyl-r-cascade-health"');
+    expect(html).toContain('id="vinyl-r-degen-panel"');
     // The static topology lives inline in the initial paint (no live-region
     // wrapper) so search engines / curl see the architecture even pre-WS.
     expect(html).toContain('class="topology"');
@@ -173,8 +175,8 @@ describe("cascadeHealthRegion", () => {
 describe("tailer -> hub wiring", () => {
   it("emits TICK and pushes OOB frames to subscribers after an ingested record", async () => {
     const conn = mockConn(app.ctx);
-    // Mirror what app.ts onConnect actually subscribes (4 regions after
-    // SD-2 added cascade-health).
+    // Mirror what app.ts onConnect actually subscribes (5 regions after
+    // SD-2b added degen-panel).
     app.ctx.hub.subscribe(
       TICK,
       conn,
@@ -182,6 +184,7 @@ describe("tailer -> hub wiring", () => {
       rateMeterRegion,
       cascadeHealthRegion,
       cascadeFlowRegion,
+      degenPanelRegion,
     );
 
     await fs.writeFile(
@@ -195,16 +198,40 @@ describe("tailer -> hub wiring", () => {
     expect(elements).toBeDefined();
     // Each subscribed region contributes one OOB string per emit (slice 5
     // added now-playing + rate-meter; slice 6 added cascade-flow; SD-2
-    // added cascade-health).
-    expect(elements?.length).toBe(4);
+    // added cascade-health; SD-2b added degen-panel).
+    expect(elements?.length).toBe(5);
     // The frames carry the region IDs the htmx-ws contract expects.
     const allFrames = (elements ?? []).join("");
     expect(allFrames).toContain('id="vinyl-r-now-playing"');
     expect(allFrames).toContain('id="vinyl-r-rate-meter"');
     expect(allFrames).toContain('id="vinyl-r-cascade-flow"');
     expect(allFrames).toContain('id="vinyl-r-cascade-health"');
+    expect(allFrames).toContain('id="vinyl-r-degen-panel"');
     // And the newly rendered nowPlaying reflects the just-ingested record.
     expect(allFrames).toContain(">generate<");
+  });
+
+  it("emits TICK on a cascade-degeneration record even though it is not a particle", async () => {
+    const conn = mockConn(app.ctx);
+    app.ctx.hub.subscribe(TICK, conn, degenPanelRegion);
+
+    await fs.writeFile(
+      join(runsDir, "cascade-degeneration.rec"),
+      dumpRecord(0, {
+        tool: "observe",
+        ts: "100",
+        tier: "npu",
+        score: "0.17",
+        degraded: "true",
+        reasons: '["looping: trigram_repeat=0.10 > 0.04"]',
+      }),
+    );
+    await app.tailer.tick();
+
+    expect(conn.pushed.length).toBe(1);
+    // The store recorded the observation -- the panel reads from this.
+    expect(app.ctx.store.degen("npu")).toHaveLength(1);
+    expect(app.ctx.store.degen("npu")[0]?.score).toBe(0.17);
   });
 
   it("does NOT emit when an unknown-server record arrives (experiment lane)", async () => {
@@ -263,5 +290,84 @@ describe("tailer -> hub wiring", () => {
     expect(app.ctx.hub.size).toBe(1);
     app.ctx.hub.remove(conn);
     expect(app.ctx.hub.size).toBe(0);
+  });
+});
+
+describe("degenPanelRegion", () => {
+  function ingestDegen(
+    tier: string,
+    score: string,
+    degraded: string,
+    reasons: string,
+    seq: number,
+  ): void {
+    app.ctx.store.ingest("cascade-degeneration", {
+      _seq: String(seq),
+      tool: "observe",
+      ts: "100",
+      tier,
+      score,
+      degraded,
+      reasons,
+    });
+  }
+
+  it("renders an empty row per draft tier when no observations have arrived", () => {
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    for (const t of ["npu", "gpu", "igpu"]) {
+      expect(html).toContain(`data-tier="${t}"`);
+    }
+    expect(html).toContain("no obs yet");
+    expect(html).not.toContain("degen-row degraded");
+  });
+
+  it("paints a row to `degraded` when the most recent obs is degraded", () => {
+    ingestDegen("npu", "0.17", "true", '["looping: trigram_repeat=0.10 > 0.04"]', 0);
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    expect(html).toMatch(/degen-row degraded[^"]*"[^>]*data-tier="npu"/);
+    // The most recent reason tag is surfaced verbatim so the over-trip
+    // warning from FINDINGS-pd1-v1-runtime-verification is legible.
+    expect(html).toContain("looping: trigram_repeat=0.10 &gt; 0.04");
+  });
+
+  it("paints the row as `ok` when the most recent obs is clean (even after earlier degraded)", () => {
+    ingestDegen("npu", "0.42", "true", '["looping: trigram_repeat=0.10 > 0.04"]', 0);
+    ingestDegen("npu", "0.00", "false", "[]", 1);
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    expect(html).toMatch(/degen-row ok[^"]*"[^>]*data-tier="npu"/);
+  });
+
+  it("shows N/M where N is degraded count and M is total observations for the tier", () => {
+    ingestDegen("npu", "0.17", "true", "[]", 0);
+    ingestDegen("npu", "0.25", "true", "[]", 1);
+    ingestDegen("npu", "0.00", "false", "[]", 2);
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    expect(html).toContain(">2/3<");
+  });
+
+  it("emits one <rect> per observation in the bars SVG (newest right)", () => {
+    for (let i = 0; i < 4; i++) {
+      ingestDegen("gpu", "0.5", "true", "[]", i);
+    }
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    // 4 obs → 4 rects in the gpu row (one per data point). Each is a 1-wide bar.
+    const rectMatches = html.match(/<rect[^>]*class="degen-bar/g) ?? [];
+    // 4 from gpu only (npu and igpu have no obs ⇒ empty rows ⇒ no SVG).
+    expect(rectMatches.length).toBe(4);
+  });
+
+  it("tints clean bars vs degraded bars distinctly", () => {
+    ingestDegen("npu", "0.50", "false", "[]", 0);
+    ingestDegen("npu", "0.50", "true", "[]", 1);
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    expect(html).toContain("degen-bar ok");
+    expect(html).toContain("degen-bar degraded");
+  });
+
+  it("falls back to a `degraded`/`clean` placeholder when the obs carried no reasons", () => {
+    ingestDegen("gpu", "0.17", "true", "[]", 0);
+    const html = renderToString(degenPanelRegion.render(app.ctx));
+    // Most-recent reason placeholder when reasons[] is empty but degraded=true.
+    expect(html).toContain(">degraded<");
   });
 });

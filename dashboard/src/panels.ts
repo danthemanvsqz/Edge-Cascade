@@ -10,7 +10,7 @@ import { h, liveRegion } from "@danthemanvsqz/vinyl";
 import type { LiveRegion, VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import type { Tier } from "./store.js";
+import type { DegenObservation, DegenTier, Tier } from "./store.js";
 
 /** The single signal that drives every region (for now). */
 export const TICK = "tick";
@@ -81,6 +81,98 @@ export const cascadeHealthRegion: LiveRegion<DashContext> = liveRegion(
     );
   },
 );
+
+/** SD-2b: PD-1 v1 degeneration panel. One row per draft tier (NPU/GPU/iGPU);
+ * each row paints (a) a score-history bar — discrete vertical bars, oldest
+ * left, newest right; height = score in [0,1]; degraded obs are tinted
+ * red — (b) a "tripped count" of degraded observations this session, and
+ * (c) the most recent reason tag. Reads only the store; pure derivation.
+ *
+ * Why discrete bars not a smoothed sparkline: PD-1 observations are bursty
+ * (one per draft, ~3–5 per solve), not regular-cadence. Honestly
+ * rendering the burstiness keeps the over-trip noise instructive —
+ * `docs/FINDINGS-pd1-v1-runtime-verification.md` proved the thresholds
+ * are prose-calibrated and over-trip on code, so the visible warning is
+ * itself the value. */
+const DEGEN_PANEL_TIERS: readonly DegenTier[] = ["npu", "gpu", "igpu"];
+
+export const degenPanelRegion: LiveRegion<DashContext> = liveRegion(
+  "degen-panel",
+  (ctx) => {
+    return h(
+      "div",
+      { class: "degen-panel" },
+      ...DEGEN_PANEL_TIERS.map((t) => degenRow(ctx, t)),
+    );
+  },
+);
+
+function degenRow(ctx: DashContext, tier: DegenTier): VNode {
+  const obs = ctx.store.degen(tier);
+  if (obs.length === 0) {
+    return h(
+      "div",
+      { class: "degen-row empty", "data-tier": tier },
+      h("span", { class: "badge tier" }, tier),
+      h("span", { class: "degen-status" }, "no obs yet"),
+    );
+  }
+  const trippedCount = obs.reduce(
+    (n, o) => (o.degraded ? n + 1 : n),
+    0,
+  );
+  const last = obs[obs.length - 1]!;
+  const lastReason = last.reasons[0] ?? (last.degraded ? "degraded" : "clean");
+  const rowCls = last.degraded ? "degen-row degraded" : "degen-row ok";
+  return h(
+    "div",
+    { class: rowCls, "data-tier": tier },
+    h("span", { class: "badge tier" }, tier),
+    degenBars(obs),
+    h(
+      "span",
+      { class: "degen-tripped", title: "degraded observations this session" },
+      `${String(trippedCount)}/${String(obs.length)}`,
+    ),
+    h("code", { class: "degen-reason" }, lastReason),
+  );
+}
+
+/** Score-history bars as ONE inline SVG. Geometry is fixed (60 wide, 20
+ * tall) so the row layout is stable regardless of how many obs are in the
+ * log. Each bar is 1 unit wide with 1 unit gap; the log occupies the
+ * rightmost slots so the newest bar is always at x≈58. */
+function degenBars(obs: readonly DegenObservation[]): VNode {
+  const W = 60;
+  const H = 20;
+  const slotW = 2; // 1px bar + 1px gap
+  const slots = Math.floor(W / slotW); // 30 slots in a 60-wide region
+  const visible = obs.slice(-slots);
+  const startX = W - visible.length * slotW;
+  return h(
+    "svg",
+    {
+      class: "degen-bars",
+      viewBox: `0 0 ${String(W)} ${String(H)}`,
+      width: String(W),
+      height: String(H),
+      "aria-hidden": "true",
+    },
+    ...visible.map((o, i) => {
+      const x = startX + i * slotW;
+      const barH = Math.max(1, Math.round(o.score * H));
+      const y = H - barH;
+      const cls = o.degraded ? "degen-bar degraded" : "degen-bar ok";
+      return h("rect", {
+        class: cls,
+        x: String(x),
+        y: String(y),
+        width: "1",
+        height: String(barH),
+      });
+    }),
+  );
+}
 
 /** Spend badge: red iff the local-only invariant has been broken. Standalone
  * so the SVG header can drop it next to the rate meter without recomputing. */
