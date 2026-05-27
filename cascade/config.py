@@ -173,6 +173,17 @@ class Config:
     repair_cap: int = field(
         default_factory=lambda: int(os.environ.get("CASCADE_REPAIR_CAP", "2"))
     )
+    # PD-1 v2 warn-prompt action lever. When True, cascade.mesh.solve threads
+    # the prior draft's text-only degeneration reasons (looping / narrowing /
+    # ...) into the next repair_prompt call so the repair model knows what
+    # failure mode to avoid. REVERTed to default-off by the v2 A/B sweep
+    # (docs/FINDINGS-pd1-v2-warn-prompt.md: P(trt>ctrl)=0.000, -4.4 pp pooled,
+    # -6.2 pp on the only mid-regime subject). The wiring is preserved so the
+    # experiment opt-in (scripts/warn_prompt_validation_v2.py) and any future
+    # ablation can still drive it. Tune via CASCADE_WARN_PROMPT_ENABLED=1.
+    warn_prompt_enabled: bool = field(
+        default_factory=lambda: os.environ.get("CASCADE_WARN_PROMPT_ENABLED") == "1"
+    )
     # difficulty < this  -> Tier-1 (NPU/iGPU) draft handles it
     # [this, cloud)       -> Tier-2 (NVIDIA GPU)
     # >= cloud            -> Tier-3 (cloud), skipping the GPU

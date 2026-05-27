@@ -8,11 +8,19 @@ more -- the policy breach from the 2026-05-20 log review cannot recur.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
 from cascade import mesh, topologies
 from cascade.mesh import Candidate, GateInfo, Ops, RouteInfo
+
+
+def _enable_warn_prompt(monkeypatch):
+    """Flip CONFIG.warn_prompt_enabled=True for the duration of one test.
+    The PD-1 v2 finding REVERTed warn-prompt to default-off; tests that exercise
+    the threading path must opt in."""
+    monkeypatch.setattr(mesh, "CONFIG", replace(mesh.CONFIG, warn_prompt_enabled=True))
 
 
 def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
@@ -303,10 +311,12 @@ def test_observe_emit_none_is_a_silent_no_op():
 _LOOPING_DRAFT = "the cat sat on the mat. " * 8
 
 
-def test_warn_prompt_threads_text_reasons_into_repair():
-    """When the NPU draft is degraded, mesh.solve must pass the text-only
-    degeneration reasons as the 4th arg to ops.repair_prompt so the repair
-    model knows what failure mode to avoid (PD-1 v2 warn-prompt lever)."""
+def test_warn_prompt_threads_text_reasons_into_repair(monkeypatch):
+    """When the NPU draft is degraded AND warn-prompt is enabled, mesh.solve
+    must pass the text-only degeneration reasons as the 4th arg to
+    ops.repair_prompt so the repair model knows what failure mode to avoid
+    (PD-1 v2 warn-prompt lever)."""
+    _enable_warn_prompt(monkeypatch)
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
     out = mesh.solve("q", "balanced", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
@@ -330,10 +340,11 @@ def test_warn_prompt_threads_empty_when_prior_was_clean():
     assert not any(line.startswith("warn-prompt") for line in out.trace)
 
 
-def test_warn_prompt_filters_tier_only_reasons():
+def test_warn_prompt_filters_tier_only_reasons(monkeypatch):
     """A tier-unavailability reason ('tier:gpu unavailable') is about cascade
     health, not the prior draft -- it must NOT show up in the warn-prompt.
     Clean draft text + a tier-down signal -> empty `prior_degen`."""
+    _enable_warn_prompt(monkeypatch)
     ops_base, c = make_ops(draft_text="x = 1", gate_seq=[False, True])
     ops = mesh.Ops(
         route=ops_base.route, draft=ops_base.draft, generate=ops_base.generate,
@@ -343,3 +354,16 @@ def test_warn_prompt_filters_tier_only_reasons():
     )
     mesh.solve("q", "balanced", ops)
     assert c["_last_degen"] == ()
+
+
+def test_warn_prompt_default_off_does_not_thread_even_when_degraded():
+    """Default-off path: even when the NPU draft is degraded (would otherwise
+    populate prior_degen), the repair_prompt callsite must receive `()` and
+    no warn-prompt trace line is emitted. Pinned by the PD-1 v2 REVERT
+    (docs/FINDINGS-pd1-v2-warn-prompt.md)."""
+    # Do NOT enable warn_prompt -- exercise the default config.
+    ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    assert c["_last_degen"] == ()
+    assert not any(line.startswith("warn-prompt") for line in out.trace)
