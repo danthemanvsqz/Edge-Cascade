@@ -68,7 +68,21 @@ def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
         def igpu_draft(q: str) -> mesh.Candidate:
             return mesh.Candidate(igpu.draft(q).text)
 
+    # PD-1 v1: snapshot tier availability once and reuse. NPU is binary (the
+    # worker only exists if make_npu_worker() compiled), GPU has a live probe.
+    # Statuses don't change mid-session in practice -- the memo holds.
+    cache: dict[str, bool] = {}
+
+    def tier_status() -> dict[str, bool]:
+        if not cache:
+            cache["npu"] = True
+            cache["gpu"] = bool(gpu.available())
+            if igpu is not None:
+                cache["igpu"] = True
+        return dict(cache)
+
     return mesh.Ops(
         route=route, draft=draft, generate=generate,
         gate=gate, repair_prompt=repair_prompt, igpu_draft=igpu_draft,
+        tier_status=tier_status,
     )

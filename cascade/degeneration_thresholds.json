@@ -1,0 +1,6 @@
+{
+  "distinct_sent_ratio_min": 0.9055,
+  "max_sent_repeat_max": 1.0,
+  "trigram_repeat_max": 0.0367,
+  "ttr_min": 0.411
+}

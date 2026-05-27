@@ -107,3 +107,45 @@ def test_build_ops_with_igpu_binds_the_drafter():
     assert callable(ops.igpu_draft)
     c = ops.igpu_draft("q")
     assert isinstance(c, mesh.Candidate) and c.text == "DRAFT TEXT"
+
+
+def test_tier_status_reports_npu_and_gpu():
+    ops = wiring.build_ops(_NPU(), _GPU(available=True))
+    status = ops.tier_status()
+    assert status == {"npu": True, "gpu": True}
+
+
+def test_tier_status_includes_igpu_when_wired():
+    ops = wiring.build_ops(_NPU(), _GPU(available=True), igpu=_NPU())
+    status = ops.tier_status()
+    assert status == {"npu": True, "gpu": True, "igpu": True}
+
+
+def test_tier_status_reflects_gpu_unavailable():
+    ops = wiring.build_ops(_NPU(), _GPU(available=False))
+    assert ops.tier_status() == {"npu": True, "gpu": False}
+
+
+def test_tier_status_is_memoized():
+    """A second call doesn't re-probe -- statuses don't change mid-session."""
+    calls = {"n": 0}
+
+    class _CountingGPU(_GPU):
+        def available(self):
+            calls["n"] += 1
+            return super().available()
+
+    ops = wiring.build_ops(_NPU(), _CountingGPU(available=True))
+    ops.tier_status()
+    ops.tier_status()
+    ops.tier_status()
+    assert calls["n"] == 1
+
+
+def test_tier_status_returns_a_copy():
+    """Callers must not be able to mutate the cache through the dict."""
+    ops = wiring.build_ops(_NPU(), _GPU(available=True))
+    s1 = ops.tier_status()
+    s1["npu"] = False
+    s2 = ops.tier_status()
+    assert s2["npu"] is True

@@ -191,3 +191,61 @@ def test_outcome_carries_route_and_topology_fields():
     out = mesh.solve("q", "balanced", ops)
     assert out.difficulty == 0.42 and out.topology == "balanced"
     assert out.trace[0].startswith("route difficulty=0.42")
+
+
+# ---- PD-1 v1 passive observer --------------------------------------------
+
+
+def test_passive_observer_emits_degen_trace_per_candidate():
+    """One `degen[<tier>]:` line per candidate produced. NPU draft fails ->
+    GPU repair passes => 2 candidates => 2 degen lines (npu + gpu/repair1)."""
+    ops, _c = make_ops(gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    degen_lines = [line for line in out.trace if line.startswith("degen[")]
+    assert len(degen_lines) == 2
+    assert any(line.startswith("degen[npu]:") for line in degen_lines)
+    assert any(line.startswith("degen[gpu/repair1]:") for line in degen_lines)
+
+
+def test_passive_observer_records_for_gpu_fresh_generate():
+    """gpu_only topology -> first GPU call is fresh generate, observed as 'gpu'."""
+    topo = topologies.Topology("gpu_only", ("gpu",))
+    ops, _c = make_ops(gate_seq=[True])
+    out = mesh.solve("q", topo, ops)
+    assert any(line.startswith("degen[gpu]:") for line in out.trace)
+
+
+def test_passive_observer_uses_tier_status_when_provided():
+    """When ops.tier_status is wired, an unavailable tier shows up as a reason
+    in every degen trace line (text might be clean but the tier signal trips)."""
+    ops, _c = make_ops(gate_seq=[True])
+    ops_with_status = mesh.Ops(
+        route=ops.route, draft=ops.draft, generate=ops.generate,
+        gate=ops.gate, repair_prompt=ops.repair_prompt,
+        igpu_draft=ops.igpu_draft,
+        tier_status=lambda: {"npu": True, "gpu": False},
+    )
+    out = mesh.solve("q", "balanced", ops_with_status)
+    degen_lines = [line for line in out.trace if line.startswith("degen[")]
+    assert degen_lines
+    assert all("tier:gpu unavailable" in line for line in degen_lines)
+
+
+def test_passive_observer_does_not_change_outcome():
+    """v1 is telemetry-only: the observer never touches control flow. The
+    outcome of a happy-path solve is identical with and without tier_status.
+    Each solve gets its own ops bundle because make_ops's gate_seq is
+    stateful (consumed on each gate call)."""
+    ops_no, _ = make_ops(gate_seq=[True])
+    out_no = mesh.solve("q", "balanced", ops_no)
+    ops_yes_base, _ = make_ops(gate_seq=[True])
+    ops_yes = mesh.Ops(
+        route=ops_yes_base.route, draft=ops_yes_base.draft,
+        generate=ops_yes_base.generate, gate=ops_yes_base.gate,
+        repair_prompt=ops_yes_base.repair_prompt,
+        tier_status=lambda: {"npu": False},        # tier down doesn't escalate
+    )
+    out_yes = mesh.solve("q", "balanced", ops_yes)
+    assert out_no.final_tier == out_yes.final_tier
+    assert out_no.resolved == out_yes.resolved
+    assert out_no.answer == out_yes.answer
