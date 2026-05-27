@@ -21,8 +21,7 @@ from pathlib import Path
 from cascade import topologies
 from cascade.degeneration import Thresholds, check_degeneration
 
-ROOT = Path(__file__).resolve().parent.parent
-_THRESHOLDS_PATH = ROOT / "cascade" / "degeneration_thresholds.json"
+_THRESHOLDS_PATH = Path(__file__).resolve().parent / "degeneration_thresholds.json"
 # Load calibrated thresholds ONCE at module import (cheap stat + parse) rather
 # than per-solve. Falls back to library defaults if the JSON is absent (fresh
 # checkouts before calibration has run).
@@ -185,7 +184,11 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         if not cand.available:
             trace.append("gpu unavailable")
             return capped(rnd - 1)
-        observe(f"gpu/repair{rnd}", cand.text)
+        # Tier token stays a clean key ("gpu") so downstream parsers (e.g.
+        # the planned SD-2 dashboard panel) can split degen[<tier>]: by the
+        # bracket contents. The repair-round number is already in the
+        # "gpu repair round {rnd}" trace line emitted just above.
+        observe("gpu", cand.text)
         g = ops.gate(cand.text)
         if g.passed:
             trace.append(f"gpu gate PASS (repair round {rnd})")

@@ -197,14 +197,18 @@ def test_outcome_carries_route_and_topology_fields():
 
 
 def test_passive_observer_emits_degen_trace_per_candidate():
-    """One `degen[<tier>]:` line per candidate produced. NPU draft fails ->
-    GPU repair passes => 2 candidates => 2 degen lines (npu + gpu/repair1)."""
+    """One `degen[<tier>]:` line per candidate produced. Tier token stays a
+    clean key ("npu"/"igpu"/"gpu") so downstream parsers can split by the
+    bracket contents; repair-round info travels in the line just above."""
     ops, _c = make_ops(gate_seq=[False, True])
     out = mesh.solve("q", "balanced", ops)
     degen_lines = [line for line in out.trace if line.startswith("degen[")]
     assert len(degen_lines) == 2
     assert any(line.startswith("degen[npu]:") for line in degen_lines)
-    assert any(line.startswith("degen[gpu/repair1]:") for line in degen_lines)
+    assert any(line.startswith("degen[gpu]:") for line in degen_lines)
+    # The repair-round prefix is the existing "gpu repair round N" line
+    # immediately preceding the gpu degen observation.
+    assert any("repair round 1" in line for line in out.trace)
 
 
 def test_passive_observer_records_for_gpu_fresh_generate():

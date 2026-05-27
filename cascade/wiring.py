@@ -48,7 +48,13 @@ def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
     `igpu` (optional) exposes `.draft` -- the larger Tier-1b model on the iGPU;
     when None, `igpu_draft` stays None and topologies naming "igpu" fall back to
     the NPU draft (mesh.solve handles that). The closures translate worker
-    dataclasses to the mesh boundary types and nothing else."""
+    dataclasses to the mesh boundary types and nothing else.
+
+    CONTRACT (PD-1 tier_status): callers must pass `None` (not a stub handle)
+    for any unavailable tier. `tier_status` reports `npu`/`igpu` as available
+    when the corresponding argument is not None -- presence == compiled, by
+    the invariant that `make_npu_worker()` only returns a worker on successful
+    compile. A stub worker would silently lie about tier health."""
 
     def route(q: str) -> mesh.RouteInfo:
         r = npu.route(q)
@@ -68,18 +74,17 @@ def build_ops(npu, gpu, igpu=None) -> mesh.Ops:
         def igpu_draft(q: str) -> mesh.Candidate:
             return mesh.Candidate(igpu.draft(q).text)
 
-    # PD-1 v1: snapshot tier availability once and reuse. NPU is binary (the
-    # worker only exists if make_npu_worker() compiled), GPU has a live probe.
-    # Statuses don't change mid-session in practice -- the memo holds.
-    cache: dict[str, bool] = {}
+    # PD-1 v1: snapshot tier availability ONCE at build_ops time. NPU/iGPU
+    # presence is binary (per the build_ops contract above -- a None handle
+    # means "tier unavailable", a real worker means "compiled"); GPU has a
+    # live probe. Eager populate so concurrent tier_status() calls under a
+    # future Celery substrate can't race the cache.
+    snapshot: dict[str, bool] = {"npu": True, "gpu": bool(gpu.available())}
+    if igpu is not None:
+        snapshot["igpu"] = True
 
     def tier_status() -> dict[str, bool]:
-        if not cache:
-            cache["npu"] = True
-            cache["gpu"] = bool(gpu.available())
-            if igpu is not None:
-                cache["igpu"] = True
-        return dict(cache)
+        return dict(snapshot)
 
     return mesh.Ops(
         route=route, draft=draft, generate=generate,
