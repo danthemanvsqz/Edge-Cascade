@@ -425,4 +425,16 @@ describe("createStore — degen lane", () => {
     store.ingest("cascade-degeneration", degenRec(0));
     expect(store.spend()).toEqual({ cloudCalls: 0, usd: 0, clean: true });
   });
+
+  it("degen(tier) returns a snapshot, not a live reference", () => {
+    // Matches the contract of particles()/health()/spend() (all return
+    // fresh copies). A live reference would silently mutate under callers
+    // that captured a previous snapshot -- the trap PR review #65 flagged.
+    const store = createStore();
+    store.ingest("cascade-degeneration", degenRec(0, { score: "0.10" }));
+    const before = store.degen("npu");
+    store.ingest("cascade-degeneration", degenRec(1, { score: "0.20" }));
+    expect(before).toHaveLength(1);
+    expect(store.degen("npu")).toHaveLength(2);
+  });
 });

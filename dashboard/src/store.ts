@@ -121,15 +121,16 @@ export interface Store {
 export interface CreateStoreOptions {
   /** Max particles retained in the queue. Default 200. */
   readonly particleCeiling?: number;
-  /** Max degeneration observations retained per tier. Default 60. The
-   * SD-2b panel renders a score-history bar with one slot per observation,
-   * so 60 is "newest first 60 obs since session start." */
+  /** Max degeneration observations retained per tier. Default 30 — sized
+   * to match the SD-2b panel's 60-wide bar SVG (30 slots, 2px each: a 1px
+   * bar + 1px gap). Retaining more than the panel paints would surface a
+   * mismatch under future re-skins; keep the two in lockstep here. */
   readonly degenCeiling?: number;
 }
 
 export const WINDOW_SECONDS = 60;
 const DEFAULT_CEILING = 200;
-const DEFAULT_DEGEN_CEILING = 60;
+const DEFAULT_DEGEN_CEILING = 30;
 /** The server name written by `cascade.degen_recorder` — the dashboard side
  * lane for PD-1 observations. Exported so callers wiring TICK emission can
  * recognise these records as "accepted but not a particle". */
@@ -292,7 +293,10 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       }
       return { tiers, degraded };
     },
-    degen: (tier: DegenTier) => degenLog[tier],
+    // .slice() so callers get a snapshot, matching the contract of
+    // particles()/health()/spend() (those also return fresh copies, not
+    // live references into the store). Cheap at degenCeiling=30.
+    degen: (tier: DegenTier) => degenLog[tier].slice(),
     totalCount: () => totalParticles,
   };
 }
