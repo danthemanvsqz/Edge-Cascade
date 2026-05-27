@@ -12,6 +12,8 @@ import { cascadeFlowRegion } from "../src/flow.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
+  meshEffectivenessRegion,
+  meshEffectivenessView,
   nowPlayingRegion,
   rateMeterRegion,
   TICK,
@@ -73,6 +75,7 @@ describe("page render", () => {
     expect(html).toContain('id="vinyl-r-cascade-flow"');
     expect(html).toContain('id="vinyl-r-cascade-health"');
     expect(html).toContain('id="vinyl-r-degen-panel"');
+    expect(html).toContain('id="vinyl-r-mesh-effectiveness"');
     // The static topology lives inline in the initial paint (no live-region
     // wrapper) so search engines / curl see the architecture even pre-WS.
     expect(html).toContain('class="topology"');
@@ -175,8 +178,8 @@ describe("cascadeHealthRegion", () => {
 describe("tailer -> hub wiring", () => {
   it("emits TICK and pushes OOB frames to subscribers after an ingested record", async () => {
     const conn = mockConn(app.ctx);
-    // Mirror what app.ts onConnect actually subscribes (5 regions after
-    // SD-2b added degen-panel).
+    // Mirror what app.ts onConnect actually subscribes (6 regions after
+    // SD-4 added mesh-effectiveness).
     app.ctx.hub.subscribe(
       TICK,
       conn,
@@ -185,6 +188,7 @@ describe("tailer -> hub wiring", () => {
       cascadeHealthRegion,
       cascadeFlowRegion,
       degenPanelRegion,
+      meshEffectivenessRegion,
     );
 
     await fs.writeFile(
@@ -198,8 +202,8 @@ describe("tailer -> hub wiring", () => {
     expect(elements).toBeDefined();
     // Each subscribed region contributes one OOB string per emit (slice 5
     // added now-playing + rate-meter; slice 6 added cascade-flow; SD-2
-    // added cascade-health; SD-2b added degen-panel).
-    expect(elements?.length).toBe(5);
+    // added cascade-health; SD-2b added degen-panel; SD-4 added mesh-eff).
+    expect(elements?.length).toBe(6);
     // The frames carry the region IDs the htmx-ws contract expects.
     const allFrames = (elements ?? []).join("");
     expect(allFrames).toContain('id="vinyl-r-now-playing"');
@@ -207,6 +211,7 @@ describe("tailer -> hub wiring", () => {
     expect(allFrames).toContain('id="vinyl-r-cascade-flow"');
     expect(allFrames).toContain('id="vinyl-r-cascade-health"');
     expect(allFrames).toContain('id="vinyl-r-degen-panel"');
+    expect(allFrames).toContain('id="vinyl-r-mesh-effectiveness"');
     // And the newly rendered nowPlaying reflects the just-ingested record.
     expect(allFrames).toContain(">generate<");
   });
@@ -232,6 +237,29 @@ describe("tailer -> hub wiring", () => {
     // The store recorded the observation -- the panel reads from this.
     expect(app.ctx.store.degen("npu")).toHaveLength(1);
     expect(app.ctx.store.degen("npu")[0]?.score).toBe(0.17);
+  });
+
+  it("emits TICK on a cascade record (SD-4 outcomes lane, not a particle)", async () => {
+    const conn = mockConn(app.ctx);
+    app.ctx.hub.subscribe(TICK, conn, meshEffectivenessRegion);
+
+    await fs.writeFile(
+      join(runsDir, "cascade.rec"),
+      dumpRecord(0, {
+        tool: "solve",
+        ts: "100",
+        final_tier: "gpu",
+        trace: "mesh|-|0.00s|gpu gate PASS",
+      }),
+    );
+    await app.tailer.tick();
+
+    expect(conn.pushed.length).toBe(1);
+    // The store recorded the outcome -- the panel reads from this.
+    const o = app.ctx.store.cascadeOutcomes();
+    expect(o.total).toBe(1);
+    expect(o.resolvedGpu).toBe(1);
+    expect(o.effectivenessPct).toBeCloseTo(100, 5);
   });
 
   it("does NOT emit when an unknown-server record arrives (experiment lane)", async () => {
@@ -369,5 +397,83 @@ describe("degenPanelRegion", () => {
     const html = renderToString(degenPanelRegion.render(app.ctx));
     // Most-recent reason placeholder when reasons[] is empty but degraded=true.
     expect(html).toContain(">degraded<");
+  });
+});
+
+describe("meshEffectivenessRegion / view (SD-4)", () => {
+  it("renders an empty state when no cascade records have arrived", () => {
+    const html = renderToString(
+      meshEffectivenessView({
+        resolvedNpu: 0,
+        resolvedGpu: 0,
+        capped: 0,
+        draftSkipped: 0,
+        total: 0,
+        effectivenessPct: 0,
+      }),
+    );
+    expect(html).toContain("mesh-eff empty");
+    expect(html).toContain("no runs yet");
+  });
+
+  it("renders the headline %, total, and all four chips when populated", () => {
+    const html = renderToString(
+      meshEffectivenessView({
+        resolvedNpu: 1,
+        resolvedGpu: 5,
+        capped: 2,
+        draftSkipped: 3,
+        total: 8,
+        effectivenessPct: 75,
+      }),
+    );
+    expect(html).toContain("75.0%");
+    expect(html).toContain("8 runs");
+    expect(html).toContain('class="mesh-eff-chip resolved-npu"');
+    expect(html).toContain('class="mesh-eff-chip resolved-gpu"');
+    expect(html).toContain('class="mesh-eff-chip capped"');
+    expect(html).toContain('class="mesh-eff-chip skipped"');
+  });
+
+  it("trips the alarm class only when <50% AND total>=5 (small-sample guard)", () => {
+    // 1/3 = 33% but total<5 → no alarm.
+    const lowSample = renderToString(
+      meshEffectivenessView({
+        resolvedNpu: 0,
+        resolvedGpu: 1,
+        capped: 2,
+        draftSkipped: 0,
+        total: 3,
+        effectivenessPct: 33,
+      }),
+    );
+    expect(lowSample).toContain("mesh-eff ok");
+    expect(lowSample).not.toContain("mesh-eff alarm");
+
+    // 2/5 = 40% with total=5 → alarm.
+    const alarmed = renderToString(
+      meshEffectivenessView({
+        resolvedNpu: 0,
+        resolvedGpu: 2,
+        capped: 3,
+        draftSkipped: 0,
+        total: 5,
+        effectivenessPct: 40,
+      }),
+    );
+    expect(alarmed).toContain("mesh-eff alarm");
+  });
+
+  it("wires the live region to the store snapshot", () => {
+    app.ctx.store.ingest("cascade", {
+      _seq: "0",
+      tool: "solve",
+      ts: "100",
+      final_tier: "gpu",
+      trace: "mesh|-|0.00s|gpu gate PASS",
+    });
+    const html = renderToString(meshEffectivenessRegion.render(app.ctx));
+    expect(html).toContain("100.0%");
+    expect(html).toContain("1 runs");
   });
 });

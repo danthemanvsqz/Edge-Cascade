@@ -272,3 +272,70 @@ body.dashboard {
   opacity: 0.7;
   font-style: italic;
 }
+
+/* --- panels: mesh effectiveness (SD-4) ------------------------------- */
+/* Cumulative cascade outcomes this session. The big percentage is the
+ * headline ("the mesh is working X% of the time it's been asked"); the
+ * chips below break it down by resolution tier + show skip count as a
+ * sibling-not-fifth-outcome (a run can be skipped AND resolved). Alarm
+ * class trips at <50% effectiveness with at least 5 runs (small-sample
+ * guard so an early miss doesn't false-flash). */
+.mesh-eff {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.mesh-eff.empty { color: var(--type-dim); flex-direction: row; align-items: baseline; gap: 12px; }
+.mesh-eff.empty .mesh-eff-pct { color: var(--type-dim); font-size: 18px; }
+.mesh-eff.empty .mesh-eff-note { font-style: italic; opacity: 0.7; }
+.mesh-eff.alarm { box-shadow: inset 0 0 0 1px var(--fail); }
+.mesh-eff-header {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 12px;
+}
+.mesh-eff-label {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  color: var(--type-dim);
+}
+.mesh-eff-pct {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--tier-npu);
+  font-variant-numeric: tabular-nums;
+}
+.mesh-eff.alarm .mesh-eff-pct { color: var(--fail); }
+.mesh-eff-total { color: var(--type-dim); font-variant-numeric: tabular-nums; }
+.mesh-eff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mesh-eff-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--grid);
+}
+.mesh-eff-chip[data-count="0"] { opacity: 0.45; }
+.mesh-eff-chip .chip-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--type-dim);
+}
+.mesh-eff-chip .chip-count { font-variant-numeric: tabular-nums; font-weight: 600; }
+.mesh-eff-chip.resolved-npu .chip-count { color: var(--tier-npu); }
+.mesh-eff-chip.resolved-gpu .chip-count { color: var(--tier-gpu); }
+.mesh-eff-chip.capped       .chip-count { color: var(--fail); }
+.mesh-eff-chip.skipped      .chip-count { color: var(--type-dim); }

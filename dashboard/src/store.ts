@@ -90,6 +90,27 @@ export interface Health {
   readonly degraded: boolean;
 }
 
+/** Mesh effectiveness snapshot (SD-4). Cumulative counts over every
+ * `cascade.rec` record seen this session.
+ *  - `resolvedNpu` / `resolvedGpu` — the cascade returned an answer at that
+ *    tier (final_tier = "npu" | "gpu").
+ *  - `capped` — the bounded repair loop exhausted; Tier 3 takeover
+ *    (final_tier = "capped->tier3").
+ *  - `draftSkipped` — the router pre-judged Tier 1 not worth trying
+ *    (trace contains "draft skipped"). Counted ON TOP of an outcome, not
+ *    instead of one — a skipped-then-gpu-resolved run increments both
+ *    `resolvedGpu` and `draftSkipped`.
+ *  - `effectivenessPct` — `(resolvedNpu + resolvedGpu) / total * 100`, 0
+ *    when `total === 0`. The "mesh is working X% of the time" headline. */
+export interface CascadeOutcomes {
+  readonly resolvedNpu: number;
+  readonly resolvedGpu: number;
+  readonly capped: number;
+  readonly draftSkipped: number;
+  readonly total: number;
+  readonly effectivenessPct: number;
+}
+
 export interface Store {
   /** Ingest one record from the tailer. Returns the particle iff the record
    * mapped to a known tier (so the caller knows whether to push it through
@@ -114,6 +135,8 @@ export interface Store {
    * `degenCeiling`. Empty when no PD-1 observation has been seen yet for
    * `tier`. */
   degen(tier: DegenTier): readonly DegenObservation[];
+  /** Mesh effectiveness snapshot (cumulative this session). */
+  cascadeOutcomes(): CascadeOutcomes;
   /** Total particles seen across all tiers (for the rate meter). */
   totalCount(): number;
 }
@@ -135,6 +158,11 @@ const DEFAULT_DEGEN_CEILING = 30;
  * lane for PD-1 observations. Exported so callers wiring TICK emission can
  * recognise these records as "accepted but not a particle". */
 export const DEGEN_SERVER = "cascade-degeneration";
+/** The server name written by `cascade.mesh.solve` -- one record per cascade
+ * Outcome (final_tier + trace). Source for the mesh-effectiveness panel
+ * (SD-4): resolved vs capped vs draft-skipped over the session. Sidelane,
+ * not a particle producer (same shape as DEGEN_SERVER). */
+export const CASCADE_SERVER = "cascade";
 const DEGEN_TIERS: readonly DegenTier[] = ["npu", "gpu", "igpu"];
 const CLOUD_GEN_TOOLS = new Set(["ask", "generate"]);
 const STATUS_TOOL = "status";
@@ -177,6 +205,11 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     gpu: [],
     igpu: [],
   };
+  let resolvedNpu = 0;
+  let resolvedGpu = 0;
+  let cappedRuns = 0;
+  let draftSkippedRuns = 0;
+  let totalRuns = 0;
 
   function ingest(
     server: string,
@@ -197,6 +230,13 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     // (not the return value) to know whether to fire TICK.
     if (server === DEGEN_SERVER) {
       ingestDegen(record);
+      return null;
+    }
+
+    // SD-4: cascade-outcomes lane. One record per mesh.solve Outcome; updates
+    // the effectiveness counters and returns null (sidelane, not a particle).
+    if (server === CASCADE_SERVER) {
+      ingestCascadeOutcome(record);
       return null;
     }
 
@@ -240,6 +280,30 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     recent = { particle, record };
     totalParticles += 1;
     return particle;
+  }
+
+  function ingestCascadeOutcome(record: Record<string, string>): void {
+    const finalTier = record.final_tier ?? "";
+    // Defensive: only count records with a known final_tier. Unknown values
+    // (future tier additions, malformed records) are ignored, not crash.
+    let counted = false;
+    if (finalTier === "npu" || finalTier === "igpu") {
+      resolvedNpu += 1;
+      counted = true;
+    } else if (finalTier === "gpu") {
+      resolvedGpu += 1;
+      counted = true;
+    } else if (finalTier === "capped->tier3") {
+      cappedRuns += 1;
+      counted = true;
+    }
+    if (!counted) return;
+    totalRuns += 1;
+    // Skip rate is independent of outcome -- "the router decided not to try
+    // Tier 1" can co-occur with any final_tier (including a successful gpu).
+    if ((record.trace ?? "").includes("draft skipped")) {
+      draftSkippedRuns += 1;
+    }
   }
 
   function ingestDegen(record: Record<string, string>): void {
@@ -297,6 +361,17 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     // particles()/health()/spend() (those also return fresh copies, not
     // live references into the store). Cheap at degenCeiling=30.
     degen: (tier: DegenTier) => degenLog[tier].slice(),
+    cascadeOutcomes: () => ({
+      resolvedNpu,
+      resolvedGpu,
+      capped: cappedRuns,
+      draftSkipped: draftSkippedRuns,
+      total: totalRuns,
+      effectivenessPct:
+        totalRuns === 0
+          ? 0
+          : ((resolvedNpu + resolvedGpu) / totalRuns) * 100,
+    }),
     totalCount: () => totalParticles,
   };
 }

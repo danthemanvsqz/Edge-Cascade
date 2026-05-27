@@ -438,3 +438,112 @@ describe("createStore — degen lane", () => {
     expect(store.degen("npu")).toHaveLength(2);
   });
 });
+
+// SD-4: cascade-outcomes side-lane (mesh effectiveness) ------------------
+
+function cascadeRec(
+  seq: number,
+  fields: Partial<{ final_tier: string; trace: string }> = {},
+): Record<string, string> {
+  return {
+    _seq: String(seq),
+    tool: "solve",
+    ts: "1779801311.5",
+    final_tier: "gpu",
+    trace: "mesh|-|0.00s|route difficulty=0.55\nmesh|-|0.00s|npu gate FAIL",
+    ...fields,
+  };
+}
+
+describe("createStore — cascade outcomes lane (SD-4)", () => {
+  it("starts empty: every counter 0, effectiveness 0", () => {
+    const o = createStore().cascadeOutcomes();
+    expect(o).toEqual({
+      resolvedNpu: 0,
+      resolvedGpu: 0,
+      capped: 0,
+      draftSkipped: 0,
+      total: 0,
+      effectivenessPct: 0,
+    });
+  });
+
+  it("ingests a cascade record without producing a particle", () => {
+    const store = createStore();
+    const result = store.ingest("cascade", cascadeRec(0));
+    expect(result).toBeNull();
+    expect(store.particles()).toEqual([]);
+    expect(store.totalCount()).toBe(0);
+  });
+
+  it("counts final_tier 'npu' / 'igpu' as resolvedNpu", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "npu" }));
+    store.ingest("cascade", cascadeRec(1, { final_tier: "igpu" }));
+    expect(store.cascadeOutcomes().resolvedNpu).toBe(2);
+    expect(store.cascadeOutcomes().total).toBe(2);
+  });
+
+  it("counts final_tier 'gpu' as resolvedGpu", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "gpu" }));
+    expect(store.cascadeOutcomes().resolvedGpu).toBe(1);
+  });
+
+  it("counts final_tier 'capped->tier3' as capped", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "capped->tier3" }));
+    expect(store.cascadeOutcomes().capped).toBe(1);
+  });
+
+  it("counts 'draft skipped' in trace as a skipped run (independent of outcome)", () => {
+    // One skipped run that still resolved at GPU: both counters increment.
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, {
+      final_tier: "gpu",
+      trace: "mesh|-|0.00s|npu draft skipped (difficulty>=0.7)\nmesh|-|0.00s|gpu gate PASS",
+    }));
+    const o = store.cascadeOutcomes();
+    expect(o.resolvedGpu).toBe(1);
+    expect(o.draftSkipped).toBe(1);
+    expect(o.total).toBe(1);
+  });
+
+  it("ignores records with unknown final_tier (does not increment total)", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "totally-bogus" }));
+    expect(store.cascadeOutcomes().total).toBe(0);
+  });
+
+  it("ignores records missing final_tier (defensive: empty string)", () => {
+    const store = createStore();
+    store.ingest("cascade", { _seq: "0", tool: "solve", ts: "1779801311.5" });
+    expect(store.cascadeOutcomes().total).toBe(0);
+  });
+
+  it("computes effectivenessPct as (resolved / total) * 100", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "npu" }));
+    store.ingest("cascade", cascadeRec(1, { final_tier: "gpu" }));
+    store.ingest("cascade", cascadeRec(2, { final_tier: "gpu" }));
+    store.ingest("cascade", cascadeRec(3, { final_tier: "capped->tier3" }));
+    const o = store.cascadeOutcomes();
+    expect(o.total).toBe(4);
+    expect(o.effectivenessPct).toBeCloseTo(75, 5);
+  });
+
+  it("ignores cascade records for spend accounting (clean stays true)", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0));
+    expect(store.spend()).toEqual({ cloudCalls: 0, usd: 0, clean: true });
+  });
+
+  it("cascadeOutcomes() returns a fresh snapshot per call", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "gpu" }));
+    const before = store.cascadeOutcomes();
+    store.ingest("cascade", cascadeRec(1, { final_tier: "gpu" }));
+    expect(before.total).toBe(1);
+    expect(store.cascadeOutcomes().total).toBe(2);
+  });
+});

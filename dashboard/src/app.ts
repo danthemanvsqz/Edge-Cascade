@@ -22,11 +22,12 @@ import { page } from "./page.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
+  meshEffectivenessRegion,
   nowPlayingRegion,
   rateMeterRegion,
   TICK,
 } from "./panels.js";
-import { createStore, DEGEN_SERVER } from "./store.js";
+import { CASCADE_SERVER, createStore, DEGEN_SERVER } from "./store.js";
 import type { Store } from "./store.js";
 import { createTailer } from "./lib/tailer.js";
 import type { Tailer } from "./lib/tailer.js";
@@ -79,10 +80,17 @@ export function createDashboardApp(
     onRecord: ({ server, record }) => {
       const particle = store.ingest(server, record);
       // Emit on (a) any particle (the live cascade-flow + rate meter need
-      // it) OR (b) any degen-lane record (SD-2b panel paints from a side
-      // queue that `ingest` populates but doesn't surface via the return
-      // value). Experiment lanes and unknown servers still emit nothing.
-      if (particle !== null || server === DEGEN_SERVER) hub.emit(TICK);
+      // it) OR (b) any sidelane record (SD-2b degen panel, SD-4 effectiveness
+      // panel) -- those panels paint from queues that `ingest` populates but
+      // doesn't surface via the return value. Experiment lanes and unknown
+      // servers still emit nothing.
+      if (
+        particle !== null ||
+        server === DEGEN_SERVER ||
+        server === CASCADE_SERVER
+      ) {
+        hub.emit(TICK);
+      }
     },
   });
 
@@ -98,6 +106,7 @@ export function createDashboardApp(
         cascadeHealthRegion,
         cascadeFlowRegion,
         degenPanelRegion,
+        meshEffectivenessRegion,
       );
     },
     onMessage: () => {
