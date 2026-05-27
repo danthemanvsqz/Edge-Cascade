@@ -178,16 +178,25 @@ def test_post_generate_round_trips(mocker):
 
 
 def test_post_generate_strips_trailing_slash(mocker):
-    """The URL stays canonical even if the user passes `http://host/`."""
+    """The URL stays canonical even if the user passes `http://host/`.
+
+    Also pins the long POST timeout (600s) -- SDXL inference is the slow
+    path (30-step 1024^2 ~15-30s on the 5070 Ti), and a regression to
+    httpx's 5s default would silently start timing out every call."""
     sent = {}
 
     def fake_post(url, json, timeout):
         sent["url"] = url
+        sent["timeout"] = timeout
         return _FakeResponse(200, {"available": True, "path": "p"})
 
     mocker.patch("scripts.sdxl.httpx.post", side_effect=fake_post)
     post_generate("http://localhost:8188/", {"prompt": "x"})
     assert sent["url"] == "http://localhost:8188/generate"
+    assert sent["timeout"] >= 300.0, (
+        f"POST timeout regressed to {sent['timeout']}s -- "
+        "SDXL inference needs ~30s, httpx default 5s would silently fail"
+    )
 
 
 def test_post_generate_connection_error_translates_to_runtime_error(mocker):
@@ -211,9 +220,21 @@ def test_post_generate_http_500_surfaces(mocker):
 
 
 def test_get_health_round_trips(mocker):
-    mocker.patch("scripts.sdxl.httpx.get",
-                 return_value=_FakeResponse(200, {"available": True}))
+    """Round-trip + pin the 10s GET timeout (health is cheap; default 5s
+    would risk false-negatives during the model-load warmup window)."""
+    sent = {}
+
+    def fake_get(url, timeout):
+        sent["url"] = url
+        sent["timeout"] = timeout
+        return _FakeResponse(200, {"available": True})
+
+    mocker.patch("scripts.sdxl.httpx.get", side_effect=fake_get)
     assert get_health("http://localhost:8188") == {"available": True}
+    assert sent["timeout"] >= 5.0, (
+        f"GET timeout regressed to {sent['timeout']}s -- "
+        "health may need >5s during model-load warmup"
+    )
 
 
 def test_get_health_connection_error_translates(mocker):
