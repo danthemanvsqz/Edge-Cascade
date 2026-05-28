@@ -191,14 +191,15 @@ class Config:
     # fresh GPU generate also fails, the standard repair loop still runs --
     # but on the GPU's own output, never on the discarded NPU output. Distinct
     # from the hard-escalate lever (which would skip GPU entirely).
-    # Default OFF; the v2 verification log shows 0 score>=0.30 hits on 27
-    # correct-code negatives, so this is the conservative trip rule. The lever
-    # is the experiment for the PD-1 v2 'skip-repair' A/B sweep -- keep an eye
-    # on the eventual docs/FINDINGS-pd1-v2-skip-repair.md before changing the
-    # default. Tune via CASCADE_SKIP_REPAIR_ON_DEGEN=1.
+    # Default ON as of the v2 A/B sweep (docs/FINDINGS-pd1-v2-skip-repair.md:
+    # P(trt>ctrl)=1.000, +22.8 pp pooled, +33.7 pp on the FIRED sub-pool, clean
+    # null on subjects below the floor). The v2 calibration log shows 0
+    # score>=0.30 hits on 27 correct-code negatives, so the trip rule is FP-free
+    # at production. Roll back without a code change via
+    # CASCADE_SKIP_REPAIR_ON_DEGEN=0.
     skip_repair_on_degen: bool = field(
         default_factory=lambda: os.environ.get(
-            "CASCADE_SKIP_REPAIR_ON_DEGEN") == "1"
+            "CASCADE_SKIP_REPAIR_ON_DEGEN", "1") != "0"
     )
     skip_repair_score_floor: float = field(
         default_factory=lambda: float(

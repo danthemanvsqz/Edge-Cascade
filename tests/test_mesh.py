@@ -17,16 +17,32 @@ from cascade.mesh import Candidate, GateInfo, Ops, RouteInfo
 
 
 def _enable_warn_prompt(monkeypatch):
-    """Flip CONFIG.warn_prompt_enabled=True for the duration of one test.
-    The PD-1 v2 finding REVERTed warn-prompt to default-off; tests that exercise
-    the threading path must opt in."""
-    monkeypatch.setattr(mesh, "CONFIG", replace(mesh.CONFIG, warn_prompt_enabled=True))
+    """Flip CONFIG.warn_prompt_enabled=True AND disable skip_repair_on_degen
+    for the duration of one test. The PD-1 v2 finding REVERTed warn-prompt to
+    default-off; tests that exercise the threading path must opt in. We also
+    flip skip-repair OFF because (as of FINDINGS-pd1-v2-skip-repair) it's
+    default-on and would short-circuit the repair loop before warn-prompt can
+    thread reasons -- the two levers can't both fire on the same trial."""
+    monkeypatch.setattr(
+        mesh, "CONFIG",
+        replace(mesh.CONFIG, warn_prompt_enabled=True,
+                skip_repair_on_degen=False),
+    )
+
+
+def _disable_skip_repair(monkeypatch):
+    """Force CONFIG.skip_repair_on_degen=False. Used by pre-skip-repair tests
+    that need to exercise the GPU-repair-on-poisoned-prior path (today's
+    behaviour pre-lever, still reachable via the env-var opt-out)."""
+    monkeypatch.setattr(
+        mesh, "CONFIG", replace(mesh.CONFIG, skip_repair_on_degen=False),
+    )
 
 
 def _enable_skip_repair_on_degen(monkeypatch, *, floor=0.30):
-    """Flip CONFIG.skip_repair_on_degen=True for the duration of one test.
-    Default-off in production (PD-1 v2 skip-repair experiment lever); tests that
-    exercise the short-circuit path must opt in. `floor` overrides the score
+    """Flip CONFIG.skip_repair_on_degen=True for the duration of one test (or
+    keep the default-on production value, but explicitly pinned so the test
+    survives a future default flip-back). `floor` overrides the score
     threshold so tests that drive a borderline degen result can pin behaviour."""
     monkeypatch.setattr(
         mesh, "CONFIG",
@@ -368,12 +384,16 @@ def test_warn_prompt_filters_tier_only_reasons(monkeypatch):
     assert c["_last_degen"] == ()
 
 
-def test_warn_prompt_default_off_does_not_thread_even_when_degraded():
+def test_warn_prompt_default_off_does_not_thread_even_when_degraded(monkeypatch):
     """Default-off path: even when the NPU draft is degraded (would otherwise
     populate prior_degen), the repair_prompt callsite must receive `()` and
     no warn-prompt trace line is emitted. Pinned by the PD-1 v2 REVERT
-    (docs/FINDINGS-pd1-v2-warn-prompt.md)."""
-    # Do NOT enable warn_prompt -- exercise the default config.
+    (docs/FINDINGS-pd1-v2-warn-prompt.md). Skip-repair is also disabled here
+    so the repair loop actually runs (skip-repair is default-on as of
+    FINDINGS-pd1-v2-skip-repair and would otherwise short-circuit)."""
+    # Do NOT enable warn_prompt -- exercise the default config. Disable
+    # skip-repair so the GPU phase reaches the repair callsite this test pins.
+    _disable_skip_repair(monkeypatch)
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
     out = mesh.solve("q", "balanced", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
@@ -435,13 +455,34 @@ def test_skip_repair_does_not_fire_on_clean_draft(monkeypatch):
     assert not any(line.startswith("skip-repair:") for line in out.trace)
 
 
-def test_skip_repair_default_off_runs_gpu_repair_on_poisoned_prior_as_today():
-    """Default-off path (production): a degraded NPU draft still feeds the
-    bounded GPU repair loop, byte-identical to pre-lever behaviour. Pinned so
-    a future experiment finding can flip the default without silently changing
-    other consumers' expectations. Mirror of the warn-prompt default-off pin
-    (PD-1 v2 precedent)."""
-    # Do NOT enable skip_repair_on_degen -- exercise the default config.
+def test_skip_repair_default_on_discards_poisoned_prior(monkeypatch):
+    """Default-on path (production as of FINDINGS-pd1-v2-skip-repair): a
+    degraded NPU draft is DISCARDED and the GPU phase issues a fresh
+    `generate`. Pinned so a future regression that re-shadows the lever (env
+    var, refactor, or default flip-back) doesn't silently change behaviour.
+    Mirror of the warn-prompt default-off pin (PD-1 v2 precedent)."""
+    # Do NOT touch CONFIG -- exercise the production default. Clear the env
+    # opt-out in case the test process inherited CASCADE_SKIP_REPAIR_ON_DEGEN=0
+    # from a shell rolling the lever back.
+    monkeypatch.delenv("CASCADE_SKIP_REPAIR_ON_DEGEN", raising=False)
+    ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
+    # Production default-on requires the same CONFIG construction the env-aware
+    # tests use, since the module-level CONFIG was frozen at import (before
+    # this monkeypatch). Rebuild from defaults to pick up env state.
+    monkeypatch.setattr(mesh, "CONFIG", type(mesh.CONFIG)())
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.resolved
+    assert out.repair_rounds == 0  # fresh generate, not repair on poison
+    assert c["draft"] == 1 and c["generate"] == 1 and c["repair_prompt"] == 0
+    assert any(line.startswith("skip-repair:") for line in out.trace)
+
+
+def test_skip_repair_env_opt_out_restores_pre_lever_behaviour(monkeypatch):
+    """CASCADE_SKIP_REPAIR_ON_DEGEN=0 disables the lever, returning to the
+    pre-lever GPU-repair-on-poisoned-prior path. Lets production roll back
+    without a code change."""
+    monkeypatch.setenv("CASCADE_SKIP_REPAIR_ON_DEGEN", "0")
+    monkeypatch.setattr(mesh, "CONFIG", type(mesh.CONFIG)())
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
     out = mesh.solve("q", "balanced", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
