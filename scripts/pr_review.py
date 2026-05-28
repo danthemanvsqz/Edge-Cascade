@@ -37,10 +37,17 @@ _REC = make_recorder("edge-review")
 
 def _gh(*args: str, timeout: float = 120.0) -> str:
     """Run a gh subcommand; empty string on timeout/error (never hang the
-    review — a wedged gh must not block the push)."""
+    review -- a wedged gh must not block the push).
+
+    Force UTF-8 decoding of gh's stdout. gh emits UTF-8 (PR diffs, titles,
+    bodies) but subprocess `text=True` decodes with the locale encoding,
+    which is cp1252 on Windows -- any non-ASCII byte (em-dash, section
+    sign, etc.) raises UnicodeDecodeError mid-review and the reviewer sees
+    mojibake instead of the real diff text."""
     try:
         return subprocess.run([_GH, *args], capture_output=True, text=True,
-                              cwd=str(ROOT), timeout=timeout).stdout
+                              cwd=str(ROOT), timeout=timeout,
+                              encoding="utf-8", errors="replace").stdout
     except (subprocess.TimeoutExpired, OSError):
         return ""
 
