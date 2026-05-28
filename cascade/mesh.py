@@ -177,17 +177,20 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
         prior, failures = cand.text, g.failures
         prior_degen = d.text_reasons
         # PD-1 v2 skip-repair: if the draft observation tripped degen at the
-        # configured score floor, the prior is "poisoned" -- repair on it tends
-        # to either inherit the failure mode or fixate on it. Bypass the GPU
-        # phase entirely and hand off to Tier-3. Default-off; the A/B sweep
+        # configured score floor, the prior is "poisoned" -- repairing on it
+        # tends to inherit or fixate on the failure mode. DISCARD the prior so
+        # the GPU phase does a fresh `generate` (line below) instead of feeding
+        # the bad draft into the bounded repair loop. Distinct from the
+        # hard-escalate lever (which would skip GPU entirely and hand off to
+        # Tier-3). Default-off; the A/B sweep
         # (scripts/skip_repair_validation.py) decides whether to keep it.
         if (CONFIG.skip_repair_on_degen
                 and d.score >= CONFIG.skip_repair_score_floor):
             trace.append(
                 f"skip-repair: {draft_name} degen score={d.score:.2f} >= "
-                f"{CONFIG.skip_repair_score_floor:.2f} -> bypass GPU phase"
+                f"{CONFIG.skip_repair_score_floor:.2f} -> discard prior, fresh GPU"
             )
-            return capped(0)
+            prior, failures, prior_degen = None, (), ()
     elif draft_tier:
         trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above})")
 
