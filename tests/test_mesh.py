@@ -488,3 +488,20 @@ def test_skip_repair_env_opt_out_restores_pre_lever_behaviour(monkeypatch):
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     assert c["generate"] == 1 and c["repair_prompt"] == 1
     assert not any(line.startswith("skip-repair:") for line in out.trace)
+
+
+def test_skip_repair_env_var_only_exact_zero_opts_out(monkeypatch):
+    """Pin the env-var contract (mirrors the warn-prompt pattern's inverse):
+    only the exact string "0" disables the lever. Any other value -- including
+    arbitrary tokens like "false", "no", or empty string -- stays opted-in.
+    Keeps the contract loud so a future "make it accept 'false'/'no'" PR has
+    to break this test deliberately."""
+    for env_value in ("", "false", "no", "1", "yes", "foo"):
+        monkeypatch.setenv("CASCADE_SKIP_REPAIR_ON_DEGEN", env_value)
+        cfg = type(mesh.CONFIG)()
+        assert cfg.skip_repair_on_degen is True, (
+            f"CASCADE_SKIP_REPAIR_ON_DEGEN={env_value!r} should opt IN "
+            f"(only '0' opts out)"
+        )
+    monkeypatch.setenv("CASCADE_SKIP_REPAIR_ON_DEGEN", "0")
+    assert type(mesh.CONFIG)().skip_repair_on_degen is False
