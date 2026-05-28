@@ -366,10 +366,18 @@ export const HEARTBEAT_MS = 80;
 
 /** SD-P3: does the current store state warrant another TICK before any
  * record arrives? True iff EITHER an SD-P1 particle is still mid-arc
- * (age < ANIM_MS) OR an SD-P2 zone is still in its pulse window
- * (age < PULSE_MS). Pure -- no DOM, no time source beyond `nowMs` -- so
- * app.ts can compose it into a setTimeout chain without owning the
+ * (0 <= age < ANIM_MS) OR an SD-P2 zone is still in its pulse window
+ * (0 <= age < PULSE_MS). Pure -- no DOM, no time source beyond `nowMs` --
+ * so app.ts can compose it into a setTimeout chain without owning the
  * animation constants, and tests can drive it deterministically.
+ *
+ * Note: this is INTENTIONALLY stricter than the visual `isTierPulsing`,
+ * which counts negative-age (future-stamped) records as "active" so a
+ * just-landed pulse renders even under clock skew. The heartbeat can't
+ * adopt the same lenience -- a far-future timestamp would keep the
+ * scheduler chain alive for (future - now) ms before it caught up. The
+ * pulse branch below requires age >= 0 explicitly so a clock-skewed or
+ * fixture-future record can't pin the heartbeat on for arbitrary time.
  *
  * The lookup callback shape mirrors `store.lastIngestMs` exactly so the
  * caller hands the bound method through without a per-tier closure. */
@@ -383,7 +391,10 @@ export function hasActiveAnimation(
     if (age >= 0 && age < ANIM_MS) return true;
   }
   for (const tier of TIERS) {
-    if (isTierPulsing(lastIngestMs(tier), nowMs)) return true;
+    const last = lastIngestMs(tier);
+    if (last === null) continue;
+    const age = nowMs - last;
+    if (age >= 0 && age < PULSE_MS) return true;
   }
   return false;
 }

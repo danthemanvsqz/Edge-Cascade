@@ -409,6 +409,15 @@ describe("SD-P3 heartbeat (createDashboardApp scheduler chain)", () => {
       // Two record-driven pushes, but still only ONE pending heartbeat.
       expect(conn.pushed).toHaveLength(2);
       expect(scheduled).toHaveLength(1);
+
+      // Fire the heartbeat callback -- after it runs, the handle must be
+      // cleared so the chain resumes scheduling. A regression where
+      // `heartbeatHandle` never resets would leave `scheduled.length === 1`
+      // here because subsequent `maybeScheduleHeartbeat` calls would
+      // short-circuit on the stale handle.
+      scheduled[0]?.cb();
+      expect(conn.pushed).toHaveLength(3); // heartbeat emitted
+      expect(scheduled).toHaveLength(2); // chain resumed (still in-flight)
     } finally {
       localApp.tailer.stop();
       await fs.rm(localRunsDir, { recursive: true, force: true });

@@ -127,12 +127,26 @@ describe("hasActiveAnimation (SD-P3 heartbeat predicate)", () => {
 
   it("ignores future-stamped particles (negative age) so a clock-skew record can't keep the chain alive forever", () => {
     // Defensive: a particle whose tsMs is in the future shouldn't be treated
-    // as "still animating" by the heartbeat predicate (it would never settle).
-    // SD-P2's isTierPulsing intentionally accepts negative age as "just
-    // landed", so this only applies to the SD-P1 particle branch.
+    // as "still animating" by the heartbeat predicate (it would never settle
+    // within ANIM_MS of now). The visual `particlePosition` clamps to the
+    // pool render for negative age; the heartbeat predicate matches.
     const futureParticle = makeParticle("npu", 200_000);
     expect(
       hasActiveAnimation([futureParticle], lastIngestStub({}), 100_000),
+    ).toBe(false);
+  });
+
+  it("ignores future-stamped lastIngestMs (the pulse branch is stricter than isTierPulsing)", () => {
+    // The visual `isTierPulsing` returns true for negative age so a just-
+    // landed pulse renders under clock skew. The heartbeat predicate must
+    // NOT inherit that lenience -- a far-future lastIngestMs would otherwise
+    // pin the scheduler chain ON for (future - now) ms before catching up.
+    expect(
+      hasActiveAnimation(
+        [],
+        lastIngestStub({ gpu: 200_000 }),
+        100_000,
+      ),
     ).toBe(false);
   });
 
