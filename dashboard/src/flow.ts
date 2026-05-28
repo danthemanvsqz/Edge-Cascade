@@ -171,6 +171,11 @@ function overlaySvg(ctx: DashContext): VNode {
     },
     h(
       "g",
+      { class: "zone-pulses" },
+      ...TIERS.map((tier) => zonePulse(ctx, tier, nowMs)),
+    ),
+    h(
+      "g",
       { class: "sparklines" },
       ...TIERS.map((tier) => sparklinePolyline(ctx, tier, nowMs)),
     ),
@@ -305,6 +310,50 @@ function sparklinePolyline(
     class: `sparkline sparkline--${tier}`,
     points,
     fill: "none",
+  });
+}
+
+/** SD-P2: how long the zone stays in the "active" visual state after a tier
+ * ingests a record. Picked so a steady stream at 5+ rec/s reads as a
+ * sustained pulse, while a single isolated record gives a clear 1-2s ping
+ * before dimming. Exported for unit tests pinning the boundary. */
+export const PULSE_MS = 1200;
+
+/** SD-P2: is this tier currently in the active-pulse window? Pure helper
+ * (no DOM) -- pulled out so tests can pin boundary cases without rendering. */
+export function isTierPulsing(
+  lastIngestMs: number | null,
+  nowMs: number,
+): boolean {
+  if (lastIngestMs === null) return false;
+  const age = nowMs - lastIngestMs;
+  // Defensive: a future-stamped record (clock skew / fixture in the future)
+  // counts as active -- it just landed, by any reasonable definition.
+  if (age < 0) return true;
+  return age < PULSE_MS;
+}
+
+/** Per-zone pulse overlay. Always rendered (one rect per tier zone); the
+ * `--active` class flips on when the tier has ingested in the last
+ * PULSE_MS, so CSS keyframes can run a single short pulse without re-
+ * triggering on every re-render. */
+function zonePulse(ctx: DashContext, tier: Tier, nowMs: number): VNode {
+  const z = zoneById(tier);
+  const last = ctx.store.lastIngestMs(tier);
+  const active = isTierPulsing(last, nowMs);
+  const cls = active
+    ? `zone-pulse zone-pulse--active zone-pulse--${tier}`
+    : `zone-pulse zone-pulse--${tier}`;
+  return h("rect", {
+    class: cls,
+    x: String(z.x - 2),
+    y: String(z.y - 2),
+    width: String(z.w + 4),
+    height: String(z.h + 4),
+    rx: "8",
+    ry: "8",
+    fill: "none",
+    "aria-hidden": "true",
   });
 }
 

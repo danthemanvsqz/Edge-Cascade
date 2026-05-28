@@ -128,6 +128,36 @@ body.dashboard {
   opacity: 0.95;
 }
 
+/* SD-P2: active-node pulse. Each tier zone has an overlay rect that flips
+ * to `.zone-pulse--active` when the tier ingests a record. While the class
+ * is present, `zone-pulse-anim` loops INFINITELY so the pulse keeps
+ * breathing under sustained activity regardless of how Vinyl's DOM diff
+ * handles the rerender (patch-in-place vs replace) -- with `forwards` the
+ * keyframe would pin at its 100% (opacity 0) and the zone would go dim
+ * mid-activity. When the class drops (ageMs >= PULSE_MS at the next TICK),
+ * the animation stops and the baseline `opacity: 0` takes over. */
+.zone-pulse {
+  stroke: none;
+  stroke-width: 2;
+  opacity: 0;
+  pointer-events: none;
+}
+.zone-pulse--npu    { stroke: var(--tier-npu); }
+.zone-pulse--gpu    { stroke: var(--tier-gpu); }
+.zone-pulse--verify { stroke: var(--tier-verify); }
+.zone-pulse--cloud  { stroke: var(--tier-cloud); }
+.zone-pulse--active {
+  animation: zone-pulse-anim 1.2s ease-in-out infinite;
+}
+@keyframes zone-pulse-anim {
+  0%   { opacity: 0.25; stroke-width: 2; }
+  50%  { opacity: 0.95; stroke-width: 4; }
+  100% { opacity: 0.25; stroke-width: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zone-pulse--active { animation: none; opacity: 0.5; }
+}
+
 .sparkline { stroke-width: 1.2; opacity: 0.85; }
 .sparkline--npu { stroke: var(--tier-npu); }
 .sparkline--gpu { stroke: var(--tier-gpu); }

@@ -562,3 +562,58 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
     expect(store.cascadeOutcomes().total).toBe(2);
   });
 });
+
+// SD-P2: per-tier lastIngestMs --------------------------------------------
+
+describe("createStore — lastIngestMs (SD-P2)", () => {
+  it("starts null for every tier (no activity yet)", () => {
+    const store = createStore();
+    for (const t of ["npu", "gpu", "verify", "cloud"] as const) {
+      expect(store.lastIngestMs(t)).toBeNull();
+    }
+  });
+
+  it("records the most-recent particle ts per tier", () => {
+    const store = createStore();
+    store.ingest("edge-npu", { _seq: "0", tool: "route", ts: "100" });
+    store.ingest("edge-npu", { _seq: "1", tool: "route", ts: "150" });
+    store.ingest("edge-gpu", { _seq: "0", tool: "generate", ts: "120" });
+    // tsMs = ts seconds * 1000
+    expect(store.lastIngestMs("npu")).toBe(150_000);
+    expect(store.lastIngestMs("gpu")).toBe(120_000);
+    expect(store.lastIngestMs("verify")).toBeNull();
+    expect(store.lastIngestMs("cloud")).toBeNull();
+  });
+
+  it("updates on status records too (broader 'tier is busy' signal)", () => {
+    const store = createStore();
+    // The SD-P2 store comment: status records advance the pulse so a tier
+    // that's only checking health, not producing draftable particles,
+    // still reads as "doing something".
+    store.ingest("edge-verify", { _seq: "0", tool: "status", ts: "100" });
+    expect(store.lastIngestMs("verify")).toBe(100_000);
+  });
+
+  it("is NOT moved by cascade-degeneration or cascade outcome records (sidelanes)", () => {
+    const store = createStore();
+    store.ingest("cascade-degeneration", {
+      _seq: "0",
+      tool: "observe",
+      ts: "100",
+      tier: "npu",
+      score: "0.5",
+      degraded: "true",
+    });
+    store.ingest("cascade", {
+      _seq: "0",
+      tool: "solve",
+      ts: "100",
+      final_tier: "gpu",
+    });
+    // Sidelanes return null from ingest BEFORE the tier branch sets
+    // lastIngest, so neither tier sees a pulse from these.
+    for (const t of ["npu", "gpu", "verify", "cloud"] as const) {
+      expect(store.lastIngestMs(t)).toBeNull();
+    }
+  });
+});

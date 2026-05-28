@@ -7,7 +7,9 @@ import {
   cascadeFlowRegion,
   cascadeFlowTopology,
   enteringArcStart,
+  isTierPulsing,
   particlePosition,
+  PULSE_MS,
 } from "../src/flow.js";
 import { createStore } from "../src/store.js";
 import type { Particle, Tier } from "../src/store.js";
@@ -216,5 +218,59 @@ describe("cascadeFlowRegion (SD-P1 motion render)", () => {
     ctx.store.ingest("edge-gpu", { _seq: "0", tool: "generate", ts: "100" });
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).not.toContain("particle--in-flight");
+  });
+});
+
+// SD-P2: active-node pulse ------------------------------------------------
+
+describe("isTierPulsing (SD-P2)", () => {
+  it("returns false when the tier has never ingested", () => {
+    expect(isTierPulsing(null, 100_000)).toBe(false);
+  });
+
+  it("returns true when age < PULSE_MS", () => {
+    expect(isTierPulsing(100_000, 100_000 + PULSE_MS - 1)).toBe(true);
+  });
+
+  it("returns false at the boundary age === PULSE_MS (open interval upper)", () => {
+    expect(isTierPulsing(100_000, 100_000 + PULSE_MS)).toBe(false);
+  });
+
+  it("returns true on negative age (future-stamped record / clock skew)", () => {
+    // 'just landed' by any reasonable definition.
+    expect(isTierPulsing(100_000, 50_000)).toBe(true);
+  });
+});
+
+describe("cascadeFlowRegion (SD-P2 zone pulse render)", () => {
+  it("renders one zone-pulse rect per stream tier (4 total), all inactive at start", () => {
+    const ctx = makeCtx();
+    const html = renderToString(cascadeFlowRegion.render(ctx));
+    for (const tier of ["npu", "gpu", "verify", "cloud"] as const) {
+      expect(html).toContain(`zone-pulse zone-pulse--${tier}`);
+    }
+    expect(html).not.toContain("zone-pulse--active");
+  });
+
+  it("flips a tier's pulse to active right after that tier ingests", () => {
+    const ctx = makeCtx(100_000);
+    ctx.store.ingest("edge-gpu", {
+      _seq: "0",
+      tool: "generate",
+      ts: String(100_000 / 1000),
+    });
+    const html = renderToString(cascadeFlowRegion.render(ctx));
+    // Active class lands on the gpu pulse and only the gpu pulse.
+    expect(html).toMatch(/zone-pulse zone-pulse--active zone-pulse--gpu/);
+    expect(html).not.toMatch(/zone-pulse--active zone-pulse--npu/);
+    expect(html).not.toMatch(/zone-pulse--active zone-pulse--verify/);
+    expect(html).not.toMatch(/zone-pulse--active zone-pulse--cloud/);
+  });
+
+  it("drops the active class once age >= PULSE_MS", () => {
+    const ctx = makeCtx(100_000 + PULSE_MS);
+    ctx.store.ingest("edge-gpu", { _seq: "0", tool: "generate", ts: "100" });
+    const html = renderToString(cascadeFlowRegion.render(ctx));
+    expect(html).not.toContain("zone-pulse--active");
   });
 });
