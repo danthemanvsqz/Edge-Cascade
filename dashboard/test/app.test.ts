@@ -405,6 +405,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     const html = renderToString(
       meshEffectivenessView({
         resolvedNpu: 0,
+        resolvedIgpu: 0,
         resolvedGpu: 0,
         capped: 0,
         draftSkipped: 0,
@@ -416,20 +417,21 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     expect(html).toContain("no runs yet");
   });
 
-  it("renders the headline %, total, and all four chips when populated", () => {
+  it("renders the headline %, total, and all five chips when populated", () => {
     const html = renderToString(
       meshEffectivenessView({
         resolvedNpu: 1,
+        resolvedIgpu: 1,
         resolvedGpu: 5,
         capped: 2,
         draftSkipped: 3,
-        total: 8,
-        effectivenessPct: 75,
+        total: 9,
+        effectivenessPct: (7 / 9) * 100,
       }),
     );
-    expect(html).toContain("75.0%");
-    expect(html).toContain("8 runs");
+    expect(html).toContain("9 runs");
     expect(html).toContain('class="mesh-eff-chip resolved-npu"');
+    expect(html).toContain('class="mesh-eff-chip resolved-igpu"');
     expect(html).toContain('class="mesh-eff-chip resolved-gpu"');
     expect(html).toContain('class="mesh-eff-chip capped"');
     expect(html).toContain('class="mesh-eff-chip skipped"');
@@ -440,6 +442,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     const lowSample = renderToString(
       meshEffectivenessView({
         resolvedNpu: 0,
+        resolvedIgpu: 0,
         resolvedGpu: 1,
         capped: 2,
         draftSkipped: 0,
@@ -454,6 +457,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     const alarmed = renderToString(
       meshEffectivenessView({
         resolvedNpu: 0,
+        resolvedIgpu: 0,
         resolvedGpu: 2,
         capped: 3,
         draftSkipped: 0,

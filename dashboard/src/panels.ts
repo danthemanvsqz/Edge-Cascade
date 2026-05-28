@@ -128,6 +128,7 @@ export function meshEffectivenessView(o: CascadeOutcomes): VNode {
       "div",
       { class: "mesh-eff-chips" },
       chip("resolved-npu", "@NPU", o.resolvedNpu),
+      chip("resolved-igpu", "@iGPU", o.resolvedIgpu),
       chip("resolved-gpu", "@GPU", o.resolvedGpu),
       chip("capped", "capped", o.capped),
       chip("skipped", "skipped", o.draftSkipped),

@@ -460,6 +460,7 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
     const o = createStore().cascadeOutcomes();
     expect(o).toEqual({
       resolvedNpu: 0,
+      resolvedIgpu: 0,
       resolvedGpu: 0,
       capped: 0,
       draftSkipped: 0,
@@ -476,12 +477,25 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
     expect(store.totalCount()).toBe(0);
   });
 
-  it("counts final_tier 'npu' / 'igpu' as resolvedNpu", () => {
+  it("counts final_tier 'npu' as resolvedNpu (not rolled into igpu)", () => {
     const store = createStore();
     store.ingest("cascade", cascadeRec(0, { final_tier: "npu" }));
-    store.ingest("cascade", cascadeRec(1, { final_tier: "igpu" }));
-    expect(store.cascadeOutcomes().resolvedNpu).toBe(2);
-    expect(store.cascadeOutcomes().total).toBe(2);
+    const o = store.cascadeOutcomes();
+    expect(o.resolvedNpu).toBe(1);
+    expect(o.resolvedIgpu).toBe(0);
+    expect(o.total).toBe(1);
+  });
+
+  it("counts final_tier 'igpu' as its own resolvedIgpu (not rolled into npu)", () => {
+    // PR #71 review fix: igpu is Tier 1b, a distinct drafter (3B model on
+    // Intel iGPU) -- conflating its wins into resolvedNpu silently
+    // misattributes them in the @NPU chip.
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "igpu" }));
+    const o = store.cascadeOutcomes();
+    expect(o.resolvedIgpu).toBe(1);
+    expect(o.resolvedNpu).toBe(0);
+    expect(o.total).toBe(1);
   });
 
   it("counts final_tier 'gpu' as resolvedGpu", () => {
@@ -521,14 +535,15 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
     expect(store.cascadeOutcomes().total).toBe(0);
   });
 
-  it("computes effectivenessPct as (resolved / total) * 100", () => {
+  it("computes effectivenessPct as (resolved / total) * 100 across all draft tiers", () => {
     const store = createStore();
     store.ingest("cascade", cascadeRec(0, { final_tier: "npu" }));
-    store.ingest("cascade", cascadeRec(1, { final_tier: "gpu" }));
+    store.ingest("cascade", cascadeRec(1, { final_tier: "igpu" }));
     store.ingest("cascade", cascadeRec(2, { final_tier: "gpu" }));
     store.ingest("cascade", cascadeRec(3, { final_tier: "capped->tier3" }));
     const o = store.cascadeOutcomes();
     expect(o.total).toBe(4);
+    // 3 resolved / 4 total -- npu + igpu + gpu all count toward effectiveness.
     expect(o.effectivenessPct).toBeCloseTo(75, 5);
   });
 

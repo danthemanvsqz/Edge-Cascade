@@ -92,18 +92,24 @@ export interface Health {
 
 /** Mesh effectiveness snapshot (SD-4). Cumulative counts over every
  * `cascade.rec` record seen this session.
- *  - `resolvedNpu` / `resolvedGpu` — the cascade returned an answer at that
- *    tier (final_tier = "npu" | "gpu").
+ *  - `resolvedNpu` / `resolvedIgpu` / `resolvedGpu` — the cascade returned
+ *    an answer at that tier (final_tier = "npu" | "igpu" | "gpu"). iGPU is
+ *    the optional Tier-1b drafter (a larger 3B model on the Intel iGPU);
+ *    when wired it can win the cascade alongside the NPU. Counted
+ *    separately rather than rolled into `resolvedNpu` so the UI can
+ *    attribute wins to the actual node that produced them.
  *  - `capped` — the bounded repair loop exhausted; Tier 3 takeover
  *    (final_tier = "capped->tier3").
- *  - `draftSkipped` — the router pre-judged Tier 1 not worth trying
- *    (trace contains "draft skipped"). Counted ON TOP of an outcome, not
- *    instead of one — a skipped-then-gpu-resolved run increments both
+ *  - `draftSkipped` — the router pre-judged the Tier-1 draft not worth
+ *    trying (trace contains "draft skipped"). Counted ON TOP of an outcome,
+ *    not instead of one — a skipped-then-gpu-resolved run increments both
  *    `resolvedGpu` and `draftSkipped`.
- *  - `effectivenessPct` — `(resolvedNpu + resolvedGpu) / total * 100`, 0
- *    when `total === 0`. The "mesh is working X% of the time" headline. */
+ *  - `effectivenessPct` — `(resolvedNpu + resolvedIgpu + resolvedGpu) /
+ *    total * 100`, 0 when `total === 0`. The "mesh is working X% of the
+ *    time" headline. */
 export interface CascadeOutcomes {
   readonly resolvedNpu: number;
+  readonly resolvedIgpu: number;
   readonly resolvedGpu: number;
   readonly capped: number;
   readonly draftSkipped: number;
@@ -206,6 +212,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     igpu: [],
   };
   let resolvedNpu = 0;
+  let resolvedIgpu = 0;
   let resolvedGpu = 0;
   let cappedRuns = 0;
   let draftSkippedRuns = 0;
@@ -287,8 +294,11 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     // Defensive: only count records with a known final_tier. Unknown values
     // (future tier additions, malformed records) are ignored, not crash.
     let counted = false;
-    if (finalTier === "npu" || finalTier === "igpu") {
+    if (finalTier === "npu") {
       resolvedNpu += 1;
+      counted = true;
+    } else if (finalTier === "igpu") {
+      resolvedIgpu += 1;
       counted = true;
     } else if (finalTier === "gpu") {
       resolvedGpu += 1;
@@ -363,6 +373,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     degen: (tier: DegenTier) => degenLog[tier].slice(),
     cascadeOutcomes: () => ({
       resolvedNpu,
+      resolvedIgpu,
       resolvedGpu,
       capped: cappedRuns,
       draftSkipped: draftSkippedRuns,
@@ -370,7 +381,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       effectivenessPct:
         totalRuns === 0
           ? 0
-          : ((resolvedNpu + resolvedGpu) / totalRuns) * 100,
+          : ((resolvedNpu + resolvedIgpu + resolvedGpu) / totalRuns) * 100,
     }),
     totalCount: () => totalParticles,
   };

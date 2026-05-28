@@ -335,7 +335,8 @@ body.dashboard {
   color: var(--type-dim);
 }
 .mesh-eff-chip .chip-count { font-variant-numeric: tabular-nums; font-weight: 600; }
-.mesh-eff-chip.resolved-npu .chip-count { color: var(--tier-npu); }
-.mesh-eff-chip.resolved-gpu .chip-count { color: var(--tier-gpu); }
-.mesh-eff-chip.capped       .chip-count { color: var(--fail); }
-.mesh-eff-chip.skipped      .chip-count { color: var(--type-dim); }
+.mesh-eff-chip.resolved-npu  .chip-count { color: var(--tier-npu); }
+.mesh-eff-chip.resolved-igpu .chip-count { color: var(--tier-tier3); }
+.mesh-eff-chip.resolved-gpu  .chip-count { color: var(--tier-gpu); }
+.mesh-eff-chip.capped        .chip-count { color: var(--fail); }
+.mesh-eff-chip.skipped       .chip-count { color: var(--type-dim); }
