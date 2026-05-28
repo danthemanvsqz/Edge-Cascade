@@ -143,6 +143,11 @@ export interface Store {
   degen(tier: DegenTier): readonly DegenObservation[];
   /** Mesh effectiveness snapshot (cumulative this session). */
   cascadeOutcomes(): CascadeOutcomes;
+  /** Wall-clock ms of the most recent particle ingest for `tier`, or null
+   * if none yet. Drives the SD-P2 active-node pulse on the flow SVG --
+   * "this zone got a record in the last PULSE_MS." Independent of the
+   * SD-P1 motion ANIM_MS so they can tune separately. */
+  lastIngestMs(tier: Tier): number | null;
   /** Total particles seen across all tiers (for the rate meter). */
   totalCount(): number;
 }
@@ -217,6 +222,16 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   let cappedRuns = 0;
   let draftSkippedRuns = 0;
   let totalRuns = 0;
+  // SD-P2: per-tier most-recent particle ingest wall-clock. Updated on every
+  // particle (status records ALSO update it -- "the tier is busy" is the
+  // signal, not "the tier produced a particle for the flow river"). null
+  // until first activity from that tier.
+  const lastIngest: Record<Tier, number | null> = {
+    npu: null,
+    gpu: null,
+    verify: null,
+    cloud: null,
+  };
 
   function ingest(
     server: string,
@@ -283,6 +298,12 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     const tierBuckets = buckets[tier];
     tierBuckets.set(bucketKey, (tierBuckets.get(bucketKey) ?? 0) + 1);
     pruneBuckets(tierBuckets, bucketKey);
+
+    // SD-P2: this tier is "active" -- the panel/zone reads this to pulse.
+    // Updated on every particle (including status records) since the user's
+    // wish was "obvious when a node is processing", which is broader than
+    // "produced a draftable particle for the flow river".
+    lastIngest[tier] = tsMs;
 
     recent = { particle, record };
     totalParticles += 1;
@@ -383,6 +404,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
           ? 0
           : ((resolvedNpu + resolvedIgpu + resolvedGpu) / totalRuns) * 100,
     }),
+    lastIngestMs: (tier: Tier) => lastIngest[tier],
     totalCount: () => totalParticles,
   };
 }
