@@ -130,6 +130,7 @@ omit = [
     "scripts/ship.py",
     "scripts/smoke_npu_mcp.py",
     "scripts/snapshot_evidence.py",
+    "scripts/skip_repair_validation.py",
     "scripts/warn_prompt_validation_v2.py",
 ]
 
