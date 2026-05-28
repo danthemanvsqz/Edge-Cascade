@@ -25,10 +25,13 @@ const VIEW_W = 800;
 const VIEW_H = 400;
 
 interface Zone {
-  /** Tier this zone represents -- "tier3" is rendered but isn't on the
-   * record stream (the Claude CLI doesn't write `.rec` itself), so the
-   * `Tier` type stays the four .rec lanes and `tier3` is a layout-only id. */
-  readonly id: Tier | "tier3";
+  /** Tier this zone represents. "tier3" is rendered but isn't on the
+   * record stream (the Claude CLI doesn't write `.rec` itself); "igpu" is
+   * rendered as the optional Tier-1b sibling drafter but currently has no
+   * dedicated `.rec` lane either (its MCP calls land in `edge-npu.rec`).
+   * Both are layout-only ids -- the `Tier` type stays the four .rec lanes
+   * that produce particles, so adding zones here doesn't expand the store. */
+  readonly id: Tier | "tier3" | "igpu";
   readonly label: string;
   readonly x: number;
   readonly y: number;
@@ -38,12 +41,25 @@ interface Zone {
 
 const ZONE_W = 120;
 const ZONE_H = 80;
+// Tier-1 column (NPU + iGPU as sibling drafters) uses a slimmer height so the
+// two stack vertically within the same horizontal band. GPU + verify are
+// vertically centred against the pair so the horizontal arcs read cleanly.
+const TIER1_H = 60;
 const ZONES: readonly Zone[] = [
-  { id: "npu", label: "Tier 1 · NPU", x: 60, y: 50, w: ZONE_W, h: ZONE_H },
-  { id: "gpu", label: "Tier 2 · GPU", x: 240, y: 50, w: ZONE_W, h: ZONE_H },
-  { id: "verify", label: "verify", x: 420, y: 50, w: ZONE_W, h: ZONE_H },
-  { id: "tier3", label: "Tier 3 · Claude CLI", x: 420, y: 220, w: ZONE_W, h: ZONE_H },
-  { id: "cloud", label: "Tier 4 · cloud", x: 600, y: 220, w: ZONE_W, h: ZONE_H },
+  // Tier 1: NPU (top) + iGPU (bottom) -- parallel drafters; cascade.mesh.solve
+  // can pick either (or both, if the topology wires igpu_draft). iGPU is the
+  // optional Tier-1b sibling counted in SD-4's effectiveness panel and the
+  // SD-2b degen panel; before this change it had no representation in the
+  // flow graph, so a real iGPU win was invisible. Same Tier-1 colour band so
+  // the visual hierarchy still reads "Tier 1" as a unit.
+  { id: "npu", label: "Tier 1 · NPU", x: 60, y: 30, w: ZONE_W, h: TIER1_H },
+  { id: "igpu", label: "Tier 1b · iGPU", x: 60, y: 110, w: ZONE_W, h: TIER1_H },
+  // GPU + verify vertically centred against the NPU+iGPU pair (NPU top=30,
+  // iGPU bottom=170, midpoint=100; ZONE_H/2=40 -> y=60).
+  { id: "gpu", label: "Tier 2 · GPU", x: 240, y: 60, w: ZONE_W, h: ZONE_H },
+  { id: "verify", label: "verify", x: 420, y: 60, w: ZONE_W, h: ZONE_H },
+  { id: "tier3", label: "Tier 3 · Claude CLI", x: 420, y: 230, w: ZONE_W, h: ZONE_H },
+  { id: "cloud", label: "Tier 4 · cloud", x: 600, y: 230, w: ZONE_W, h: ZONE_H },
 ];
 
 function zoneById(id: Zone["id"]): Zone {
@@ -60,8 +76,16 @@ interface PathDef {
 /** Static path definitions referenced by `<animateMotion href>` once Phase B
  * lands. Phase A only renders them as visible arcs. */
 const PATHS: readonly PathDef[] = [
+  // Entry from off-canvas (route) to the two Tier-1 drafters in parallel.
+  // cascade.mesh.solve picks NPU as the primary draft path; iGPU is the
+  // optional sibling drafter when the topology wires `igpu_draft`.
   { id: "route-to-npu", d: `M 0 ${zoneCenterY("npu")} L ${zoneById("npu").x} ${zoneCenterY("npu")}` },
+  { id: "route-to-igpu", d: `M 0 ${zoneCenterY("igpu")} L ${zoneById("igpu").x} ${zoneCenterY("igpu")}` },
+  // Both Tier-1 drafters feed Tier-2 GPU (the repair-loop driver). NPU comes
+  // in from above-center, iGPU from below-center; pathBetween handles the
+  // diagonal edge-to-edge line.
   { id: "npu-to-gpu", d: pathBetween("npu", "gpu") },
+  { id: "igpu-to-gpu", d: pathBetween("igpu", "gpu") },
   { id: "gpu-to-verify", d: pathBetween("gpu", "verify") },
   // Repair loop: verify -> gpu via an arc up over the row.
   { id: "verify-loop", d: repairLoopPath() },
@@ -331,6 +355,48 @@ export function isTierPulsing(
   // counts as active -- it just landed, by any reasonable definition.
   if (age < 0) return true;
   return age < PULSE_MS;
+}
+
+/** SD-P3 heartbeat: how often the server re-emits TICK while animations are
+ * still running. Picked at ~12 Hz -- visibly smooth on both motion (SD-P1)
+ * and pulse-fade (SD-P2) without spamming WS frames. When no animation is
+ * active the chain stops naturally, so an idle dashboard issues zero ticks.
+ * Exported for app.ts to schedule against and for tests to pin. */
+export const HEARTBEAT_MS = 80;
+
+/** SD-P3: does the current store state warrant another TICK before any
+ * record arrives? True iff EITHER an SD-P1 particle is still mid-arc
+ * (0 <= age < ANIM_MS) OR an SD-P2 zone is still in its pulse window
+ * (0 <= age < PULSE_MS). Pure -- no DOM, no time source beyond `nowMs` --
+ * so app.ts can compose it into a setTimeout chain without owning the
+ * animation constants, and tests can drive it deterministically.
+ *
+ * Note: this is INTENTIONALLY stricter than the visual `isTierPulsing`,
+ * which counts negative-age (future-stamped) records as "active" so a
+ * just-landed pulse renders even under clock skew. The heartbeat can't
+ * adopt the same lenience -- a far-future timestamp would keep the
+ * scheduler chain alive for (future - now) ms before it caught up. The
+ * pulse branch below requires age >= 0 explicitly so a clock-skewed or
+ * fixture-future record can't pin the heartbeat on for arbitrary time.
+ *
+ * The lookup callback shape mirrors `store.lastIngestMs` exactly so the
+ * caller hands the bound method through without a per-tier closure. */
+export function hasActiveAnimation(
+  particles: readonly Particle[],
+  lastIngestMs: (tier: Tier) => number | null,
+  nowMs: number,
+): boolean {
+  for (const p of particles) {
+    const age = nowMs - p.tsMs;
+    if (age >= 0 && age < ANIM_MS) return true;
+  }
+  for (const tier of TIERS) {
+    const last = lastIngestMs(tier);
+    if (last === null) continue;
+    const age = nowMs - last;
+    if (age >= 0 && age < PULSE_MS) return true;
+  }
+  return false;
 }
 
 /** Per-zone pulse overlay. Always rendered (one rect per tier zone); the
