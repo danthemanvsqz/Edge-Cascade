@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { renderToString } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "../src/app.js";
-import { cascadeFlowRegion, cascadeFlowTopology } from "../src/flow.js";
+import {
+  ANIM_MS,
+  cascadeFlowRegion,
+  cascadeFlowTopology,
+  enteringArcStart,
+  particlePosition,
+} from "../src/flow.js";
 import { createStore } from "../src/store.js";
+import type { Particle, Tier } from "../src/store.js";
 
 function makeCtx(nowMs = 100_000): DashContext {
   return {
@@ -72,9 +79,12 @@ describe("cascadeFlowRegion (overlay live region)", () => {
       ok: "false",
     });
     const html = renderToString(cascadeFlowRegion.render(ctx));
-    expect(html).toContain('particle particle--npu"');
-    expect(html).toContain('particle particle--gpu"');
-    // verify failure adds the fail modifier
+    // SD-P1 appends an optional `particle--in-flight` suffix when ageMs <
+    // ANIM_MS, so the previous exact-end class match no longer holds; assert
+    // the tier-class prefix instead (the only thing this test cares about).
+    expect(html).toContain("particle particle--npu");
+    expect(html).toContain("particle particle--gpu");
+    // verify failure adds the fail modifier (between tier and in-flight)
     expect(html).toContain("particle particle--verify particle--fail");
   });
 
@@ -110,5 +120,101 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     expect(m).not.toBeNull();
     const pts = m?.[1]?.trim().split(/\s+/) ?? [];
     expect(pts.length).toBe(60);
+  });
+});
+
+// SD-P1: particles ride entering arcs ------------------------------------
+
+function part(tier: Tier, tsMs: number, seq = 0): Particle {
+  return {
+    id: `p-edge-${tier}-${seq}`,
+    tier,
+    server: `edge-${tier}`,
+    seq: String(seq),
+    tool: "anything",
+    tsMs,
+    latencyMs: 0,
+    ok: true,
+  };
+}
+
+describe("enteringArcStart (SD-P1)", () => {
+  it("returns an off-zone start for each of the four record-stream tiers", () => {
+    for (const tier of ["npu", "gpu", "verify", "cloud"] as const) {
+      const start = enteringArcStart(tier);
+      expect(start).not.toBeNull();
+    }
+  });
+
+  it("npu starts at x=0 (route origin, off the left edge of all zones)", () => {
+    expect(enteringArcStart("npu")?.x).toBe(0);
+  });
+});
+
+describe("particlePosition (SD-P1)", () => {
+  it("places a freshly-ingested particle at the arc start (progress=0)", () => {
+    const p = part("gpu", 100_000);
+    const pos = particlePosition(p, 0, 100_000);
+    const start = enteringArcStart("gpu");
+    expect(start).not.toBeNull();
+    expect(pos.cx).toBeCloseTo(start!.x, 5);
+    expect(pos.cy).toBeCloseTo(start!.y, 5);
+    expect(pos.inFlight).toBe(true);
+  });
+
+  it("interpolates linearly from arc start to pool slot at progress=0.5", () => {
+    const p = part("gpu", 100_000);
+    const midPos = particlePosition(p, 0, 100_000 + ANIM_MS / 2);
+    const startPos = particlePosition(p, 0, 100_000);
+    const endPos = particlePosition(p, 0, 100_000 + ANIM_MS);
+    expect(midPos.cx).toBeCloseTo((startPos.cx + endPos.cx) / 2, 4);
+    expect(midPos.cy).toBeCloseTo((startPos.cy + endPos.cy) / 2, 4);
+    expect(midPos.inFlight).toBe(true);
+  });
+
+  it("pools at the slot position once age >= ANIM_MS (inFlight false)", () => {
+    const p = part("gpu", 100_000);
+    const pos = particlePosition(p, 0, 100_000 + ANIM_MS);
+    expect(pos.inFlight).toBe(false);
+    // And stays pooled forever after.
+    const later = particlePosition(p, 0, 100_000 + ANIM_MS * 100);
+    expect(later.cx).toBe(pos.cx);
+    expect(later.cy).toBe(pos.cy);
+  });
+
+  it("clamps negative age (clock skew / fixture in the future) to pooled", () => {
+    const p = part("gpu", 100_000);
+    const pos = particlePosition(p, 0, 99_000);
+    expect(pos.inFlight).toBe(false);
+  });
+
+  it("different pool slots produce different end positions", () => {
+    const p0 = part("npu", 0);
+    const p1 = part("npu", 0, 1);
+    const e0 = particlePosition(p0, 0, ANIM_MS);
+    const e1 = particlePosition(p1, 1, ANIM_MS);
+    expect(e0.cx).not.toBe(e1.cx);
+  });
+});
+
+describe("cascadeFlowRegion (SD-P1 motion render)", () => {
+  it("tags fresh particles with the particle--in-flight class", () => {
+    // ts in seconds (store multiplies by 1000) -> tsMs == nowMs -> age 0 ms.
+    const ctx = makeCtx(100_000);
+    ctx.store.ingest("edge-gpu", {
+      _seq: "0",
+      tool: "generate",
+      ts: String(100_000 / 1000),
+    });
+    const html = renderToString(cascadeFlowRegion.render(ctx));
+    expect(html).toContain("particle--in-flight");
+  });
+
+  it("does NOT tag old particles with particle--in-flight", () => {
+    // nowMs far enough past tsMs that ageMs > ANIM_MS.
+    const ctx = makeCtx(100_000 + ANIM_MS * 10);
+    ctx.store.ingest("edge-gpu", { _seq: "0", tool: "generate", ts: "100" });
+    const html = renderToString(cascadeFlowRegion.render(ctx));
+    expect(html).not.toContain("particle--in-flight");
   });
 });

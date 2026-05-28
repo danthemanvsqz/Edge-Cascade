@@ -182,7 +182,9 @@ function overlaySvg(ctx: DashContext): VNode {
     h(
       "g",
       { class: "particles" },
-      ...particles.flatMap((p) => particleCircle(p, indexInTier(p, byTier))),
+      ...particles.flatMap((p) =>
+        particleCircle(p, indexInTier(p, byTier), nowMs),
+      ),
     ),
   );
 }
@@ -204,20 +206,77 @@ function indexInTier(p: Particle, byTier: Map<Tier, Particle[]>): number {
 }
 
 const PARTICLES_PER_ZONE = 12; // visual cap per tier-pool
+/** SD-P1: how long a freshly-ingested particle takes to ride its entering arc
+ * from arc-start to its final pool slot. Picked so the flow is visible (~1.5s
+ * is a comfortable read) without piling up at the typical 5-50 rec/s. Exported
+ * so unit tests can pin the boundary case `nowMs - tsMs === ANIM_MS`. */
+export const ANIM_MS = 1500;
 
-function particleCircle(p: Particle, idx: number): VNode[] {
-  if (idx >= PARTICLES_PER_ZONE) return []; // older particles fall off-screen
+/** For each tier, the "entering arc" start point -- the off-zone position
+ * particles glide FROM during the in-flight phase. Returns null when no
+ * entering arc is modelled for the tier (currently every Tier has one;
+ * future tier additions stay safe by getting an immediate pool render). */
+export function enteringArcStart(tier: Tier): { x: number; y: number } | null {
+  switch (tier) {
+    case "npu":
+      return { x: 0, y: zoneCenterY("npu") };
+    case "gpu": {
+      const npu = zoneById("npu");
+      return { x: npu.x + npu.w, y: zoneCenterY("npu") };
+    }
+    case "verify": {
+      const gpu = zoneById("gpu");
+      return { x: gpu.x + gpu.w, y: zoneCenterY("gpu") };
+    }
+    case "cloud": {
+      const tier3 = zoneById("tier3");
+      return { x: tier3.x + tier3.w, y: zoneCenterY("tier3") };
+    }
+  }
+}
+
+/** Pure render geometry for a particle. `inFlight` = animating along the
+ * entering arc (age < ANIM_MS); otherwise pooled at the final slot. Exported
+ * so unit tests can assert the position math without booting a DashContext. */
+export function particlePosition(
+  p: Particle,
+  idx: number,
+  nowMs: number,
+): { cx: number; cy: number; inFlight: boolean } {
   const z = zoneById(p.tier);
-  // Stack particles in a row near the zone's top edge, newest on the right.
+  // Final pool slot (same layout as the pre-SD-P1 static render).
   const slot = PARTICLES_PER_ZONE - 1 - idx;
-  const cx = z.x + 8 + slot * ((z.w - 16) / (PARTICLES_PER_ZONE - 1));
-  const cy = z.y + 14;
+  const poolCx = z.x + 8 + slot * ((z.w - 16) / (PARTICLES_PER_ZONE - 1));
+  const poolCy = z.y + 14;
+
+  const ageMs = nowMs - p.tsMs;
+  // Clamp to pool render on (a) animation complete, (b) negative age (clock
+  // skew or fixture timestamps in the future), (c) no entering arc modelled.
+  if (ageMs >= ANIM_MS || ageMs < 0) {
+    return { cx: poolCx, cy: poolCy, inFlight: false };
+  }
+  const start = enteringArcStart(p.tier);
+  if (!start) return { cx: poolCx, cy: poolCy, inFlight: false };
+
+  const progress = ageMs / ANIM_MS; // 0..1
+  return {
+    cx: start.x + (poolCx - start.x) * progress,
+    cy: start.y + (poolCy - start.y) * progress,
+    inFlight: true,
+  };
+}
+
+function particleCircle(p: Particle, idx: number, nowMs: number): VNode[] {
+  if (idx >= PARTICLES_PER_ZONE) return []; // older particles fall off-screen
+  const pos = particlePosition(p, idx, nowMs);
+  const inFlightCls = pos.inFlight ? " particle--in-flight" : "";
+  const failCls = p.ok ? "" : " particle--fail";
   return [
     h("circle", {
       id: p.id,
-      class: `particle particle--${p.tier}${p.ok ? "" : " particle--fail"}`,
-      cx: String(cx),
-      cy: String(cy),
+      class: `particle particle--${p.tier}${failCls}${inFlightCls}`,
+      cx: String(pos.cx),
+      cy: String(pos.cy),
       r: "4",
     }),
   ];
