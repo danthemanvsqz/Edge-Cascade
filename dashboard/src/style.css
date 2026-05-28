@@ -119,6 +119,14 @@ body.dashboard {
 .particle--verify { fill: var(--tier-verify); }
 .particle--cloud { fill: var(--tier-cloud); }
 .particle--fail { fill: var(--fail); }
+/* SD-P1: in-flight particles (mid-arc) get a brighter halo so the river
+ * read is "the bright ones are moving, the dim ones are at rest." Pure
+ * visual cue -- the in-flight class is set by particlePosition() on
+ * particles whose age < ANIM_MS. */
+.particle--in-flight {
+  filter: drop-shadow(0 0 3px currentColor);
+  opacity: 0.95;
+}
 
 .sparkline { stroke-width: 1.2; opacity: 0.85; }
 .sparkline--npu { stroke: var(--tier-npu); }
