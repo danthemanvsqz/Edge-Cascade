@@ -23,6 +23,18 @@ def _enable_warn_prompt(monkeypatch):
     monkeypatch.setattr(mesh, "CONFIG", replace(mesh.CONFIG, warn_prompt_enabled=True))
 
 
+def _enable_skip_repair_on_degen(monkeypatch, *, floor=0.30):
+    """Flip CONFIG.skip_repair_on_degen=True for the duration of one test.
+    Default-off in production (PD-1 v2 skip-repair experiment lever); tests that
+    exercise the short-circuit path must opt in. `floor` overrides the score
+    threshold so tests that drive a borderline degen result can pin behaviour."""
+    monkeypatch.setattr(
+        mesh, "CONFIG",
+        replace(mesh.CONFIG, skip_repair_on_degen=True,
+                skip_repair_score_floor=floor),
+    )
+
+
 def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
              gen_text="GEN", gate_seq=None, gen_available=True,
              igpu_text=None):
@@ -367,3 +379,49 @@ def test_warn_prompt_default_off_does_not_thread_even_when_degraded():
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     assert c["_last_degen"] == ()
     assert not any(line.startswith("warn-prompt") for line in out.trace)
+
+
+# ---- PD-1 v2 skip-repair action lever -------------------------------------
+
+
+def test_skip_repair_caps_immediately_on_degraded_draft(monkeypatch):
+    """When CONFIG.skip_repair_on_degen is on AND the NPU draft observation
+    scores >= the floor, mesh.solve bypasses the GPU phase entirely and hands
+    off to Tier-3 -- no generate, no repair_prompt, no gate calls past the
+    initial draft. The trip is the active lever; the experiment harness
+    (scripts/skip_repair_validation.py) flips this on per arm."""
+    _enable_skip_repair_on_degen(monkeypatch)
+    ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "capped->tier3" and out.capped
+    assert out.repair_rounds == 0 and out.answer is None
+    # GPU never spun; the draft + its single gate call are the only ops.
+    assert c["draft"] == 1 and c["gate"] == 1
+    assert c["generate"] == 0 and c["repair_prompt"] == 0
+    assert any(line.startswith("skip-repair:") for line in out.trace)
+
+
+def test_skip_repair_does_not_fire_on_clean_draft(monkeypatch):
+    """A clean NPU draft (score < floor) must NOT trigger the short-circuit
+    even when the lever is enabled -- the lever is a quality gate, not an
+    unconditional escalation. Gate fails so we still see GPU repair as today."""
+    _enable_skip_repair_on_degen(monkeypatch)
+    ops, c = make_ops(draft_text="def f(): return 1", gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    assert c["generate"] == 1 and c["repair_prompt"] == 1
+    assert not any(line.startswith("skip-repair:") for line in out.trace)
+
+
+def test_skip_repair_default_off_runs_gpu_repair_as_today():
+    """Default-off path (production): a degraded NPU draft still escalates to
+    the bounded GPU repair loop, byte-identical to pre-lever behaviour. Pinned
+    so a future experiment finding can flip the default without silently
+    changing other consumers' expectations. Mirror of the warn-prompt
+    default-off pin (PD-1 v2 precedent)."""
+    # Do NOT enable skip_repair_on_degen -- exercise the default config.
+    ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
+    out = mesh.solve("q", "balanced", ops)
+    assert out.final_tier == "gpu" and out.repair_rounds == 1
+    assert c["generate"] == 1 and c["repair_prompt"] == 1
+    assert not any(line.startswith("skip-repair:") for line in out.trace)

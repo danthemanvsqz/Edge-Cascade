@@ -184,6 +184,23 @@ class Config:
     warn_prompt_enabled: bool = field(
         default_factory=lambda: os.environ.get("CASCADE_WARN_PROMPT_ENABLED") == "1"
     )
+    # PD-1 v2 skip-repair action lever. When True, cascade.mesh.solve bypasses
+    # the GPU phase entirely when the NPU/iGPU draft observation comes back
+    # degraded at score >= skip_repair_score_floor -- the cascade hands off to
+    # Tier-3 immediately rather than burning a repair round on a poisoned prior.
+    # Default OFF; the v2 verification log shows 0 score>=0.30 hits on 27
+    # correct-code negatives, so this is the conservative trip rule. The lever
+    # is the experiment for the PD-1 v2 'skip-repair' A/B sweep -- keep an eye
+    # on the eventual docs/FINDINGS-pd1-v2-skip-repair.md before changing the
+    # default. Tune via CASCADE_SKIP_REPAIR_ON_DEGEN=1.
+    skip_repair_on_degen: bool = field(
+        default_factory=lambda: os.environ.get(
+            "CASCADE_SKIP_REPAIR_ON_DEGEN") == "1"
+    )
+    skip_repair_score_floor: float = field(
+        default_factory=lambda: float(
+            os.environ.get("CASCADE_SKIP_REPAIR_SCORE_FLOOR", "0.30"))
+    )
     # difficulty < this  -> Tier-1 (NPU/iGPU) draft handles it
     # [this, cloud)       -> Tier-2 (NVIDIA GPU)
     # >= cloud            -> Tier-3 (cloud), skipping the GPU
