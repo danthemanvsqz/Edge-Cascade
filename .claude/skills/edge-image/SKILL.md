@@ -60,24 +60,61 @@ curl -s -X POST http://localhost:8188/generate -H 'Content-Type: application/jso
 Returns `{"path": "runs/artifacts/<ts>-<seed>.png", "seed":..., "latency_s":...}`.
 The server already recorded it to `runs/edge-image.rec` (telemetry; $0).
 
-## 3. Critique — with your own vision
+## 3. Critique — opt-in, not default
 
-**Read the PNG** (`Read(<path>)`) so you actually SEE it, then judge it against
-the user's intent — composition, prompt adherence, obvious artifacts (hands,
-faces, garbled text), framing. Be specific and honest; don't claim it's good
-without looking.
+**Default = skip to §5 Deliver.** Report the artifact path + spec and let the
+user decide whether to look at the result themselves. The critique step is a
+real Tier-3 turn that can halt on the output filter for affect-laden prompts
+(see "Affect-heavy prompts" below); making it opt-in keeps the happy path
+robust.
 
-## 4. Iterate (bounded)
+**Critique only when EITHER:**
+- The user asks for feedback / iteration / "is it good?", or
+- The user's original intent included a specific quality bar that needs
+  verification (and even then, ask first: "want me to look at it before
+  delivering?"), or
+- They invoked the skill with an explicit critique request in the same turn.
 
-If it misses, change ONE lever at a time and regenerate (keep the seed to test a
-prompt change; change the seed to roll a new composition). **Cap at ~3 rounds** —
-then show the best result and tell the user what you'd try next rather than
-looping forever.
+If critiquing: **Read the PNG** (`Read(<path>)`) so you actually SEE it, then
+judge it against the user's intent — composition, prompt adherence, obvious
+artifacts (hands, faces, garbled text), framing. Be specific and honest; don't
+claim it's good without looking.
+
+### Affect-heavy prompts — prefer direct-drive
+
+Prompts touching emotional themes (loss, catharsis, distress, grief, "dark
+place", trauma, etc.) can halt the Tier-3 critique turn on the Anthropic API's
+output filter — `400 Output blocked by content filtering policy` — even when
+the actual narrative is uplifting. The filter scores model TEXT output, not
+the image; the diagnosis is documented in
+`docs/FINDINGS-edge-image-content-filter.md`. For these prompts:
+
+- **Default to NO critique** (don't `Read` the PNG, don't write prose about it).
+  Deliver the artifact path + spec and stop.
+- **Or prefer `scripts/sdxl.py`** (EI-1, the direct-drive client shipped in
+  PR #63): `uv run python scripts/sdxl.py --prompt "..."`. It POSTs the same
+  spec to the same server but cuts Tier-3 out of the loop entirely — no
+  mediation, no critique, no filter exposure.
+
+The user can always come back and ask for a look at the result; the lifeline
+is that the agent turn doesn't get killed mid-flow.
+
+## 4. Iterate — opt-in, paired with critique
+
+Iteration only runs when the critique step ran AND found something to fix. If
+§3 was skipped (the default), §4 is skipped too — the user iterates themselves
+by re-invoking the skill with adjusted intent. When iterating: change ONE lever
+at a time and regenerate (keep the seed to test a prompt change; change the
+seed to roll a new composition). **Cap at ~3 rounds** — then show the best
+result and tell the user what you'd try next rather than looping forever.
 
 ## 5. Deliver
 
 Report the final `runs/artifacts/…png` path, the exact spec used (so it's
-reproducible), and a one-line note on what worked / what to tune.
+reproducible), and a one-line note on what worked / what to tune. If §3 was
+skipped, the "what worked" line is the spec rationale ("layered subject /
+style / 30 steps / seed 12345 for reproducibility"), not a vision-derived
+judgment.
 
 ## Boundaries
 - Local only; **never** a paid tier — image-gen is $0.
@@ -85,3 +122,6 @@ reproducible), and a one-line note on what worked / what to tune.
   user to start it; don't try to load SDXL yourself.
 - If the user is mid-coding, warn that starting the image server evicts the
   coder from VRAM (and vice-versa) until the Celery model-swap arbiter lands.
+- Don't critique an affect-heavy result speculatively. The filter that halts
+  the Tier-3 turn doesn't care about your good intent — see "Affect-heavy
+  prompts" above.
