@@ -96,6 +96,10 @@ body.dashboard {
   stroke-width: 1;
 }
 .zone--npu .zone-rect { stroke: var(--tier-npu); }
+/* iGPU shares the NPU mint stroke (both are Tier-1 capacity-band drafters)
+ * but renders with a dashed border so the layout reads "optional sibling"
+ * not "second NPU". No new palette colour. */
+.zone--igpu .zone-rect { stroke: var(--tier-npu); stroke-dasharray: 4 3; }
 .zone--gpu .zone-rect { stroke: var(--tier-gpu); }
 .zone--verify .zone-rect { stroke: var(--tier-verify); }
 .zone--tier3 .zone-rect { stroke: var(--tier-tier3); }

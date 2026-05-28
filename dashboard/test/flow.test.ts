@@ -7,6 +7,8 @@ import {
   cascadeFlowRegion,
   cascadeFlowTopology,
   enteringArcStart,
+  hasActiveAnimation,
+  HEARTBEAT_MS,
   isTierPulsing,
   particlePosition,
   PULSE_MS,
@@ -25,12 +27,14 @@ function makeCtx(nowMs = 100_000): DashContext {
 }
 
 describe("cascadeFlowTopology (static)", () => {
-  it("renders an 800x400 SVG with the five zone labels and the five path arcs", () => {
+  it("renders an 800x400 SVG with the six zone labels and the eight path arcs", () => {
     const html = renderToString(cascadeFlowTopology());
     expect(html).toContain('viewBox="0 0 800 400"');
-    // Every zone label appears
+    // Every zone label appears (NPU and iGPU are sibling Tier-1 drafters; the
+    // pair lets the cascade.mesh.solve graph render faithfully).
     for (const label of [
       "Tier 1 · NPU",
+      "Tier 1b · iGPU",
       "Tier 2 · GPU",
       "verify",
       "Tier 3 · Claude CLI",
@@ -38,10 +42,13 @@ describe("cascadeFlowTopology (static)", () => {
     ]) {
       expect(html).toContain(label);
     }
-    // Every path id appears (animateMotion targets in Phase B)
+    // Every path id appears (animateMotion targets in Phase B). Two new
+    // arcs: route-to-igpu (parallel entry) and igpu-to-gpu (sibling feed).
     for (const pathId of [
       "route-to-npu",
+      "route-to-igpu",
       "npu-to-gpu",
+      "igpu-to-gpu",
       "gpu-to-verify",
       "verify-loop",
       "verify-cap-to-tier3",
@@ -52,7 +59,88 @@ describe("cascadeFlowTopology (static)", () => {
     // Zone rect styling hooks
     expect(html).toContain('class="zone-rect"');
     expect(html).toContain("zone--npu");
+    expect(html).toContain("zone--igpu");
     expect(html).toContain("zone--tier3");
+  });
+});
+
+describe("hasActiveAnimation (SD-P3 heartbeat predicate)", () => {
+  function lastIngestStub(map: Partial<Record<Tier, number | null>>): (
+    t: Tier,
+  ) => number | null {
+    const full: Record<Tier, number | null> = {
+      npu: null, gpu: null, verify: null, cloud: null,
+      ...map,
+    };
+    return (t) => full[t];
+  }
+
+  function makeParticle(tier: Tier, tsMs: number): Particle {
+    return {
+      id: `p-${tier}-x`, tier, server: `edge-${tier}`, seq: "0",
+      tool: "x", tsMs, latencyMs: 0, ok: true,
+    };
+  }
+
+  it("returns false when nothing has happened (idle dashboard issues zero ticks)", () => {
+    expect(
+      hasActiveAnimation([], lastIngestStub({}), 100_000),
+    ).toBe(false);
+  });
+
+  it("returns true while a particle is mid SD-P1 arc (age < ANIM_MS)", () => {
+    const p = makeParticle("npu", 100_000);
+    expect(
+      hasActiveAnimation([p], lastIngestStub({}), 100_000 + ANIM_MS - 1),
+    ).toBe(true);
+  });
+
+  it("returns false once every particle has finished its SD-P1 arc", () => {
+    const p = makeParticle("npu", 100_000);
+    // Boundary: age === ANIM_MS counts as DONE per particlePosition's
+    // ageMs >= ANIM_MS clamp; the heartbeat predicate must agree.
+    expect(
+      hasActiveAnimation([p], lastIngestStub({}), 100_000 + ANIM_MS),
+    ).toBe(false);
+  });
+
+  it("returns true while any SD-P2 zone is still pulsing (any tier counts)", () => {
+    // No particles, but the gpu tier last ingested PULSE_MS - 1 ago.
+    expect(
+      hasActiveAnimation(
+        [],
+        lastIngestStub({ gpu: 100_000 }),
+        100_000 + PULSE_MS - 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false once every SD-P2 pulse has expired", () => {
+    expect(
+      hasActiveAnimation(
+        [],
+        lastIngestStub({ gpu: 100_000 }),
+        100_000 + PULSE_MS,
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores future-stamped particles (negative age) so a clock-skew record can't keep the chain alive forever", () => {
+    // Defensive: a particle whose tsMs is in the future shouldn't be treated
+    // as "still animating" by the heartbeat predicate (it would never settle).
+    // SD-P2's isTierPulsing intentionally accepts negative age as "just
+    // landed", so this only applies to the SD-P1 particle branch.
+    const futureParticle = makeParticle("npu", 200_000);
+    expect(
+      hasActiveAnimation([futureParticle], lastIngestStub({}), 100_000),
+    ).toBe(false);
+  });
+
+  it("HEARTBEAT_MS is a small positive number (12 Hz-ish, not zero)", () => {
+    // Guard against an accidental change to 0 or a huge value -- the user
+    // tunes the cadence here, but it must stay in a usable window.
+    expect(HEARTBEAT_MS).toBeGreaterThan(0);
+    expect(HEARTBEAT_MS).toBeLessThan(500);
   });
 });
 

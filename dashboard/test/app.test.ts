@@ -321,6 +321,101 @@ describe("tailer -> hub wiring", () => {
   });
 });
 
+describe("SD-P3 heartbeat (createDashboardApp scheduler chain)", () => {
+  it("schedules a heartbeat after a record-driven emit, and self-loops while in-flight animations remain", async () => {
+    // Build a scenario-local app with an injected scheduler so we can
+    // observe and drive the heartbeat chain without real time.
+    const localRunsDir = await fs.mkdtemp(join(tmpdir(), "dashboard-hb-"));
+    let now = 100_000;
+    const scheduled: Array<{ cb: () => void; ms: number }> = [];
+    const localApp = createDashboardApp({
+      runsDir: localRunsDir,
+      tailerIntervalMs: 1_000_000,
+      nowMs: () => now,
+      scheduleTimer: (cb, ms) => {
+        scheduled.push({ cb, ms });
+        return scheduled.length - 1;
+      },
+    });
+    try {
+      const conn = mockConn(localApp.ctx);
+      localApp.ctx.hub.subscribe(TICK, conn, cascadeFlowRegion);
+
+      await fs.writeFile(
+        join(localRunsDir, "edge-gpu.rec"),
+        dumpRecord(0, { tool: "generate", ts: "100", latency_ms: "42" }),
+      );
+      await localApp.tailer.tick();
+      // Record-driven emit landed: one push (the cascadeFlowRegion frame).
+      expect(conn.pushed).toHaveLength(1);
+      // And a heartbeat was scheduled at the canonical 80 ms cadence.
+      expect(scheduled).toHaveLength(1);
+      expect(scheduled[0]?.ms).toBeGreaterThan(0);
+      expect(scheduled[0]?.ms).toBeLessThan(500);
+
+      // Drive the heartbeat callback while the particle is still mid-arc.
+      now += scheduled[0]?.ms ?? 0;
+      scheduled[0]?.cb();
+      // Heartbeat fired its TICK -> another push.
+      expect(conn.pushed).toHaveLength(2);
+      // And a follow-on heartbeat was scheduled (still in-flight).
+      expect(scheduled).toHaveLength(2);
+
+      // Jump past both ANIM_MS and PULSE_MS -- nothing should be animating
+      // anymore. The next heartbeat fires its emit (we already scheduled it
+      // above) but then refuses to schedule a successor: the chain stops.
+      now = 100_000 + 5_000;
+      scheduled[1]?.cb();
+      expect(conn.pushed).toHaveLength(3);
+      expect(scheduled).toHaveLength(2); // no NEW heartbeat scheduled
+    } finally {
+      localApp.tailer.stop();
+      await fs.rm(localRunsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not double-schedule when a record arrives while a heartbeat is in flight", async () => {
+    // Single-flight invariant: maybeScheduleHeartbeat must no-op when a
+    // timer is already pending. Otherwise a busy ingest stream would stack
+    // parallel chains and the dashboard would re-emit at >> 12 Hz.
+    const localRunsDir = await fs.mkdtemp(join(tmpdir(), "dashboard-hb-"));
+    const scheduled: Array<{ cb: () => void; ms: number }> = [];
+    const localApp = createDashboardApp({
+      runsDir: localRunsDir,
+      tailerIntervalMs: 1_000_000,
+      nowMs: () => 100_000,
+      scheduleTimer: (cb, ms) => {
+        scheduled.push({ cb, ms });
+        return scheduled.length - 1;
+      },
+    });
+    try {
+      const conn = mockConn(localApp.ctx);
+      localApp.ctx.hub.subscribe(TICK, conn, cascadeFlowRegion);
+
+      await fs.writeFile(
+        join(localRunsDir, "edge-gpu.rec"),
+        dumpRecord(0, { tool: "generate", ts: "100" }),
+      );
+      await localApp.tailer.tick();
+      expect(scheduled).toHaveLength(1);
+
+      // Second record arrives BEFORE the heartbeat callback fires.
+      await fs.writeFile(
+        join(localRunsDir, "edge-npu.rec"),
+        dumpRecord(0, { tool: "draft", ts: "100" }),
+      );
+      await localApp.tailer.tick();
+      // Two record-driven pushes, but still only ONE pending heartbeat.
+      expect(conn.pushed).toHaveLength(2);
+      expect(scheduled).toHaveLength(1);
+    } finally {
+      localApp.tailer.stop();
+      await fs.rm(localRunsDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("degenPanelRegion", () => {
   function ingestDegen(
     tier: string,

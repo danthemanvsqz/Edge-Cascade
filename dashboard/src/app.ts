@@ -17,7 +17,7 @@ import type {
   VinylWSServer,
 } from "@danthemanvsqz/vinyl";
 
-import { cascadeFlowRegion } from "./flow.js";
+import { cascadeFlowRegion, hasActiveAnimation, HEARTBEAT_MS } from "./flow.js";
 import { page } from "./page.js";
 import {
   cascadeHealthRegion,
@@ -60,6 +60,10 @@ export interface CreateDashboardOptions {
    * auto-launched by `scripts/edge-cli.ps1` this is true, so the renderer only
    * shows records from THIS session, not whatever history `runs/` carries. */
   readonly startFromEof?: boolean;
+  /** SD-P3 heartbeat: injectable setTimeout so vitest can drive the tick
+   * chain deterministically without booting fake timers. Defaults to
+   * globalThis setTimeout in production. */
+  readonly scheduleTimer?: (cb: () => void, ms: number) => unknown;
 }
 
 export function createDashboardApp(
@@ -71,6 +75,30 @@ export function createDashboardApp(
     store,
     hub,
     nowMs: options.nowMs ?? Date.now,
+  };
+
+  // SD-P3 heartbeat: between record arrivals, particles ride their entering
+  // arcs (SD-P1, ANIM_MS=1500) and tier zones pulse (SD-P2, PULSE_MS=1200).
+  // Without a heartbeat the next render only happens when a new record lands,
+  // so an idle moment freezes mid-animation. The scheduler self-loops at
+  // HEARTBEAT_MS while `hasActiveAnimation` is true and stops naturally once
+  // the last in-flight thing settles -- an idle dashboard issues zero ticks.
+  const scheduleTimer = options.scheduleTimer ??
+    ((cb: () => void, ms: number) => setTimeout(cb, ms));
+  let heartbeatHandle: unknown = null;
+  const maybeScheduleHeartbeat = (): void => {
+    if (heartbeatHandle !== null) return; // single-flight: one tick in flight
+    const now = ctx.nowMs();
+    if (!hasActiveAnimation(
+      store.particles(),
+      (t) => store.lastIngestMs(t),
+      now,
+    )) return;
+    heartbeatHandle = scheduleTimer(() => {
+      heartbeatHandle = null;
+      hub.emit(TICK);
+      maybeScheduleHeartbeat();
+    }, HEARTBEAT_MS);
   };
 
   const tailer = createTailer({
@@ -90,6 +118,10 @@ export function createDashboardApp(
         server === CASCADE_SERVER
       ) {
         hub.emit(TICK);
+        // After the record-driven render, kick the heartbeat so the new
+        // particle's in-flight arc and the SD-P2 pulse window keep frames
+        // flowing until they expire.
+        maybeScheduleHeartbeat();
       }
     },
   });
