@@ -15,6 +15,7 @@ import { cascadeFlowRegion, cascadeFlowTopology } from "./flow.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
+  meshEffectivenessRegion,
   nowPlayingRegion,
   rateMeterRegion,
 } from "./panels.js";
@@ -57,6 +58,8 @@ export function page(ctx: DashContext): VNode {
         { class: "side" },
         h("h2", null, "now playing"),
         nowPlayingRegion.mount(ctx),
+        h("h2", null, "mesh effectiveness"),
+        meshEffectivenessRegion.mount(ctx),
         h("h2", null, "degeneration"),
         degenPanelRegion.mount(ctx),
       ),

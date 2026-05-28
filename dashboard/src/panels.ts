@@ -10,7 +10,7 @@ import { h, liveRegion } from "@danthemanvsqz/vinyl";
 import type { LiveRegion, VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import type { DegenObservation, DegenTier, Tier } from "./store.js";
+import type { CascadeOutcomes, DegenObservation, DegenTier, Tier } from "./store.js";
 
 /** The single signal that drives every region (for now). */
 export const TICK = "tick";
@@ -81,6 +81,69 @@ export const cascadeHealthRegion: LiveRegion<DashContext> = liveRegion(
     );
   },
 );
+
+/** SD-4: mesh effectiveness gauge. Cumulative cascade outcomes this session
+ * surfaced as four counts + a single percentage headline. Sourced from
+ * `cascade.rec` records (one per mesh.solve Outcome).
+ *
+ * Layout: a header row with the big effectiveness % + total runs, then four
+ * small "chips" -- resolved at NPU, resolved at GPU, capped to Tier 3, draft
+ * skipped. Skip count is informational (sibling to the outcome chips, not
+ * a fifth outcome) because a single run can be skipped AND resolved.
+ * Tints: header turns red when effectiveness < 50% AND total >= 5
+ * (small-sample guard so an early miss doesn't flash alarm). */
+export const meshEffectivenessRegion: LiveRegion<DashContext> = liveRegion(
+  "mesh-effectiveness",
+  (ctx) => {
+    const o = ctx.store.cascadeOutcomes();
+    return meshEffectivenessView(o);
+  },
+);
+
+/** Pure renderer separated for unit-testing without a full DashContext. */
+export function meshEffectivenessView(o: CascadeOutcomes): VNode {
+  if (o.total === 0) {
+    return h(
+      "div",
+      { class: "mesh-eff empty" },
+      h("span", { class: "mesh-eff-label" }, "mesh effectiveness"),
+      h("span", { class: "mesh-eff-pct" }, "—"),
+      h("span", { class: "mesh-eff-note" }, "no runs yet"),
+    );
+  }
+  // Small-sample guard: don't flash alarm on a single early failure.
+  const alarm = o.effectivenessPct < 50 && o.total >= 5;
+  const headerCls = alarm ? "mesh-eff alarm" : "mesh-eff ok";
+  return h(
+    "div",
+    { class: headerCls },
+    h(
+      "div",
+      { class: "mesh-eff-header" },
+      h("span", { class: "mesh-eff-label" }, "mesh effectiveness"),
+      h("span", { class: "mesh-eff-pct" }, `${o.effectivenessPct.toFixed(1)}%`),
+      h("span", { class: "mesh-eff-total" }, `${String(o.total)} runs`),
+    ),
+    h(
+      "div",
+      { class: "mesh-eff-chips" },
+      chip("resolved-npu", "@NPU", o.resolvedNpu),
+      chip("resolved-igpu", "@iGPU", o.resolvedIgpu),
+      chip("resolved-gpu", "@GPU", o.resolvedGpu),
+      chip("capped", "capped", o.capped),
+      chip("skipped", "skipped", o.draftSkipped),
+    ),
+  );
+}
+
+function chip(kind: string, label: string, count: number): VNode {
+  return h(
+    "span",
+    { class: `mesh-eff-chip ${kind}`, "data-count": String(count) },
+    h("span", { class: "chip-label" }, label),
+    h("span", { class: "chip-count" }, String(count)),
+  );
+}
 
 /** SD-2b: PD-1 v1 degeneration panel. One row per draft tier (NPU/GPU/iGPU);
  * each row paints (a) a score-history bar — discrete vertical bars, oldest
