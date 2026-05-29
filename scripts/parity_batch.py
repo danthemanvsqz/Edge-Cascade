@@ -1,7 +1,11 @@
-"""Slice-4 live parity batch: run 3 cases through the Canvas chain (and capture
-results in JSON). The pipe path (cli.py) is run separately because it builds
-its own cascade_session with NPU compile + cloud check; running both side by
-side from the same process would double-init.
+"""Live parity batch -- runs 3 cases through the Canvas chain and captures
+results in JSON. Originally landed for Slice 4 (Phase 1 closure) to verify
+the pipe path vs Canvas; extended for Slice 2 of Phase 2 to also pivot on
+the GPU backend (Ollama vs llama-cpp-python).
+
+  uv run python scripts/parity_batch.py                       # canvas, default backend
+  uv run python scripts/parity_batch.py --backend ollama      # canvas, Ollama explicit
+  uv run python scripts/parity_batch.py --backend llama_cpp   # canvas, llama-cpp direct
 
 Each canvas run captures:
   - Outcome shape (final_tier, resolved, capped, repair_rounds, difficulty)
@@ -13,9 +17,16 @@ Each canvas run captures:
 Forces os._exit(0) at the end because Celery's amqp/connection-pool threads
 hold the process alive past main()'s return; we don't need clean teardown
 for a one-shot batch.
+
+The `--backend` flag sets `CASCADE_GPU_BACKEND` BEFORE importing the cascade
+modules so `Config()` picks it up at construction. The worker side must be
+launched with the same backend env var (workers compile their model at boot;
+the client-side flag only governs which backend identifier ends up in the
+output JSON's metadata).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -55,10 +66,33 @@ def _rec_sizes() -> dict[str, int]:
 
 
 def main() -> None:
-    from cascade.canvas_client import solve_balanced_canvas
+    ap = argparse.ArgumentParser(
+        description="Dispatch the 3-case balanced-topology parity batch; "
+                    "write the JSON-encoded results to runs/parity-canvas[-<backend>].json.",
+    )
+    ap.add_argument(
+        "--backend", choices=("ollama", "llama_cpp"), default=None,
+        help="GPU backend identifier. Sets CASCADE_GPU_BACKEND for THIS process "
+             "(metadata only; the worker must be launched with the same flag). "
+             "Omit to use whatever the worker has configured.",
+    )
+    args = ap.parse_args()
 
-    out_path = Path("runs/parity-canvas.json")
+    if args.backend is not None:
+        # MUST be set before importing cascade -- Config() reads env at init.
+        os.environ["CASCADE_GPU_BACKEND"] = args.backend
+
+    from cascade.canvas_client import solve_balanced_canvas
+    from cascade.config import CONFIG
+
+    suffix = f"-{args.backend}" if args.backend else ""
+    out_path = Path(f"runs/parity-canvas{suffix}.json")
     results = []
+    metadata = {
+        "backend": args.backend or CONFIG.gpu_backend,
+        "gpu_model": CONFIG.gpu_model,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
     for case in CASES:
         pre = _rec_sizes()
         t0 = time.perf_counter()
@@ -85,9 +119,10 @@ def main() -> None:
                          f"resolved={result['resolved']} wall={result['wall_s']}s\n")
         sys.stderr.flush()
 
+    payload = {"metadata": metadata, "results": results}
     fd = os.open(str(out_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
     try:
-        os.write(fd, json.dumps(results, indent=2).encode("utf-8"))
+        os.write(fd, json.dumps(payload, indent=2).encode("utf-8"))
         os.fsync(fd)
     finally:
         os.close(fd)
