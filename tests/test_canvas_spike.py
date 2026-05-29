@@ -69,7 +69,7 @@ def _patch(mocker, *, verify_seq, gen_text=None):
 
 def test_pass_first_try(eager, mocker):
     gen, verify = _patch(mocker, verify_seq=[True])
-    out = canvas_spike.solve_balanced("write add(a, b)")
+    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "gpu"
     assert out["rounds"] == 0
     assert gen.call_count == 1
@@ -78,7 +78,7 @@ def test_pass_first_try(eager, mocker):
 
 def test_pass_after_one_repair(eager, mocker):
     gen, verify = _patch(mocker, verify_seq=[False, True])
-    out = canvas_spike.solve_balanced("write add(a, b)")
+    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "gpu"
     assert out["rounds"] == 1          # one retry happened -> self.request.retries
     assert gen.call_count == 2         # fresh + 1 repair
@@ -88,7 +88,7 @@ def test_pass_after_one_repair(eager, mocker):
 def test_always_fail_holds_the_cap(eager, mocker):
     # Gate fails on every attempt, more times than the loop can consume.
     gen, verify = _patch(mocker, verify_seq=[False] * (CAP + 5))
-    out = canvas_spike.solve_balanced("write add(a, b)")
+    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["rounds"] == CAP
     # THE INVARIANT: 1 fresh generate + CAP repairs, and NOT ONE MORE.
@@ -102,7 +102,7 @@ def test_gpu_unavailable_caps_immediately(eager, mocker):
         return_value={"available": False, "text": "[gpu unavailable]"},
     )
     verify = mocker.patch("cascade.tasks.verify_functional")
-    out = canvas_spike.solve_balanced("write add(a, b)")
+    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["reason"] == "gpu unavailable"
     assert gen.call_count == 1
@@ -121,9 +121,44 @@ def test_get_exhaustion_is_capped(mocker):
     fake.get.side_effect = MaxRetriesExceededError("exhausted")
     mocker.patch.object(canvas_spike.gpu_solve_task, "apply_async",
                         return_value=fake)
-    out = canvas_spike.solve_balanced("write add(a, b)")
+    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["rounds"] == CAP
+
+
+def test_dsl_none_uses_syntax_gate_not_verify_functional(eager, mocker):
+    """When dsl=None, gpu_solve_task must use the SYNTAX gate
+    (cascade.verifier.verify) instead of tasks.verify_functional. This is the
+    parity contract with the in-process pipe path (mesh.solve), which the
+    Slice-4 live-broker run surfaced: without this fallback every Canvas run
+    without a DSL caps to Tier-3 because the functional gate returns
+    applicable:false (= passed:false) when no DSL is supplied."""
+    # Mock generate to return a parseable Python block; verify_functional must
+    # NOT be called on the dsl=None path.
+    mocker.patch("cascade.tasks.generate", side_effect=lambda *a, **k: _gen())
+    verify_func = mocker.patch("cascade.tasks.verify_functional")
+    out = canvas_spike.solve_balanced("write add(a, b)")  # dsl=None
+    assert out["final_tier"] == "gpu"
+    assert out["rounds"] == 0
+    verify_func.assert_not_called()
+
+
+def test_dsl_none_caps_when_syntax_fails(eager, mocker):
+    """dsl=None path: if the generate text is NOT a parseable Python block,
+    the syntax gate fails and the cap engages through the same retry loop.
+    Cap invariant holds regardless of which gate is in play."""
+    mocker.patch(
+        "cascade.tasks.generate",
+        side_effect=lambda *a, **k: {
+            "available": True, "text": "not a code block",
+            "model": "fake", "latency_s": 0.0,
+        },
+    )
+    verify_func = mocker.patch("cascade.tasks.verify_functional")
+    out = canvas_spike.solve_balanced("x")  # dsl=None
+    assert out["final_tier"] == "capped->tier3"
+    assert out["rounds"] == CAP
+    verify_func.assert_not_called()
 
 
 def test_repair_threads_prior_draft_forward(eager, mocker):
@@ -137,7 +172,7 @@ def test_repair_threads_prior_draft_forward(eager, mocker):
         side_effect=[{"passed": False, "failures": ({"expr": "x"},)}
                      for _ in range(CAP + 1)],
     )
-    canvas_spike.solve_balanced("write add(a, b)")
+    canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
     # First call: no prior. Each subsequent call repairs ON the previous draft.
     assert gen.call_args_list[0].kwargs.get("prior_attempt") is None
     for i in range(1, CAP + 1):

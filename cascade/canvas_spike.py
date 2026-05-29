@@ -36,6 +36,7 @@ from __future__ import annotations
 from celery.exceptions import MaxRetriesExceededError
 
 from cascade import tasks
+from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
 from cascade.config import CONFIG
 
@@ -80,8 +81,23 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
         # mesh.solve's "gpu unavailable -> capped". No point retrying.
         return _capped(self.request.retries, reason="gpu unavailable")
 
-    verdict = tasks.verify_functional(gen["text"], dsl)
-    if verdict["passed"]:
+    # Gate. dsl=None => syntax-only (cascade.verifier.verify), matching the
+    # in-process pipe path's mesh.solve. dsl supplied => functional gate
+    # (tasks.verify_functional). The parity contract is the same as
+    # topologies_canvas._gate, just inlined here so canvas_spike stays
+    # self-contained (no dependency on the higher chain module).
+    if dsl:
+        verdict = tasks.verify_functional(gen["text"], dsl)
+        passed = bool(verdict.get("passed"))
+        failures = tuple(verdict.get("failures", ()))
+    else:
+        v = syntax_verifier.verify(gen["text"])
+        passed = v.passed
+        failures = () if v.passed else (
+            {"expr": "syntax", "observed": v.reason,
+             "requirement": "fenced Python block that compiles"},
+        )
+    if passed:
         return {"answer": gen["text"], "final_tier": "gpu",
                 "rounds": self.request.retries}
 
@@ -101,7 +117,7 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
     # wrong for a repair loop. (Eager execution ignores countdown, so the unit
     # tests pass either way; the broker path is what surfaces this.)
     raise self.retry(
-        exc=GateFailed(gen["text"], tuple(verdict.get("failures", ()))),
+        exc=GateFailed(gen["text"], failures),
         kwargs={"query": query, "dsl": dsl, "prior": gen["text"]},
         countdown=0,
     )

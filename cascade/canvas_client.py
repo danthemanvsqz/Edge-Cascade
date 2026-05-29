@@ -29,7 +29,7 @@ def solve_balanced_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
     `outcome.resolved` / `outcome.capped` consumers) swap with no shape
     change.
     """
-    env = balanced_signature(query, dsl).apply_async().get()
+    env = balanced_signature(query, dsl).apply_async().get(timeout=120)
     final_tier = env["final_tier"] or "capped->tier3"
     return mesh.Outcome(
         answer=env["answer"],
