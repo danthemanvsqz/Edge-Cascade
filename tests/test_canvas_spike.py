@@ -19,9 +19,16 @@ from __future__ import annotations
 
 import pytest
 
-from cascade import canvas_spike
-from cascade.celery_app import app
-from cascade.config import CONFIG
+# Celery is an opt-in extra (`uv sync --extra celery`); CI installs only the
+# `mcp` extra. Skip the whole module cleanly when celery isn't available so
+# the collection error doesn't redden the build. cascade.canvas_spike is also
+# in [tool.coverage.run] omit alongside its siblings cascade/celery_app.py and
+# cascade/tasks.py, so this skip doesn't break the 100% coverage gate.
+pytest.importorskip("celery", reason="celery is an opt-in extra")
+
+from cascade import canvas_spike  # noqa: E402  (skip-gated import)
+from cascade.celery_app import app  # noqa: E402
+from cascade.config import CONFIG  # noqa: E402
 
 CAP = CONFIG.repair_cap
 
