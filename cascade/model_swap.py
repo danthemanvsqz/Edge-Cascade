@@ -83,6 +83,19 @@ def get(name: str) -> object | None:
     return h.handle if h is not None else None
 
 
+def registered() -> list[str]:
+    """Return the sorted list of model names currently in the factory
+    registry. For the dashboard's "available models" panel + generate
+    tasks that need to validate their model name at task-call time
+    rather than at module import (so missing registrations fail loud
+    instead of silent default fall-throughs).
+
+    Slice 3c added this per the #97 reviewer observation that
+    `_FACTORIES` was being accessed as a private attr from outside the
+    module."""
+    return sorted(_FACTORIES)
+
+
 def status() -> dict:
     """Read-only snapshot for the dashboard + the `model.status` task.
     Returns {resident, vram_used_mb, vram_free_mb, vram_total_mb}. The
