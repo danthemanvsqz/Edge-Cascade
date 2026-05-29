@@ -116,6 +116,8 @@ omit = [
     "cascade/celery_app.py",
     "cascade/tasks.py",
     "cascade/canvas_spike.py",
+    "cascade/topologies_canvas.py",
+    "cascade/canvas_client.py",
     "mcp_servers/*",
     # scripts/: only edge_summary.py is in-scope. Everything else is
     # live/hardware/interactive (paid API, MCP stdio probes, SDXL server,
