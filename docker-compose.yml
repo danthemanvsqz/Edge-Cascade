@@ -10,6 +10,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: edge-cascade-redis
+    # Keep the broker up as a daemon: auto-restart on crash and when the Docker
+    # engine starts (e.g. on login), unless explicitly `docker stop`ed. This is
+    # the CONTAINER lifecycle only -- data stays ephemeral (no save / no AOF
+    # below), so a restart still comes up clean. (Engine-at-boot is a Docker
+    # Desktop "start on login" setting, separate from this policy.)
+    restart: unless-stopped
     ports:
       - "6379:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
