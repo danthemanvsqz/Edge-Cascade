@@ -1,0 +1,239 @@
+"""Named topologies as Celery Canvas signatures -- the tunable knob, lifted.
+
+This is the structural counterpart of `cascade.topologies` (which holds the
+named in-process strategies as data). Each Canvas signature here maps 1:1 onto
+the corresponding `Topology` entry, but the executor underneath is Celery
+instead of the in-process `mesh.solve` orchestrator (charter inv. 3:
+composition over named topologies; charter inv. 5: `.rec` stays at the op
+boundary, the executor below is what changed).
+
+Phase 1 ships ONE signature: `balanced`. Phase 2 adds `low_latency` (a
+`chord` racing NPU draft vs GPU generate) and `low_power` (no GPU at all).
+
+CHAIN SHAPE (balanced):
+
+    chain(
+      _balanced_route.s(env)       # NPU route -> env["difficulty"]
+      _balanced_draft.s()          # NPU draft if not skip_draft_above
+      _balanced_draft_gate.s()     # verify_functional on draft -> resolve or carry-forward
+      _balanced_gpu_solve.s()      # self.replace() into spike's bounded repair loop
+      _balanced_cloud.s()          # paid escalation on cap (no-op if cloud disabled)
+    )
+
+Each step takes and returns the SAME envelope dict (D1 in
+docs/PLAN-canvas-phase1.md). A step that finds `env["resolved"] or
+env["capped"]` set returns its input unchanged -- the resolved-shortcut
+pattern means the chain still walks, but only the unresolved steps do work.
+
+THE CAP (the load-bearing invariant): lives inside `gpu_solve_task` as
+`max_retries=CONFIG.repair_cap`, proven by the Phase-0 spike on both eager
+and live-broker paths. Slice 3's chain composition cannot breach the cap
+because the cap is a property of the TASK, not the graph (see
+docs/FINDINGS-canvas-repair-retry-spike.md). The chain merely hands off to
+the proven retrying task via `self.replace()`.
+
+GPU-SOLVE HANDOFF (the one Slice 3-specific risk this de-risks): the chain
+step `_balanced_gpu_solve` calls `self.replace(chain(gpu_solve_task,
+_merge_gpu))` so the spike's retrying task runs in this slot, then its
+terminal dict ({answer, final_tier, rounds, ...}) is folded back into the
+envelope before the next outer step sees it. Probe-verified in eager mode
+(see Slice 3 PR description). Live-broker verification rides on Slice 4's
+findings doc.
+"""
+from __future__ import annotations
+
+from celery import chain
+
+from cascade import canvas_spike, tasks
+from cascade import topologies as topo_module
+from cascade.celery_app import app
+from cascade.config import CONFIG
+
+
+def _new_envelope(query: str, dsl: str | None, topology: str) -> dict:
+    """Initial envelope -- the SOLE state the chain threads. JSON-clean
+    (charter inv. 2): plain types, no live handles. Field semantics match
+    `mesh.Outcome` so the client-side adapter (`cascade.canvas_client`) can
+    swap callers without a shape translation."""
+    return {
+        # Final-shape fields, populated as the chain progresses.
+        "answer": None,
+        "final_tier": "",
+        "resolved": False,
+        "capped": False,
+        "repair_rounds": 0,
+        "difficulty": 0.0,
+        "topology": topology,
+        "trace": [],
+        # Carry-forward fields the next step needs.
+        "query": query,
+        "dsl": dsl,
+        "prior": None,
+        "failures": [],
+    }
+
+
+def _shortcut(env: dict) -> bool:
+    """A step is no-op when the chain already has its answer (resolved) or
+    has handed off to Tier-3/cloud (capped). The chain still walks every
+    step; this just makes each step a pass-through when its work is moot."""
+    return bool(env.get("resolved") or env.get("capped"))
+
+
+@app.task(name="mesh.balanced._route", queue="npu", bind=True)
+def _balanced_route(self, env: dict) -> dict:
+    """Step 1: NPU route. Fills env["difficulty"] + appends a trace line.
+    Calling the recorded `tasks.route` directly (not via the Celery wrapper)
+    keeps the .rec write at this op boundary (charter inv. 5) without a
+    second dispatch round-trip."""
+    if _shortcut(env):
+        return env
+    r = tasks.route(env["query"])
+    env["difficulty"] = r.get("difficulty", 0.0)
+    env["trace"].append(
+        f"route difficulty={env['difficulty']:.2f} "
+        f"category={r.get('category', 'standard')}"
+    )
+    return env
+
+
+@app.task(name="mesh.balanced._draft", queue="npu", bind=True)
+def _balanced_draft(self, env: dict) -> dict:
+    """Step 2: NPU draft (skipped above the route-difficulty threshold per
+    the balanced topology's `skip_draft_above`). Fills env["prior"] with the
+    candidate text for the gate step to consume."""
+    if _shortcut(env):
+        return env
+    balanced = topo_module.get("balanced")
+    if (balanced.skip_draft_above is not None
+            and env["difficulty"] >= balanced.skip_draft_above):
+        env["trace"].append(
+            f"npu draft skipped (difficulty>={balanced.skip_draft_above})"
+        )
+        return env
+    cand = tasks.draft(env["query"])
+    if not cand.get("available", True):
+        env["trace"].append("npu unavailable -> GPU phase from scratch")
+        return env
+    env["prior"] = cand.get("text", "")
+    env["trace"].append(f"npu draft -> {len(env['prior'])} chars")
+    return env
+
+
+@app.task(name="mesh.balanced._draft_gate", queue="verify", bind=True)
+def _balanced_draft_gate(self, env: dict) -> dict:
+    """Step 3: gate the NPU draft via the deterministic verifier. PASS =>
+    resolve (final_tier="npu"). FAIL => carry env["prior"]/env["failures"]
+    forward so GPU repairs on it (the bounded repair loop)."""
+    if _shortcut(env) or not env["prior"]:
+        return env
+    verdict = tasks.verify_functional(env["prior"], env["dsl"])
+    if verdict.get("passed"):
+        env["answer"] = env["prior"]
+        env["final_tier"] = "npu"
+        env["resolved"] = True
+        env["trace"].append("npu gate PASS")
+        return env
+    env["failures"] = list(verdict.get("failures", ()))
+    env["trace"].append("npu gate FAIL")
+    return env
+
+
+@app.task(name="mesh.balanced._gpu_solve", queue="gpu", bind=True)
+def _balanced_gpu_solve(self, env: dict):
+    """Step 4: the headline -- hand off to the spike's bounded GPU repair
+    loop. Uses `self.replace(chain(gpu_solve_task, _merge_gpu_into_env))`:
+
+    - `gpu_solve_task` runs with its `max_retries=CONFIG.repair_cap` cap (the
+      structural cap the spike proved holds eager + broker).
+    - `_merge_gpu_into_env` folds gpu_solve_task's terminal dict back into
+      the envelope so the next outer step (`_balanced_cloud`) sees the
+      envelope shape, not the gpu_solve_task shape.
+    - The OUTER chain continues to `_balanced_cloud` after the merge,
+      because `self.replace` inserts the replacement IN PLACE.
+
+    The cap cannot be breached by this composition because the cap is a
+    property of `gpu_solve_task.max_retries`, not the graph."""
+    if _shortcut(env):
+        return env
+    env["trace"].append("gpu solve (bounded repair loop)")
+    return self.replace(
+        chain(
+            canvas_spike.gpu_solve_task.s(
+                query=env["query"], dsl=env["dsl"], prior=env["prior"],
+            ),
+            _merge_gpu_into_env.s(env=env),
+        )
+    )
+
+
+@app.task(name="mesh.balanced._merge_gpu", queue="gpu", bind=True)
+def _merge_gpu_into_env(self, gpu_result: dict, env: dict) -> dict:
+    """Fold gpu_solve_task's terminal dict ({answer, final_tier, rounds, ...})
+    into the envelope. `env` is captured by signature at chain-build time;
+    `gpu_result` is the previous chain step's return.
+
+    Two paths:
+    - gpu_solve_task succeeded => resolved=True, final_tier="gpu", record rounds.
+    - gpu_solve_task capped    => capped=True, record rounds for the cloud step."""
+    rounds = int(gpu_result.get("rounds", 0))
+    env["repair_rounds"] = rounds
+    if gpu_result.get("final_tier") == "gpu":
+        env["resolved"] = True
+        env["answer"] = gpu_result.get("answer")
+        env["final_tier"] = "gpu"
+        env["trace"].append(
+            "gpu gate PASS"
+            + (f" (repair round {rounds})" if rounds else "")
+        )
+    else:
+        env["capped"] = True
+        env["trace"].append(
+            f"-> {gpu_result.get('final_tier', 'capped->tier3')}"
+        )
+    return env
+
+
+@app.task(name="mesh.balanced._cloud", queue="cloud", bind=True)
+def _balanced_cloud(self, env: dict) -> dict:
+    """Step 5: paid escalation if capped AND CONFIG.enable_cloud. When cloud
+    is disabled, `capped=True` rides forward to the client and gets surfaced
+    as the `capped->tier3` Outcome -- same hand-off as today's cascade when
+    locals exhaust without --cloud.
+
+    Dispatching `cloud_generate_task` from THIS step (vs. running its body
+    in-process) is the seam multi-box needs: the cloud queue is consumed by
+    a worker on the paid host, not the same box doing route/draft. For
+    Phase 1 single-box, we call the recorded fn directly (no second hop)
+    since the queue topology + worker pinning is Phase 2's concern."""
+    if env.get("resolved") or not env.get("capped"):
+        return env
+    if not CONFIG.enable_cloud:
+        env["trace"].append("cloud disabled -> caller takes over")
+        return env  # capped stays True; client surfaces capped->tier3.
+    c = tasks.cloud_generate(env["query"])
+    if c.get("available"):
+        env["resolved"] = True
+        env["capped"] = False
+        env["answer"] = c.get("text")
+        env["final_tier"] = "cloud"
+        env["trace"].append("cloud generate -> resolved")
+    else:
+        env["trace"].append(
+            f"cloud unavailable: {c.get('reason', 'unknown')}"
+        )
+    return env
+
+
+def balanced_signature(query: str, dsl: str | None = None):
+    """Build the Canvas signature for the `balanced` topology. The client
+    dispatches this with `.apply_async()` and blocks on `.get()` for the
+    final envelope (see `cascade.canvas_client.solve_balanced_canvas`)."""
+    env = _new_envelope(query, dsl, topology="balanced")
+    return chain(
+        _balanced_route.s(env),
+        _balanced_draft.s(),
+        _balanced_draft_gate.s(),
+        _balanced_gpu_solve.s(),
+        _balanced_cloud.s(),
+    )
