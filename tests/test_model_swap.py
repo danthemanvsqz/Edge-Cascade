@@ -18,10 +18,19 @@ from cascade.config import CONFIG
 @pytest.fixture(autouse=True)
 def _reset_swap_state():
     """Module-level singletons in model_swap leak across tests; clear
-    them per case so each test sees a pristine arbiter."""
+    them per case so each test sees a pristine arbiter.
+
+    Save / restore the `_FACTORIES` dict around each test: cascade.tasks
+    registers `qwen14b` at module import (Slice 3b), and tests in OTHER
+    files (e.g. test_canvas_balanced.py) rely on that registration being
+    present when they import cascade.tasks. Without save/restore, the
+    test_model_swap.py tests would wipe `_FACTORIES` and break tests in
+    other files that run later in the same process."""
+    saved_factories = dict(model_swap._FACTORIES)
     model_swap._reset_for_tests()
     yield
     model_swap._reset_for_tests()
+    model_swap._FACTORIES.update(saved_factories)
 
 
 def _fake_handle(name: str) -> object:

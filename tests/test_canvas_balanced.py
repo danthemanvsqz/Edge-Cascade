@@ -300,6 +300,56 @@ def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
     assert outcome.answer == "```python\ngpu fresh\n```"
 
 
+def test_qwen14b_is_registered_at_import(eager):
+    """cascade.tasks registers `qwen14b` at module import (Slice 3b) so
+    `chain(model.swap.s("qwen14b"), ...)` resolves to a known factory.
+    Pinned because Slice 3c will rely on a non-empty registry to
+    differentiate the swap-happens path from swap-noops.
+
+    Tests don't assume initial residency state -- prior tests in this
+    file may have driven a balanced chain that already loaded qwen14b
+    via the swap step. The registry presence is the load-bearing
+    contract; residency depends on which tests ran already."""
+    from cascade import model_swap
+    assert "qwen14b" in model_swap._FACTORIES
+    _, footprint = model_swap._FACTORIES["qwen14b"]
+    assert footprint > 0
+
+
+def test_balanced_chain_dispatches_swap_before_gpu_solve(eager, mocker):
+    """The chain step `_balanced_gpu_solve` MUST prepend
+    `model.swap_task("qwen14b")` so the arbiter loads the model before
+    gpu_solve_task runs. Pinned by spying on `model_swap.swap` and
+    driving a full balanced chain that escalates to GPU.
+
+    Without this guarantee Slice 3c's multi-model swap wouldn't fire on
+    a GPU escalation."""
+    from cascade import model_swap
+    spy = mocker.spy(model_swap, "swap")
+    _route(mocker)
+    _draft(mocker, text="```python\nbad draft\n```")
+    _verify(mocker, [False, True])  # NPU fail -> GPU first attempt pass
+    _generate(mocker, text="```python\ngpu fix\n```")
+    canvas_client.solve_balanced_canvas("write a fn", dsl="DSL")
+    # The swap was called for qwen14b at least once during the chain.
+    swap_calls = [c for c in spy.call_args_list if c.args == ("qwen14b",)]
+    assert len(swap_calls) >= 1
+
+
+def test_generate_alias_preserves_callers():
+    """The Slice-3b rename keeps `cascade.tasks.generate` bound to the
+    new `generate_qwen14b` for one release. Existing callers that
+    reach for `tasks.generate(...)` (notably canvas_spike's
+    gpu_solve_task at the @recorded layer) keep working with no edit."""
+    from cascade import tasks
+    assert tasks.generate is tasks.generate_qwen14b
+    # Same Celery task NAME stays bound under both legacy + new
+    # attribute names, so a worker that registered `mesh.generate` keeps
+    # working AND the new `mesh.generate_qwen14b` is also dispatchable.
+    assert tasks.generate_task.name == "mesh.generate"
+    assert tasks.generate_qwen14b_task.name == "mesh.generate_qwen14b"
+
+
 def test_canvas_client_returns_mesh_outcome_shape(eager, mocker):
     """The client's Outcome is the SAME `mesh.Outcome` dataclass `mesh.solve`
     returns -- callers can swap `cascade.canvas_client.solve_balanced_canvas`

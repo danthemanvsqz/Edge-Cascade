@@ -70,10 +70,12 @@ def _get_npu() -> tuple[NPUWorker | None, str | None]:
 
 
 @recorded(_GPU_REC)
-def generate(prompt: str, prior_attempt: str | None = None,
-             max_tokens: int | None = None) -> dict:
-    """Tier-2 generate (mirrors mcp_servers/gpu.py) -> records edge-gpu.rec.
-    `available:false` is a clean status, not an error -- the cascade hands off."""
+def generate_qwen14b(prompt: str, prior_attempt: str | None = None,
+                     max_tokens: int | None = None) -> dict:
+    """Tier-2 generate via qwen2.5-coder:14b (the Phase-1 default; renamed
+    from `generate` in Slice 3b for the per-model task naming convention,
+    see docs/DESIGN-celery-phase2.md). Records edge-gpu.rec; `available:false`
+    is a clean status, not an error -- the cascade hands off."""
     if not _gpu.available():
         return {"available": False, "model": CONFIG.gpu_model,
                 "text": "[gpu tier unavailable -- Ollama not reachable]",
@@ -86,6 +88,15 @@ def generate(prompt: str, prior_attempt: str | None = None,
     return {"available": r.available, "text": r.text, "model": r.model,
             "tokens_per_s": round(r.tokens_per_s, 2),
             "latency_s": round(r.latency_s, 2)}
+
+
+# Backwards-compat alias for one release. Existing callers (cascade.canvas_spike
+# at the recorded-fn level, the test suite at the mock level) reach for
+# `cascade.tasks.generate`; keep the binding so they don't break atomically.
+# Remove in Slice 3c or later once all callers have migrated to the per-model
+# name. NOT a re-decoration -- this is the SAME function object, so the @recorded
+# wrapper fires once per call regardless of which name was used.
+generate = generate_qwen14b
 
 
 @recorded(_VERIFY_REC)
@@ -111,10 +122,21 @@ def verify_functional(text: str, dsl: str | None = None) -> dict:
     return json.loads(proc.stdout)
 
 
+@app.task(name="mesh.generate_qwen14b", queue="gpu")
+def generate_qwen14b_task(prompt: str, prior_attempt: str | None = None,
+                          max_tokens: int | None = None) -> dict:
+    return generate_qwen14b(prompt, prior_attempt, max_tokens)
+
+
+# Backwards-compat alias for one release. The Celery task NAME stays
+# `mesh.generate` so existing workers/clients that referenced it by name keep
+# working; the Python-side binding `tasks.generate_task` also stays bound so
+# code paths that imported it under that name don't break. Slice 3c+ removes
+# the alias once all references have migrated.
 @app.task(name="mesh.generate", queue="gpu")
 def generate_task(prompt: str, prior_attempt: str | None = None,
                   max_tokens: int | None = None) -> dict:
-    return generate(prompt, prior_attempt, max_tokens)
+    return generate_qwen14b(prompt, prior_attempt, max_tokens)
 
 
 @app.task(name="mesh.verify_functional", queue="verify")
@@ -221,3 +243,17 @@ def status_task() -> dict:
     """Read-only snapshot of resident models + VRAM accounting on this
     worker. For the dashboard + ad-hoc debugging."""
     return model_swap.status()
+
+
+# ---------------------------------------------------------------------------
+# Slice 3b: per-model registration. The qwen2.5-coder:14b model is the
+# Phase-1 default; we register it with the arbiter at module import so
+# `chain(model.swap.s("qwen14b"), generate_qwen14b.s(...))` resolves cleanly.
+# Factory returns the module-level `_gpu` (which IS qwen14b under both
+# Ollama and llama_cpp backends in 3b). Slice 3c refactors so the factory
+# constructs on-demand and `_gpu` is no longer eagerly bound.
+#
+# Conservative footprint estimate: qwen14b Q4 = ~9 GB on disk + ~1-2 GB KV
+# cache headroom. 9000 MB rounds up safely; the arbiter's bias is to
+# over-count so swaps don't OOM.
+model_swap.register("qwen14b", lambda: _gpu, footprint_mb=9000)

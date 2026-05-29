@@ -186,7 +186,18 @@ def _balanced_gpu_solve(self, env: dict):
     env["trace"].append("gpu solve (bounded repair loop)")
     return self.replace(
         chain(
-            canvas_spike.gpu_solve_task.s(
+            # Slice 3b: ensure qwen14b is resident before generate. The
+            # arbiter's swap is idempotent + the factory returns the
+            # already-loaded module-level `_gpu`, so this is effectively
+            # free under the current single-model registration. Slice 3c
+            # adds a second model where the swap actually swaps.
+            # `.si()` on gpu_solve_task makes it IMMUTABLE: the swap's
+            # return dict is not prepended as the next task's first
+            # positional arg (which would collide with the explicit
+            # `query=` kwarg below and raise TypeError). swap_task's
+            # `.s()` is fine -- it has no upstream to mutate.
+            tasks.swap_task.s("qwen14b"),
+            canvas_spike.gpu_solve_task.si(
                 query=env["query"], dsl=env["dsl"], prior=env["prior"],
             ),
             _merge_gpu_into_env.s(env=env),
