@@ -89,11 +89,46 @@ def _resolve_ollama_blob(model_id: str, models_dir: Path) -> Path:
     )
 
 
+def _preload_cuda_runtime() -> None:  # pragma: no cover - env-dependent
+    """On Windows, pre-load the NVIDIA CUDA runtime DLLs so llama_cpp's
+    bundled `llama.dll` finds them at import. The `nvidia-cuda-runtime-cu12`
+    and `nvidia-cublas-cu12` PyPI packages stash the DLLs under
+    `<venv>/Lib/site-packages/nvidia/<lib>/bin/`, but llama_cpp's loader
+    uses a constrained Windows DLL search path that skips those dirs --
+    pre-loading the runtime via absolute path is the documented workaround
+    (see github.com/abetlen/llama-cpp-python issues on Windows + CUDA).
+
+    No-op on non-Windows (Linux's RPATH handles this) and on systems where
+    the nvidia-*-cu12 packages aren't installed (the user must install
+    them, OR have the CUDA toolkit on PATH)."""
+    import sys
+    if sys.platform != "win32":
+        return
+    import ctypes
+    import importlib.util
+    for pkg, dll in (
+        ("nvidia.cuda_runtime", "cudart64_12.dll"),
+        ("nvidia.cublas", "cublas64_12.dll"),
+    ):
+        spec = importlib.util.find_spec(pkg)
+        if spec is None or not spec.submodule_search_locations:
+            continue
+        for loc in spec.submodule_search_locations:
+            dll_path = Path(loc) / "bin" / dll
+            if dll_path.exists():
+                ctypes.CDLL(str(dll_path))
+                break
+
+
 def _llama():
     """Lazy import. The optional `llama-cpp` extra is only required when
     `CASCADE_GPU_BACKEND=llama_cpp`; this module's IMPORT remains free.
     (Note the underscore vs hyphen: `llama_cpp` is the Python module name,
-    `llama-cpp` is the uv extra name -- they're independently spelled.)"""
+    `llama-cpp` is the uv extra name -- they're independently spelled.)
+
+    Pre-loads the CUDA runtime on Windows before importing llama_cpp so
+    its bundled `llama.dll` finds the runtime's dependencies."""
+    _preload_cuda_runtime()
     try:
         import llama_cpp
     except ModuleNotFoundError as e:  # pragma: no cover - env-dependent

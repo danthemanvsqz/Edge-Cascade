@@ -59,6 +59,11 @@ imagegen = [
 # Slice 2 parity findings prove the direct path matches.
 llama_cpp = [
     "llama-cpp-python>=0.3",
+    # Windows CUDA wheels bundle ggml-cuda.dll but rely on the cu12.4 runtime
+    # being loadable; pinning to 12.4.* matches the cu124 wheel's ABI. On Linux
+    # the wheel uses RPATH; these stay installed but unused.
+    "nvidia-cuda-runtime-cu12==12.4.*; sys_platform == 'win32'",
+    "nvidia-cublas-cu12==12.4.*; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
