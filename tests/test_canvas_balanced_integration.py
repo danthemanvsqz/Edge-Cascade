@@ -187,9 +187,12 @@ def test_pr91_regression_no_cloud_worker_chain_completes(
     )
     # Cloud disabled at CONFIG layer (already the test-environment
     # default, but pin it explicitly so a future config drift doesn't
-    # quietly break the test).
+    # quietly break the test). Use `spec=` so an unintended attr access
+    # in _balanced_cloud (e.g., CONFIG.cloud_max_tokens) would FAIL
+    # loud instead of returning a truthy Mock that silently masks a bug.
+    from cascade.config import CONFIG
     mocker.patch("cascade.topologies_canvas.CONFIG",
-                 mocker.Mock(enable_cloud=False))
+                 mocker.Mock(spec=CONFIG, enable_cloud=False))
     outcome = canvas_client.solve_balanced_canvas("trigger cap path")
     assert isinstance(outcome, mesh.Outcome)
     assert outcome.capped is True, (
@@ -257,7 +260,7 @@ def test_balanced_chain_holds_cap_under_broker_dispatch(
                       "latency_s": 0.01},
     )
     mocker.patch("cascade.topologies_canvas.CONFIG",
-                 mocker.Mock(enable_cloud=False))
+                 mocker.Mock(spec=CONFIG, enable_cloud=False))
     outcome = canvas_client.solve_balanced_canvas("impossible")
     assert outcome.capped is True
     assert outcome.repair_rounds == CONFIG.repair_cap

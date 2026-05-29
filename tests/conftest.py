@@ -22,14 +22,6 @@ from __future__ import annotations
 import pytest
 
 
-def _has_celery() -> bool:
-    try:
-        import celery  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 @pytest.fixture(scope="session")
 def celery_integration_app():
     """Override `cascade.celery_app.app` for the integration test
