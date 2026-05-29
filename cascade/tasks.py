@@ -261,10 +261,23 @@ model_swap.register("qwen14b", lambda: _gpu, footprint_mb=9000)
 
 # ---------------------------------------------------------------------------
 # Slice 3c: second model -- qwen2.5-coder:7b via llama-cpp-python.
-# Lighter model that fits alongside SD1.5 (the LLM VRAM cliff finding from
-# 2026-05-23: 7b+SD1.5 fit, 14b+SD1.5 doesn't). Phase 2's swap arbiter is
-# what makes the trade-off mechanical: the low_latency chord (Slice 6) can
-# dispatch to 7b while a hypothetical image task swaps in/out around it.
+#
+# **EXPERIMENTAL exemplar, NOT a production tier.** Per the 2026-05-29 user
+# clarification (see [[llm-vram-cliff-12gb]] memory): in actual production
+# usage, only qwen2.5-coder:14b is wired as Tier-2. qwen7b is registered
+# here so:
+#   (a) the swap-arbiter contract has a real registered model to exercise
+#       beyond the test-only fakes -- the swap-cycle test that proves
+#       eviction-and-reload pinpoints real arbitration behavior, not
+#       theatre;
+#   (b) experimental scripts (benchmarks, A/B sweeps) can dispatch
+#       generate_qwen7b_task without rewiring the cascade;
+#   (c) Slice 6's low_latency chord has a concrete second-model
+#       registration to point at IF the user later wants to wire 7b in --
+#       but Slice 6 picks its second model per-prompt rather than baking
+#       7b in by default (the original framing assumed 7b+SD1.5
+#       coresidence drives the chord; the user has clarified this is NOT
+#       how they run it).
 #
 # Footprint estimate: qwen2.5-coder:7b Q4 = ~4.7 GB on disk + ~1 GB KV cache
 # headroom. 5500 MB rounds up safely.
@@ -291,15 +304,17 @@ model_swap.register("qwen7b", lambda: _make_qwen7b_worker(), footprint_mb=5500)
 @recorded(_GPU_REC)
 def generate_qwen7b(prompt: str, prior_attempt: str | None = None,
                     max_tokens: int | None = None) -> dict:
-    """Tier-2 generate via qwen2.5-coder:7b. Consults the model_swap
-    arbiter for the resident worker handle; if not loaded, returns the
-    standard hand-off (`available:false, reason:"swap not invoked"`) so
-    a misconfigured chain fails LOUD instead of falling back to qwen14b.
-    The chain MUST prepend `model.swap.s("qwen7b")` before dispatching
-    this task -- the arbiter is the source of truth here, not a module-
-    level handle. Distinct from `generate_qwen14b` which still falls
-    through to the module-level `_gpu` for Phase-1 backwards compat (3b
-    contract)."""
+    """Tier-2 generate via qwen2.5-coder:7b. **EXPERIMENTAL exemplar, NOT
+    a production tier** -- see the slice-3c comment above for why qwen7b
+    is registered even though production uses only qwen14b. Consults the
+    model_swap arbiter for the resident worker handle; if not loaded,
+    returns the standard hand-off (`available:false, reason:"swap not
+    invoked"`) so a misconfigured chain fails LOUD instead of falling
+    back to qwen14b. The caller MUST prepend `model.swap.s("qwen7b")`
+    before dispatching this task -- the arbiter is the source of truth
+    here, not a module-level handle. Distinct from `generate_qwen14b`
+    which still falls through to the module-level `_gpu` for Phase-1
+    backwards compat (3b contract)."""
     worker = model_swap.get("qwen7b")
     if worker is None:
         return {"available": False, "model": "qwen2.5-coder:7b",
