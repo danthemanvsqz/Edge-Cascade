@@ -22,6 +22,7 @@ from functools import cache
 from pathlib import Path
 
 from cascade.celery_app import app
+from cascade.cloud_worker import est_cost_usd, make_cloud_worker, reason_note
 from cascade.config import CONFIG
 from cascade.gpu_worker import make_gpu_worker
 from cascade.npu_worker import NPUWorker, make_npu_worker
@@ -36,7 +37,13 @@ _FUNC_TIMEOUT_S = 20
 _GPU_REC = make_recorder("edge-gpu")
 _VERIFY_REC = make_recorder("edge-verify")
 _NPU_REC = make_recorder("edge-npu")
+_CLOUD_REC = make_recorder("edge-cloud")
 _gpu = make_gpu_worker()
+# Module-level `_cloud` resolves enabled state at import: BOTH CONFIG.enable_cloud
+# AND ANTHROPIC_API_KEY must be set for the live API call (cloud_worker enforces
+# this). Disabled => the `generate` closure returns a CloudResult with
+# available:false and never touches the network.
+_cloud = make_cloud_worker(enabled=CONFIG.enable_cloud)
 
 
 @cache
@@ -150,3 +157,37 @@ def route_task(prompt: str) -> dict:
 @app.task(name="mesh.draft", queue="npu")
 def draft_task(prompt: str, max_tokens: int | None = None) -> dict:
     return draft(prompt, max_tokens)
+
+
+@recorded(_CLOUD_REC)
+def cloud_generate(prompt: str, prior_attempt: str | None = None) -> dict:
+    """Tier-3 paid cloud generate (mirrors cascade.cloud_worker.generate) ->
+    records edge-cloud.rec. The worker resolves enabled state at import;
+    when disabled, returns the standard `available:false` hand-off without
+    touching the network. The credit guard + budget logic lives at the
+    MCP/orchestrator boundary (cascade.orchestrator), NOT here -- this is the
+    raw worker call as a task, used by the Canvas chain's cloud-escalation
+    step (Slice 3).
+
+    SPEND INVARIANT (the structural one): the documented Celery worker launch
+    `python -m celery -A cascade.celery_app worker -Q npu,gpu,verify` does
+    NOT subscribe to the `cloud` queue, so a dispatched
+    `cloud_generate_task.apply_async()` enqueues but never runs -- same
+    guarantee as today's `--strict-mcp-config` exclusion of edge-cloud. Live
+    broker verification is in Slice 4's findings doc; no unit test can prove
+    a structural property of a queue topology.
+
+    `est_cost_usd` is computed from the result's token counts via the
+    cloud_worker price table (dearest known rate on an unknown model so a
+    new model can never be under-counted)."""
+    c = _cloud.generate(prompt, prior_attempt=prior_attempt)
+    return {"available": c.available, "text": c.text, "model": c.model,
+            "latency_s": round(c.latency_s, 2),
+            "input_tokens": c.input_tokens, "output_tokens": c.output_tokens,
+            "est_cost_usd": round(est_cost_usd(c), 6),
+            "reason": reason_note(c)}
+
+
+@app.task(name="mesh.cloud_generate", queue="cloud")
+def cloud_generate_task(prompt: str, prior_attempt: str | None = None) -> dict:
+    return cloud_generate(prompt, prior_attempt)
