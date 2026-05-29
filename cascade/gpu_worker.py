@@ -1,8 +1,19 @@
-"""Tier 2 — qwen2.5-coder:14b on the NVIDIA GPU via Ollama.
+"""Tier 2 — qwen2.5-coder:14b on the NVIDIA GPU. Two backends behind one
+selector:
 
-No worker object: set-once config (Ollama URL + model) and two stateless
-HTTP calls. `make_gpu_worker()` returns an immutable GPUWorker value object
-binding `available` / `generate` closures.
+- `ollama` (default): HTTP to a long-running Ollama daemon. Stateless
+  client; the model lives in another process. The path this module owned
+  in Phase 1.
+- `llama_cpp` (Phase 2 Slice 1, opt-in via CASCADE_GPU_BACKEND=llama_cpp):
+  direct llama-cpp-python loading the same GGUF weights Ollama caches.
+  See cascade/llama_worker.py.
+
+`make_gpu_worker()` branches on `CONFIG.gpu_backend` and returns the
+appropriate `GPUWorker`. Same immutable dataclass shape either way, so
+`cascade.tasks` and the Canvas chain see no diff.
+
+The Ollama path is still the default until the Slice-2 parity findings
+prove the direct path matches (per docs/DESIGN-celery-phase2.md).
 """
 from __future__ import annotations
 
@@ -81,6 +92,22 @@ class GPUWorker:
 
 
 def make_gpu_worker() -> GPUWorker:
+    """Return the GPU worker for the configured backend. `ollama` => HTTP
+    client to the Ollama daemon (this module). `llama_cpp` => direct GGUF
+    loading via cascade.llama_worker. The two backends are duck-typed
+    equivalent: both return a GPUWorker exposing `model`, `available`,
+    `generate`.
+
+    The dispatch happens HERE (one branch, one place) so every caller
+    stays unchanged."""
+    if CONFIG.gpu_backend == "llama_cpp":
+        from cascade.llama_worker import make_llama_worker
+        return make_llama_worker()
+    if CONFIG.gpu_backend != "ollama":
+        raise ValueError(
+            f"unknown CASCADE_GPU_BACKEND={CONFIG.gpu_backend!r}; "
+            f"expected `ollama` or `llama_cpp`"
+        )
     url = CONFIG.ollama_base_url.rstrip("/")
     model = CONFIG.gpu_model
     return GPUWorker(

@@ -46,6 +46,17 @@ imagegen = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]
+# Tier 2 direct-loading backend (Phase 2 Slice 1) -- llama-cpp-python loads
+# the SAME GGUF weights Ollama already caches under ~/.ollama/models/blobs/,
+# resident in the worker process; no HTTP hop, no Ollama daemon. CUDA builds
+# need a matching `llama-cpp-python` wheel:
+#   uv pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+#   uv sync --extra llama_cpp
+# Opt-in via CASCADE_GPU_BACKEND=llama_cpp; default stays `ollama` until the
+# Slice 2 parity findings prove the direct path matches.
+llama_cpp = [
+    "llama-cpp-python>=0.3",
+]
 
 [dependency-groups]
 dev = [
@@ -108,6 +119,7 @@ omit = [
     "cascade/__init__.py",
     "cascade/npu_worker.py",
     "cascade/gpu_worker.py",
+    "cascade/llama_worker.py",
     "cascade/image_worker.py",
     "cascade/orchestrator.py",
     "cascade/lookahead.py",

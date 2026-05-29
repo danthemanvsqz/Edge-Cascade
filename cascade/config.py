@@ -47,8 +47,24 @@ class Config:
     igpu_device: str = os.environ.get("CASCADE_IGPU_DEVICE", "GPU.0")
     igpu_max_new_tokens: int = 768
 
-    # Tier 2 — local GPU via Ollama (NVIDIA/CUDA).
+    # Tier 2 — local GPU. Phase-2 Slice 1 introduces a SECOND backend:
+    # llama-cpp-python loads the SAME GGUF weights Ollama caches, resident
+    # in the worker process (no HTTP hop). `gpu_backend` picks which path
+    # `cascade.gpu_worker.make_gpu_worker` returns; both produce the same
+    # `GPUWorker` shape so callers and tests are unchanged.
+    #
+    # Default stays `ollama` until the Slice 2 parity findings prove the
+    # direct path matches. Override via CASCADE_GPU_BACKEND=ollama|llama_cpp.
+    # See docs/DESIGN-celery-phase2.md (the locked decisions section).
+    gpu_backend: str = os.environ.get("CASCADE_GPU_BACKEND", "ollama")
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    # On-disk root of Ollama's blob cache; the llama-cpp backend reads GGUFs
+    # from here by resolving the Ollama manifest. Default matches the standard
+    # Ollama layout (`~/.ollama/models`); override for non-default installs.
+    ollama_models_dir: str = os.environ.get(
+        "OLLAMA_MODELS",
+        str(Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".ollama" / "models"),
+    )
     # Standard hard local. Deliberately the 14b coder, NOT the 7b: the 7b is
     # faster but fails the hard dijkstra-class gate 0/3 (FINDINGS §3) -- quality
     # over throughput. The 14b resolves it in one repair round.
