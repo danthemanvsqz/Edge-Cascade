@@ -257,3 +257,65 @@ def status_task() -> dict:
 # cache headroom. 9000 MB rounds up safely; the arbiter's bias is to
 # over-count so swaps don't OOM.
 model_swap.register("qwen14b", lambda: _gpu, footprint_mb=9000)
+
+
+# ---------------------------------------------------------------------------
+# Slice 3c: second model -- qwen2.5-coder:7b via llama-cpp-python.
+# Lighter model that fits alongside SD1.5 (the LLM VRAM cliff finding from
+# 2026-05-23: 7b+SD1.5 fit, 14b+SD1.5 doesn't). Phase 2's swap arbiter is
+# what makes the trade-off mechanical: the low_latency chord (Slice 6) can
+# dispatch to 7b while a hypothetical image task swaps in/out around it.
+#
+# Footprint estimate: qwen2.5-coder:7b Q4 = ~4.7 GB on disk + ~1 GB KV cache
+# headroom. 5500 MB rounds up safely.
+
+def _make_qwen7b_worker():
+    """Construct a fresh qwen2.5-coder:7b worker. Called by the model_swap
+    arbiter on a swap event (NOT at import). Uses llama-cpp-python direct
+    loading regardless of CONFIG.gpu_backend -- qwen7b is currently only
+    declared as a llama_cpp model; a future Ollama variant would need a
+    separate Ollama-backed factory. Imports lazily so the `llama-cpp`
+    extra isn't required at module import (matches `_llama()` lazy
+    pattern in cascade.llama_worker)."""
+    from cascade.llama_worker import make_llama_worker
+    return make_llama_worker("qwen2.5-coder:7b")
+
+
+# Registered via a lambda that re-looks-up `_make_qwen7b_worker` at call
+# time so tests can `mocker.patch("cascade.tasks._make_qwen7b_worker", ...)`
+# and the registered factory honours the patch. Direct registration of the
+# function would freeze the reference at import.
+model_swap.register("qwen7b", lambda: _make_qwen7b_worker(), footprint_mb=5500)
+
+
+@recorded(_GPU_REC)
+def generate_qwen7b(prompt: str, prior_attempt: str | None = None,
+                    max_tokens: int | None = None) -> dict:
+    """Tier-2 generate via qwen2.5-coder:7b. Consults the model_swap
+    arbiter for the resident worker handle; if not loaded, returns the
+    standard hand-off (`available:false, reason:"swap not invoked"`) so
+    a misconfigured chain fails LOUD instead of falling back to qwen14b.
+    The chain MUST prepend `model.swap.s("qwen7b")` before dispatching
+    this task -- the arbiter is the source of truth here, not a module-
+    level handle. Distinct from `generate_qwen14b` which still falls
+    through to the module-level `_gpu` for Phase-1 backwards compat (3b
+    contract)."""
+    worker = model_swap.get("qwen7b")
+    if worker is None:
+        return {"available": False, "model": "qwen2.5-coder:7b",
+                "text": "[qwen7b not resident -- model.swap not invoked]",
+                "tokens_per_s": 0.0, "latency_s": 0.0}
+    query = prompt
+    if prior_attempt:
+        query = (f"{prompt}\n\n--- A lower tier produced this answer, which failed "
+                 f"verification. Diagnose and correct it: ---\n{prior_attempt}")
+    r = worker.generate(query, max_new_tokens=max_tokens)
+    return {"available": r.available, "text": r.text, "model": r.model,
+            "tokens_per_s": round(r.tokens_per_s, 2),
+            "latency_s": round(r.latency_s, 2)}
+
+
+@app.task(name="mesh.generate_qwen7b", queue="gpu")
+def generate_qwen7b_task(prompt: str, prior_attempt: str | None = None,
+                         max_tokens: int | None = None) -> dict:
+    return generate_qwen7b(prompt, prior_attempt, max_tokens)

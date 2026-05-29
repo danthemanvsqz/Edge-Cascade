@@ -350,6 +350,94 @@ def test_generate_alias_preserves_callers():
     assert tasks.generate_qwen14b_task.name == "mesh.generate_qwen14b"
 
 
+# ---------------------------------------------------------------------------
+# Slice 3c -- second model (qwen7b) registered alongside qwen14b.
+# ---------------------------------------------------------------------------
+
+
+def test_qwen7b_registered_alongside_qwen14b():
+    """Slice 3c registers qwen7b as a second model. Both names live in
+    the arbiter so a chain or topology can select either at dispatch."""
+    from cascade import model_swap, tasks  # noqa: F401  (import side effect)
+    names = model_swap.registered()
+    assert "qwen14b" in names
+    assert "qwen7b" in names
+
+
+def test_generate_qwen7b_hands_off_when_not_resident():
+    """`generate_qwen7b` consults the arbiter and returns the standard
+    `available:false` hand-off when qwen7b isn't loaded. The chain MUST
+    chain `model.swap.s("qwen7b")` before dispatching this task; the
+    hand-off makes a misconfigured chain fail LOUD instead of silently
+    falling back to qwen14b."""
+    from cascade import model_swap, tasks
+    # Ensure qwen7b isn't resident -- safely clear from any prior test.
+    if "qwen7b" in model_swap._resident:
+        del model_swap._resident["qwen7b"]
+        if "qwen7b" in model_swap._lru_order:
+            model_swap._lru_order.remove("qwen7b")
+    out = tasks.generate_qwen7b("hello")
+    assert out["available"] is False
+    assert "swap not invoked" in out["text"]
+    assert out["model"] == "qwen2.5-coder:7b"
+
+
+def test_generate_qwen7b_uses_resident_worker(mocker):
+    """When qwen7b IS resident (the chain dispatched
+    `model.swap.s("qwen7b")` before this task), generate_qwen7b
+    dispatches to that worker's generate method. Pinned via a stub
+    worker; the arbiter contract is tested separately in
+    test_model_swap.py."""
+    from cascade import model_swap, tasks
+    from cascade.llama_worker import LlamaResult
+    fake_worker = mocker.Mock()
+    fake_worker.generate.return_value = LlamaResult(
+        text="```python\nqwen7b answer\n```",
+        latency_s=0.5, tokens_per_s=42.0,
+        model="qwen2.5-coder:7b", available=True,
+    )
+    # Inject the fake worker as resident (bypass swap for unit-test
+    # isolation -- the swap_cycle test in test_model_swap.py covers
+    # the arbiter contract end-to-end).
+    model_swap._resident["qwen7b"] = model_swap.ModelHandle(
+        name="qwen7b", footprint_mb=5500, handle=fake_worker)
+    try:
+        out = tasks.generate_qwen7b("write hello")
+        assert out["available"] is True
+        assert out["text"] == "```python\nqwen7b answer\n```"
+        assert out["model"] == "qwen2.5-coder:7b"
+        assert out["tokens_per_s"] == 42.0
+        fake_worker.generate.assert_called_once_with("write hello", max_new_tokens=None)
+    finally:
+        # Cleanup so other tests aren't affected.
+        del model_swap._resident["qwen7b"]
+
+
+def test_qwen7b_factory_uses_make_llama_worker(mocker):
+    """The qwen7b factory wraps `make_llama_worker("qwen2.5-coder:7b")`.
+    Pinned so a refactor doesn't accidentally drop the model id, and
+    so the patch-via-name pattern (used by tests that exercise swap
+    events without loading a real model) keeps working."""
+    fake_worker = mocker.Mock()
+    mocker.patch("cascade.tasks._make_qwen7b_worker", return_value=fake_worker)
+    # Via the registered factory (this is what swap_task invokes):
+    from cascade import model_swap
+    factory, footprint = model_swap._FACTORIES["qwen7b"]
+    out = factory()
+    assert out is fake_worker
+    assert footprint == 5500  # the conservative 4.7GB + 1GB KV estimate
+
+
+def test_qwen7b_task_routes_to_gpu_queue():
+    """`generate_qwen7b_task` ships on the `gpu` queue alongside
+    `generate_qwen14b_task`. Pinned so a multi-box layout (Slice 5)
+    can hardware-pin both 7b and 14b workers to the RTX box's `gpu`
+    queue without per-task config."""
+    from cascade import tasks
+    assert tasks.generate_qwen7b_task.queue == "gpu"
+    assert tasks.generate_qwen7b_task.name == "mesh.generate_qwen7b"
+
+
 def test_canvas_client_returns_mesh_outcome_shape(eager, mocker):
     """The client's Outcome is the SAME `mesh.Outcome` dataclass `mesh.solve`
     returns -- callers can swap `cascade.canvas_client.solve_balanced_canvas`

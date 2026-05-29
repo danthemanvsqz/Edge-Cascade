@@ -245,6 +245,78 @@ def test_swap_idempotent_path_survives_state_drift():
     assert "m" in model_swap._lru_order
 
 
+def test_registered_returns_known_models():
+    """`registered()` is the public way to ask "what models can I swap to?"
+    -- the dashboard's "available models" panel and a future
+    `swap_or_raise(name)` shim both want a stable greppable contract
+    instead of poking `_FACTORIES` directly. Returns the sorted list of
+    registered names."""
+    assert model_swap.registered() == []
+    model_swap.register("zed", lambda: None, 100)
+    model_swap.register("alpha", lambda: None, 100)
+    model_swap.register("middle", lambda: None, 100)
+    assert model_swap.registered() == ["alpha", "middle", "zed"]
+
+
+def test_registered_reflects_unregistration_via_reset():
+    """Test isolation contract: after `_reset_for_tests()`, registered()
+    returns empty even if registrations happened before. Without this,
+    cross-test residue would leak through the helper API too."""
+    model_swap.register("m", lambda: None, 100)
+    assert model_swap.registered() == ["m"]
+    model_swap._reset_for_tests()
+    assert model_swap.registered() == []
+
+
+def test_swap_cycle_re_invokes_factory_after_eviction(mocker):
+    """The load-bearing Slice-3c assertion: a swap from A -> B -> A
+    re-invokes A's factory because A was evicted in between. Without
+    this, "swap" would be theatre -- the arbiter would just remember
+    A's prior handle. Pinned because the multi-model story Slice 3c
+    enables depends on factories being CALLED, not cached.
+
+    Concretely: register A and B with factories that count calls. Load
+    A. Swap to B (evicts A). Swap back to A (factory called AGAIN
+    because A is no longer resident)."""
+    mocker.patch("cascade.model_swap.CONFIG", mocker.Mock(vram_total_mb=10000))
+    a_calls = {"n": 0}
+    b_calls = {"n": 0}
+
+    def make_a():
+        a_calls["n"] += 1
+        return _fake_handle(f"a-{a_calls['n']}")  # distinct handle per call
+
+    def make_b():
+        b_calls["n"] += 1
+        return _fake_handle(f"b-{b_calls['n']}")
+
+    model_swap.register("a", make_a, 8000)
+    model_swap.register("b", make_b, 6000)
+
+    # Swap to A: factory called once, handle is a-1.
+    out = model_swap.swap("a")
+    assert out["loaded"] is True
+    assert a_calls["n"] == 1
+    assert model_swap.get("a") == _fake_handle("a-1")
+
+    # Swap to B: A evicted, B loaded.
+    out = model_swap.swap("b")
+    assert out["loaded"] is True
+    assert out["evicted"] == ["a"]
+    assert b_calls["n"] == 1
+    assert model_swap.get("a") is None  # A is gone
+
+    # Swap BACK to A: factory called a SECOND time. The arbiter doesn't
+    # cache evicted handles; this is the contract that makes swaps
+    # meaningful.
+    out = model_swap.swap("a")
+    assert out["loaded"] is True
+    assert out["evicted"] == ["b"]
+    assert a_calls["n"] == 2  # <- the load-bearing assertion
+    # The handle is a fresh one (a-2), not the original a-1.
+    assert model_swap.get("a") == _fake_handle("a-2")
+
+
 def test_swap_with_empty_resident_set_doesnt_loop_forever(mocker):
     """A pathological model that doesn't fit even on an empty GPU
     (caught earlier by the `> vram_total_mb` check) must NOT enter the
