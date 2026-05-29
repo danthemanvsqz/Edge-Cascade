@@ -152,8 +152,16 @@ def swap(name: str) -> dict:
 
     # Load. A factory exception is reported as `loaded:false` per
     # charter inv. 5; the partial state from any eviction stays --
-    # those models are GONE either way, and the caller's chain can
-    # decide whether to retry-swap a different model.
+    # those models are GONE from THIS arbiter's tracking either way,
+    # and the caller's chain can decide whether to retry-swap a
+    # different model.
+    #
+    # TODO(slice 3b/3c): when real GPU factories land, evicted handles
+    # need explicit teardown (release VRAM, .unload(), etc.) BEFORE we
+    # drop the reference -- otherwise GPU memory leaks on the eviction
+    # path. Add a documented `teardown()` contract on ModelHandle or a
+    # `del` hook on the handle once a real factory exists. For 3a's
+    # sentinel-only factories this is a no-op; pure Python GC handles it.
     try:
         handle = factory()
     except Exception as e:  # noqa: BLE001 -- hand off as `loaded:false`

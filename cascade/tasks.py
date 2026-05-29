@@ -21,6 +21,7 @@ import sys
 from functools import cache
 from pathlib import Path
 
+from cascade import model_swap
 from cascade.celery_app import app
 from cascade.cloud_worker import est_cost_usd, make_cloud_worker, reason_note
 from cascade.config import CONFIG
@@ -199,8 +200,6 @@ def cloud_generate_task(prompt: str, prior_attempt: str | None = None) -> dict:
 # `cascade.celery_app.include = ["cascade.tasks", ...]` picks them up at
 # worker boot. The arbiter logic itself is in cascade.model_swap; these are
 # thin Celery wrappers per the design's "tasks stay one-liners" guideline.
-
-from cascade import model_swap  # noqa: E402
 
 
 @app.task(name="model.swap", queue="gpu")
