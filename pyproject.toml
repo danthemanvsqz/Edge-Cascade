@@ -124,6 +124,7 @@ omit = [
     # benchmark drivers) -- live-validated, not unit-coverable.
     "scripts/celery_smoke.py",
     "scripts/debate.py",
+    "scripts/mesh_solve_canvas.py",
     "scripts/debate_analysis.py",
     "scripts/e2e_local.py",
     "scripts/image_server.py",
