@@ -22,7 +22,18 @@ app = Celery(
     "edge_cascade",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["cascade.tasks"],
+    # The worker needs every module that registers @app.task fns: the tier op
+    # wrappers (`cascade.tasks`), the bounded GPU repair task from the Phase-0
+    # spike (`cascade.canvas_spike`), and the balanced-topology chain steps
+    # (`cascade.topologies_canvas`). Missing any one of these means a chain
+    # dispatch yields a `NotRegistered` error on `.get()` -- the eager test
+    # suite doesn't catch this because eager mode skips the broker entirely
+    # (Slice-4 live-broker discovery on 2026-05-28; see FINDINGS-canvas-phase1.md).
+    include=[
+        "cascade.tasks",
+        "cascade.canvas_spike",
+        "cascade.topologies_canvas",
+    ],
 )
 
 app.conf.update(

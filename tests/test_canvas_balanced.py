@@ -121,7 +121,7 @@ def test_balanced_chain_resolves_at_npu_when_gate_passes(eager, mocker):
     _verify(mocker, [True])
     gen = mocker.patch("cascade.tasks.generate")
     cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("reverse a string")
+    outcome = canvas_client.solve_balanced_canvas("reverse a string", dsl="DSL")
     assert isinstance(outcome, mesh.Outcome)
     assert outcome.final_tier == "npu"
     assert outcome.resolved is True
@@ -141,7 +141,7 @@ def test_balanced_chain_escalates_to_gpu_when_npu_gate_fails(eager, mocker):
     _verify(mocker, [False, True])
     _generate(mocker, text="```python\ngpu fix\n```")
     cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("write a fn")
+    outcome = canvas_client.solve_balanced_canvas("write a fn", dsl="DSL")
     assert outcome.final_tier == "gpu"
     assert outcome.resolved is True
     assert outcome.answer == "```python\ngpu fix\n```"
@@ -160,7 +160,7 @@ def test_balanced_chain_caps_to_tier3_when_cloud_disabled(eager, mocker):
     _verify(mocker, [False] + [False] * (CAP + 1))
     _generate(mocker)
     cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("hard task")
+    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
     assert outcome.final_tier == "capped->tier3"
     assert outcome.resolved is False
     assert outcome.capped is True
@@ -178,11 +178,52 @@ def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
     _verify(mocker, [False] + [False] * (CAP + 1))
     _generate(mocker)
     _cloud(mocker, available=True, text="```python\ncloud fix\n```")
-    outcome = canvas_client.solve_balanced_canvas("hard task")
+    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
     assert outcome.final_tier == "cloud"
     assert outcome.resolved is True
     assert outcome.capped is False
     assert outcome.answer == "```python\ncloud fix\n```"
+
+
+# ---------------------------------------------------------------------------
+# DSL-None syntax fallback -- parity with the pipe path (Slice-4 discovery).
+# ---------------------------------------------------------------------------
+
+
+def test_balanced_chain_uses_syntax_gate_when_dsl_is_none(eager, mocker):
+    """When dsl=None, both `_balanced_draft_gate` and `gpu_solve_task` must
+    use the SYNTAX gate (cascade.verifier.verify) instead of
+    tasks.verify_functional. This is the parity contract with the in-process
+    pipe path -- without this fallback every Canvas run without a DSL would
+    cap to Tier-3 (verify_functional returns applicable:false = passed:false
+    when no DSL is supplied; the Slice-4 live-broker run surfaced this)."""
+    _route(mocker)
+    # NPU draft returns a parseable Python block -- syntax gate should PASS.
+    _draft(mocker, text="```python\ndef f():\n    return 1\n```")
+    gen = mocker.patch("cascade.tasks.generate")
+    verify_func = mocker.patch("cascade.tasks.verify_functional")
+    cloud = mocker.patch("cascade.tasks.cloud_generate")
+    outcome = canvas_client.solve_balanced_canvas("reverse")  # dsl=None
+    assert outcome.final_tier == "npu"
+    assert outcome.resolved is True
+    verify_func.assert_not_called()
+    gen.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_balanced_chain_syntax_gate_escalates_on_nonparseable_draft(eager, mocker):
+    """dsl=None path: NPU draft is NOT a parseable Python block -> syntax
+    gate FAILS -> chain escalates to GPU. The escalation respects the same
+    cap as the functional-gate path."""
+    _route(mocker)
+    _draft(mocker, text="this is not python")
+    # GPU first attempt returns valid python -> syntax gate PASSES.
+    _generate(mocker, text="```python\ndef fixed():\n    return 1\n```")
+    verify_func = mocker.patch("cascade.tasks.verify_functional")
+    outcome = canvas_client.solve_balanced_canvas("x")  # dsl=None
+    assert outcome.final_tier == "gpu"
+    assert outcome.resolved is True
+    verify_func.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +254,7 @@ def test_balanced_chain_holds_the_repair_cap(eager, mocker):
                       "model": "fake", "tokens_per_s": 0.0,
                       "latency_s": 0.0},
     )
-    outcome = canvas_client.solve_balanced_canvas("impossible task")
+    outcome = canvas_client.solve_balanced_canvas("impossible task", dsl="DSL")
     assert outcome.capped is True
     assert outcome.repair_rounds == CAP
     # THE INVARIANT: 1 fresh GPU generate + CAP repairs, NOT ONE MORE.
@@ -231,7 +272,7 @@ def test_balanced_chain_trace_records_each_step(eager, mocker):
     _route(mocker)
     _draft(mocker)
     _verify(mocker, [True])
-    outcome = canvas_client.solve_balanced_canvas("test")
+    outcome = canvas_client.solve_balanced_canvas("test", dsl="DSL")
     joined = " | ".join(outcome.trace)
     assert "route difficulty=" in joined
     assert "npu draft ->" in joined
@@ -253,7 +294,7 @@ def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
     draft = mocker.patch("cascade.tasks.draft")
     _verify(mocker, [True])
     _generate(mocker, text="```python\ngpu fresh\n```")
-    outcome = canvas_client.solve_balanced_canvas("hard task")
+    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
     draft.assert_not_called()
     assert outcome.final_tier == "gpu"
     assert outcome.answer == "```python\ngpu fresh\n```"
@@ -267,7 +308,7 @@ def test_canvas_client_returns_mesh_outcome_shape(eager, mocker):
     _route(mocker)
     _draft(mocker)
     _verify(mocker, [True])
-    outcome = canvas_client.solve_balanced_canvas("x")
+    outcome = canvas_client.solve_balanced_canvas("x", dsl="DSL")
     assert isinstance(outcome, mesh.Outcome)
     # All Outcome fields populated.
     assert outcome.topology == "balanced"

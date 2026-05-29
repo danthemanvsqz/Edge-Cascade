@@ -46,6 +46,7 @@ from celery import chain
 
 from cascade import canvas_spike, tasks
 from cascade import topologies as topo_module
+from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
 from cascade.config import CONFIG
 
@@ -120,21 +121,47 @@ def _balanced_draft(self, env: dict) -> dict:
     return env
 
 
+def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
+    """Apply the appropriate gate based on whether a DSL is supplied.
+
+    `dsl=None` => SYNTAX gate (cascade.verifier.verify) -- the same gate
+    the in-process pipe path uses (cascade.wiring.gate). This is the
+    parity contract: a Canvas run without a DSL behaves like
+    `mesh.solve(query, "balanced", ops)` on the same prompt.
+
+    `dsl` supplied => FUNCTIONAL gate (tasks.verify_functional -> the
+    `_funcverify_child` subprocess sandbox) which exec's the candidate
+    against the DSL's assertions. Strict, returns `applicable: false`
+    (= passed: false) when no DSL would otherwise be matched.
+
+    Returns (passed, failures-list). Failures-list is JSON-clean so it
+    rides the chain envelope cleanly across the broker (charter inv. 2)."""
+    if dsl:
+        verdict = tasks.verify_functional(text, dsl)
+        return bool(verdict.get("passed")), list(verdict.get("failures", ()))
+    v = syntax_verifier.verify(text)
+    if v.passed:
+        return True, []
+    return False, [{"expr": "syntax", "observed": v.reason,
+                    "requirement": "fenced Python block that compiles"}]
+
+
 @app.task(name="mesh.balanced._draft_gate", queue="verify", bind=True)
 def _balanced_draft_gate(self, env: dict) -> dict:
-    """Step 3: gate the NPU draft via the deterministic verifier. PASS =>
-    resolve (final_tier="npu"). FAIL => carry env["prior"]/env["failures"]
-    forward so GPU repairs on it (the bounded repair loop)."""
+    """Step 3: gate the NPU draft. PASS => resolve (final_tier="npu").
+    FAIL => carry env["prior"]/env["failures"] forward so GPU repairs on
+    it (the bounded repair loop). Gate semantics: syntax when env["dsl"]
+    is None (parity with the pipe path), functional otherwise."""
     if _shortcut(env) or not env["prior"]:
         return env
-    verdict = tasks.verify_functional(env["prior"], env["dsl"])
-    if verdict.get("passed"):
+    passed, failures = _gate(env["prior"], env["dsl"])
+    if passed:
         env["answer"] = env["prior"]
         env["final_tier"] = "npu"
         env["resolved"] = True
         env["trace"].append("npu gate PASS")
         return env
-    env["failures"] = list(verdict.get("failures", ()))
+    env["failures"] = failures
     env["trace"].append("npu gate FAIL")
     return env
 
@@ -194,18 +221,23 @@ def _merge_gpu_into_env(self, gpu_result: dict, env: dict) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._cloud", queue="cloud", bind=True)
+@app.task(name="mesh.balanced._cloud", queue="gpu", bind=True)
 def _balanced_cloud(self, env: dict) -> dict:
     """Step 5: paid escalation if capped AND CONFIG.enable_cloud. When cloud
     is disabled, `capped=True` rides forward to the client and gets surfaced
     as the `capped->tier3` Outcome -- same hand-off as today's cascade when
     locals exhaust without --cloud.
 
-    Dispatching `cloud_generate_task` from THIS step (vs. running its body
-    in-process) is the seam multi-box needs: the cloud queue is consumed by
-    a worker on the paid host, not the same box doing route/draft. For
-    Phase 1 single-box, we call the recorded fn directly (no second hop)
-    since the queue topology + worker pinning is Phase 2's concern."""
+    Runs on the `gpu` queue, not `cloud`: this orchestration step calls
+    `tasks.cloud_generate` INLINE (not via .apply_async()), so it must run
+    on a queue some worker actually consumes -- otherwise the chain's .get()
+    blocks forever waiting for the step to execute. The cloud-spend
+    invariant is preserved at CONFIG level (`_cloud.enabled` returns the
+    disabled hand-off when CONFIG.enable_cloud is False or no API key) and
+    at the TASK level (`cloud_generate_task.queue="cloud"`, which still has
+    no worker by default -- the structural unspendability of that task is
+    unchanged). The earlier Slice-4 live run surfaced this: a chain step
+    on an unconsumed queue is a hang, not a hand-off."""
     if env.get("resolved") or not env.get("capped"):
         return env
     if not CONFIG.enable_cloud:

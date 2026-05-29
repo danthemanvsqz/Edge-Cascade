@@ -125,6 +125,7 @@ omit = [
     "scripts/celery_smoke.py",
     "scripts/debate.py",
     "scripts/mesh_solve_canvas.py",
+    "scripts/parity_batch.py",
     "scripts/debate_analysis.py",
     "scripts/e2e_local.py",
     "scripts/image_server.py",

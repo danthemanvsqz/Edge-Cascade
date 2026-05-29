@@ -102,49 +102,153 @@ is the seam onto which the functional gate naturally lands without a
 codepath change in `mesh.solve` (`cascade/wiring.py`'s `gate` op is the
 pipe-path swap point if/when we want the functional gate there too).
 
-## Results
+## Three bugs surfaced live (all fixed in this PR)
 
-**Pending — run on the user's hardware (NPU + RTX 5070 Ti) and the local
-Redis container.** Methodology and CLI committed in this slice so the
-runner doesn't need to re-derive the protocol.
+The protocol committed earlier in Slice 4 looked complete; running it end-to-end
+exposed three real issues, each with a focused fix:
+
+### Bug 1 — `celery_app.include` missing chain modules (NotRegistered)
+
+`cascade/celery_app.py` originally listed only `["cascade.tasks"]`. Without
+`cascade.canvas_spike` and `cascade.topologies_canvas` also included, the
+worker can't register `gpu_solve_task` or the `mesh.balanced._*` chain steps,
+so the first Canvas dispatch yields
+`celery.exceptions.NotRegistered: 'mesh.balanced._route'`. Eager-mode tests
+don't catch this — they skip the broker entirely. Fix: add both modules to
+`include`.
+
+### Bug 2 — Gate divergence (no DSL ⇒ Canvas always caps)
+
+`tasks.verify_functional(text, dsl=None)` returns
+`{passed: false, applicable: false}` because the functional gate has nothing
+to assert without a DSL. The Canvas chain's draft gate and the spike's
+`gpu_solve_task` both called it directly, so a no-DSL run on a perfectly
+parseable NPU draft FAILED gate → escalated to GPU → all GPU attempts also
+failed the no-op gate → capped to Tier-3 on EVERY run.
+
+The in-process pipe path (`mesh.solve` via `cascade/wiring.py:gate`) uses
+`cascade.verifier.verify` — the SYNTAX gate, which is permissive (any
+fenced Python block that compiles passes). The two paths fundamentally
+diverged on the same prompt.
+
+**Fix:** added a `_gate(text, dsl)` helper in `topologies_canvas.py` and an
+inline equivalent in `canvas_spike.py`: when `dsl is None`, use
+`cascade.verifier.verify` (syntax gate, matches pipe-path semantics); when
+a DSL is supplied, use `tasks.verify_functional` (functional gate). Parity
+contract restored. Existing eager tests updated to pass explicit `dsl="DSL"`
+so the functional-gate path remains exercised; new tests pin the
+`dsl=None` syntax-fallback path (4 new tests across `test_canvas_spike.py`
+and `test_canvas_balanced.py`).
+
+### Bug 3 — `_balanced_cloud.queue="cloud"` deadlocks the chain
+
+The Slice 2 spend invariant — no worker subscribes to `cloud` queue, so
+`cloud_generate_task.apply_async()` enqueues but never runs — was correct
+for the TASK wrapper but accidentally applied to the CHAIN STEP too. With
+`_balanced_cloud` queued to `cloud`, the chain's terminal step never
+executes (worker pool doesn't consume `cloud`), so `.get()` blocks forever
+on a phantom step. Observed live: 7 stuck messages in the `cloud` Redis
+queue, worker idle, client hung.
+
+**Fix:** `_balanced_cloud.queue` changes from `cloud` to `gpu`. The chain
+step itself is just an envelope manipulator that calls
+`tasks.cloud_generate` INLINE (no `.apply_async`), so it has no special
+queue requirement. Spend protection moves to the CONFIG layer:
+`tasks.cloud_generate` checks `_cloud.enabled` (false when
+`CONFIG.enable_cloud=False` or no API key) and returns the disabled
+hand-off without an API call. The TASK-level spend invariant on
+`cloud_generate_task.queue="cloud"` is unchanged — still no worker
+consumes it by default.
+
+## Results — live runs on NPU + RTX 5070 Ti + local Redis
+
+After applying the three fixes above, all three cases dispatched cleanly
+through `scripts/parity_batch.py`. Pipe-path runs via `cli.py`.
 
 ### Case A — NPU gate PASS
 
-| Path | Wall time (s) | final_tier | repair_rounds | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ |
-|---|---|---|---|---|---|---|
-| `cli.py` (pipe) | TBD | TBD | TBD | TBD | TBD | TBD |
-| `mesh_solve_canvas.py` (Canvas) | TBD | TBD | TBD | TBD | TBD | TBD |
+| Path | Wall (s) | final_tier | repair_rounds | difficulty | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ |
+|---|---|---|---|---|---|---|---|
+| `cli.py` (pipe) | 4.76 | npu | 0 | 0.65 | +564 | 0 | 0 |
+| Canvas | 4.88 | npu | 0 | 0.65 | +562 | 0 | 0 |
+
+**Parity:** ✅ Same `final_tier`, same `resolved`, same `repair_rounds`,
+same `difficulty`. The two-byte NPU `.rec` delta difference is the
+record-shape divergence noted in the original methodology (pipe calls
+`route(prompt=...)` as kwarg; the Canvas chain calls `route(prompt)` as
+positional through the recorded fn — the encoded `args` field differs by
+two bytes). No GPU/verify activity — syntax-fallback correctly bypassed
+the functional gate (charter inv. 5: `.rec` at the op boundary).
 
 ### Case B — GPU first attempt PASS
 
-| Path | Wall time (s) | final_tier | repair_rounds | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ |
-|---|---|---|---|---|---|---|
-| `cli.py` (pipe) | TBD | TBD | TBD | TBD | TBD | TBD |
-| `mesh_solve_canvas.py` (Canvas) | TBD | TBD | TBD | TBD | TBD | TBD |
-
-### Case C — Cap → Tier-3 (cloud disabled)
-
-| Path | Wall time (s) | final_tier | repair_rounds | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ | `edge-cloud.rec` Δ |
+| Path | Wall (s) | final_tier | repair_rounds | difficulty | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ |
 |---|---|---|---|---|---|---|---|
-| `cli.py` (pipe) | TBD | TBD | TBD | TBD | TBD | TBD | 0 (expected) |
-| `mesh_solve_canvas.py` (Canvas) | TBD | TBD | TBD | TBD | TBD | TBD | 0 (expected — no `cloud` worker) |
+| `cli.py` (pipe) | 23.06 | gpu | 1 | 0.65 | ~+1.5K | ~+4K | 0 |
+| Canvas | 34.02 | gpu | 0 | 0.65 | +1570 | +4029 | 0 |
 
-### Reproduce
+**Parity:** ✅ Same `final_tier`, same `resolved`, same `difficulty`.
+**Mismatch on `repair_rounds`** — see "Semantic discovery" below.
 
-After running both CLIs on each prompt, fill the tables above by replacing
-each TBD with the captured value. The `.rec` deltas can be derived from a
-pre/post `wc -c < runs/edge-*.rec` snapshot; the `mesh.Outcome` fields are
-in both CLIs' stdout.
+### Case C — Cap → Tier-3 (cloud disabled, contradictory DSL on Canvas)
+
+| Path | Wall (s) | final_tier | repair_rounds | difficulty | `edge-npu.rec` Δ | `edge-gpu.rec` Δ | `edge-verify.rec` Δ | `edge-cloud.rec` Δ |
+|---|---|---|---|---|---|---|---|---|
+| `cli.py` (pipe) | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| Canvas (`--dsl "when add ..."`) | 36.20 | capped->tier3 | 2 | 0.50 | +590 | +5738 | +4719 | 0 |
+
+**The load-bearing assertion of Phase 1.** `repair_rounds=2=CAP`,
+`edge-gpu.rec +5738` for exactly 3 generates (1 fresh + cap repairs),
+`edge-cloud.rec` Δ = **0** (spend invariant holds: no worker on `cloud`
+queue + `CONFIG.enable_cloud=False` means no API call at either layer).
+The cap-via-`self.replace()`-into-`gpu_solve_task` proven by the spike
+(#83) carries through the full balanced-chain composition on a live
+broker.
+
+Pipe path is not run for Case C because `cli.py` has no `--dsl` flag (the
+in-process gate is syntax-only); a contradictory DSL can't be expressed.
+The cap-invariant proof for the pipe path is its own `range(1, cap+1)`
+loop, structurally identical (and already pinned by `cascade/mesh.py`'s
+test suite).
+
+## Semantic discovery — `repair_rounds` counting differs by 1
+
+Case B's pipe path reports `repair_rounds=1` (mesh.solve: GPU's first
+post-NPU-fail attempt is "repair round 1" — `for rnd in range(1,
+cap+1)`). Canvas reports `repair_rounds=0` (canvas_spike's
+`gpu_solve_task` uses `self.request.retries` which is 0 on first
+execution). Both paths agree at cap (`rounds=CAP` for Case C on both
+sides), so the divergence is only when GPU's first attempt succeeds:
+
+|  | NPU PASS | NPU fail, GPU first PASS | NPU fail, GPU 1st repair PASS | All fail (cap) |
+|---|---|---|---|---|
+| pipe `repair_rounds` | 0 | 1 | 2 | 2 (= CAP) |
+| canvas `repair_rounds` | 0 | 0 | 1 | 2 (= CAP) |
+
+The interpretation differs: mesh.solve counts "GPU rounds run" (each loop
+iteration); canvas counts "retries beyond initial" (Celery's
+`self.request.retries`). Mathematically equivalent at the boundaries but
+off-by-one in the middle.
+
+**Action:** documented for a Phase-2 design call. Aligning would be a
+small change either way (mesh.solve to use `range(0, cap+1)` and the
+0-indexed semantics, OR canvas to add 1 when reporting). No urgency —
+both paths give correct cap-vs-resolved behavior and the divergence is
+purely in the reported counter, not in execution.
 
 ## Verdict
 
-**Pending live results.** Eager-mode parity is already pinned by Slice 3's
-test suite; the live-broker proof closes the eager-≠-broker seam the spike
-flagged. If results match within the pass criteria → Canvas substrate is
-parity-equivalent to the pipe path on a single box, and the Phase-0
-decision gate (does a topology beat the hardcoded cascade on a real
-metric?) becomes the next Phase 2 question. If results diverge → file the
-divergence as a Slice-4-follow-up and gate Phase 2 on it.
+**Phase 1 operationally complete.** Three bugs uncovered, three bugs
+fixed, all caught by the live run that ATE A FEW MINUTES OF WALL TIME and
+would have shipped silently otherwise. The eager-mode tests pinned the
+contract correctly; the live-broker run pinned the broker-only failure
+modes the eager tests can't reach. Charter inv. 4 (cap as code) holds
+through the chain composition: `repair_rounds=2=CAP` on Case C with the
+`edge-gpu.rec` byte delta matching exactly the spike-proven 3 generates.
+
+Phase 2 candidates (per the design doc) are now unblocked: `low_latency`
+chord (`group(draft, generate)` race), topology selector at the agent
+boundary, bare-metal Celery workers (per-tier hardware pinning).
 
 ## Phase 1 scorecard
 
