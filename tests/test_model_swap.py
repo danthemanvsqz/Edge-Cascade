@@ -220,6 +220,22 @@ def test_register_overwrites_existing():
     assert model_swap.status()["vram_used_mb"] == 6000
 
 
+def test_swap_idempotent_path_survives_state_drift():
+    """Defensive: if state ever drifts (name in _resident but NOT in
+    _lru_order), the idempotent path must NOT raise. Charter inv. 5
+    says swap() never raises. Surfacing this drift via a clean return
+    is preferable to a ValueError ripping through the cascade."""
+    model_swap.register("m", lambda: _fake_handle("m"), 1000)
+    model_swap.swap("m")
+    # Force drift: name is resident but not in LRU.
+    model_swap._lru_order.clear()
+    out = model_swap.swap("m")  # must not raise
+    assert out["loaded"] is True
+    assert out["was_swap"] is False
+    # Drift healed: name now in LRU again.
+    assert "m" in model_swap._lru_order
+
+
 def test_swap_with_empty_resident_set_doesnt_loop_forever(mocker):
     """A pathological model that doesn't fit even on an empty GPU
     (caught earlier by the `> vram_total_mb` check) must NOT enter the

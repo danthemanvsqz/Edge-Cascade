@@ -7,6 +7,13 @@ docs/DESIGN-celery-phase2.md), each Celery worker process owns its own
 Per-model generate tasks (Slice 3b+) read via `get(name)` and assume
 the resident model matches what they expect -- they don't probe.
 
+**Concurrency model:** module-level dicts with NO locks. This assumes
+single-threaded execution per worker process (Celery `--pool=solo` or
+prefork with one task at a time on this queue). A threaded worker
+configuration would hit silent races on `_resident` / `_lru_order` /
+`_FACTORIES`. The Slice-3a contract is single-threaded; revisit when
+multi-threading is added.
+
 Composition contract: clients chain `model.swap.s(name)` BEFORE the
 corresponding `generate_<model>.s(...)` task. The swap task runs on
 the same queue as the model it manages, so Celery's FIFO-per-queue
@@ -105,7 +112,12 @@ def swap(name: str) -> dict:
     inv. 5)."""
     # Already resident: touch LRU + return.
     if name in _resident:
-        _lru_order.remove(name)
+        # Defensive: charter inv. 5 says swap() never raises. If state ever
+        # drifted (name in _resident but not in _lru_order), a bare
+        # .remove() would ValueError. Guard so even a drift produces a
+        # clean idempotent return.
+        if name in _lru_order:
+            _lru_order.remove(name)
         _lru_order.append(name)
         return {
             "loaded": True, "name": name, "was_swap": False,
@@ -163,10 +175,18 @@ def _used_mb() -> int:
 
 
 def _reset_for_tests() -> None:
-    """Clear all module-level state. Tests use this between cases via
-    the autouse fixture in tests/test_model_swap.py. NOT for production
-    use -- the resident state is per-process and should survive the
-    process lifetime per worker_max_tasks_per_child=0."""
+    """Clear all module-level state including the factory registry.
+    Tests use this between cases via the autouse fixture in
+    tests/test_model_swap.py.
+
+    **NOT for production use** -- the resident state is per-process and
+    should survive the process lifetime per `worker_max_tasks_per_child=0`.
+
+    **Slice 3b+ caveat:** when per-model task modules add `register()`
+    calls at import time, each test that needs those registrations must
+    re-register (or import via a fixture). The autouse `_reset_swap_state`
+    fixture wipes the registry before AND after every test, so cross-test
+    factory leakage is avoided."""
     _resident.clear()
     _lru_order.clear()
     _FACTORIES.clear()

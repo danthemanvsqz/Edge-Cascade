@@ -203,17 +203,22 @@ def cloud_generate_task(prompt: str, prior_attempt: str | None = None) -> dict:
 from cascade import model_swap  # noqa: E402
 
 
-@app.task(name="model.swap", queue="gpu", bind=True)
-def swap_task(self, name: str) -> dict:
+@app.task(name="model.swap", queue="gpu")
+def swap_task(name: str) -> dict:
     """Ensure `name` is the resident model on this worker. Clients chain
     `model.swap.s(name) | generate_<name>.s(prompt)` so the swap completes
     before the generate runs (Celery FIFO per queue). Returns the
-    cascade.model_swap.swap result dict; never raises (charter inv. 5)."""
+    cascade.model_swap.swap result dict; never raises (charter inv. 5).
+
+    Pinned to `gpu` queue for 3a since the registered models so far are
+    all GPU-resident. Slice 3c+ may need a per-tier swap (npu queue for
+    NPU models, gpu for GPU models) if CPU/iGPU models register; revisit
+    then."""
     return model_swap.swap(name)
 
 
-@app.task(name="model.status", queue="gpu", bind=True)
-def status_task(self) -> dict:
+@app.task(name="model.status", queue="gpu")
+def status_task() -> dict:
     """Read-only snapshot of resident models + VRAM accounting on this
     worker. For the dashboard + ad-hoc debugging."""
     return model_swap.status()
