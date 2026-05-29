@@ -700,6 +700,8 @@ imagegen = [
 ]
 llama-cpp = [
     { name = "llama-cpp-python" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "sys_platform == 'win32'" },
 ]
 mcp = [
     { name = "mcp" },
@@ -726,6 +728,8 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'accel'", specifier = ">=0.27" },
     { name = "llama-cpp-python", marker = "extra == 'llama-cpp'", specifier = ">=0.3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'win32' and extra == 'llama-cpp'", specifier = "==12.4.*" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "sys_platform == 'win32' and extra == 'llama-cpp'", specifier = "==12.4.*" },
     { name = "openvino-genai", marker = "extra == 'accel'", specifier = "==2026.1.*" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "safetensors", marker = "extra == 'imagegen'", specifier = ">=0.4" },
@@ -1316,6 +1320,14 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-cublas-cu12"
+version = "12.4.5.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/2a/4f27ca96232e8b5269074a72e03b4e0d43aa68c9b965058b1684d07c6ff8/nvidia_cublas_cu12-12.4.5.8-py3-none-win_amd64.whl", hash = "sha256:5a796786da89203a0657eda402bcdcec6180254a8ac22d72213abc42069522dc", size = 396895858, upload-time = "2024-04-03T21:03:31.996Z" },
+]
+
+[[package]]
 name = "nvidia-cuda-cupti"
 version = "13.0.85"
 source = { registry = "https://pypi.org/simple" }
@@ -1340,6 +1352,14 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/4f/17d7b9b8e285199c58ce28e31b5c5bbaa4d8271af06a89b6405258245de2/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ef9bcbe90493a2b9d810e43d249adb3d02e98dd30200d86607d8d02687c43f55", size = 2261060, upload-time = "2025-10-09T08:55:15.78Z" },
     { url = "https://files.pythonhosted.org/packages/2e/24/d1558f3b68b1d26e706813b1d10aa1d785e4698c425af8db8edc3dced472/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548", size = 2243632, upload-time = "2025-10-09T08:55:36.117Z" },
+]
+
+[[package]]
+name = "nvidia-cuda-runtime-cu12"
+version = "12.4.127"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/8b/450e93fab75d85a69b50ea2d5fdd4ff44541e0138db16f9cd90123ef4de4/nvidia_cuda_runtime_cu12-12.4.127-py3-none-win_amd64.whl", hash = "sha256:09c2e35f48359752dfa822c09918211844a3d93c100a715d79b59591130c5e1e", size = 878808, upload-time = "2024-04-03T21:00:49.77Z" },
 ]
 
 [[package]]
