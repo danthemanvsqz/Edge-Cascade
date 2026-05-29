@@ -57,6 +57,13 @@ class Config:
     # direct path matches. Override via CASCADE_GPU_BACKEND=ollama|llama_cpp.
     # See docs/DESIGN-celery-phase2.md (the locked decisions section).
     gpu_backend: str = os.environ.get("CASCADE_GPU_BACKEND", "ollama")
+    # GPU VRAM budget for the model.swap arbiter (Phase 2 Slice 3a). Defaults
+    # to 12 GB (RTX 5070 Ti); override via CASCADE_VRAM_TOTAL_MB for boxes
+    # with more/less. Per-model footprints in cascade/model_swap.py are
+    # conservative (slightly overestimated) so the swap never OOMs the GPU.
+    vram_total_mb: int = field(
+        default_factory=lambda: int(os.environ.get("CASCADE_VRAM_TOTAL_MB", "12288"))
+    )
     ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     # On-disk root of Ollama's blob cache; the llama-cpp backend reads GGUFs
     # from here by resolving the Ollama manifest. Default matches the standard

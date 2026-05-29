@@ -21,6 +21,7 @@ import sys
 from functools import cache
 from pathlib import Path
 
+from cascade import model_swap
 from cascade.celery_app import app
 from cascade.cloud_worker import est_cost_usd, make_cloud_worker, reason_note
 from cascade.config import CONFIG
@@ -191,3 +192,32 @@ def cloud_generate(prompt: str, prior_attempt: str | None = None) -> dict:
 @app.task(name="mesh.cloud_generate", queue="cloud")
 def cloud_generate_task(prompt: str, prior_attempt: str | None = None) -> dict:
     return cloud_generate(prompt, prior_attempt)
+
+
+# ---------------------------------------------------------------------------
+# Model-swap arbiter -- Phase 2 Slice 3a.
+# The swap/status tasks live here (alongside the other tier tasks) so
+# `cascade.celery_app.include = ["cascade.tasks", ...]` picks them up at
+# worker boot. The arbiter logic itself is in cascade.model_swap; these are
+# thin Celery wrappers per the design's "tasks stay one-liners" guideline.
+
+
+@app.task(name="model.swap", queue="gpu")
+def swap_task(name: str) -> dict:
+    """Ensure `name` is the resident model on this worker. Clients chain
+    `model.swap.s(name) | generate_<name>.s(prompt)` so the swap completes
+    before the generate runs (Celery FIFO per queue). Returns the
+    cascade.model_swap.swap result dict; never raises (charter inv. 5).
+
+    Pinned to `gpu` queue for 3a since the registered models so far are
+    all GPU-resident. Slice 3c+ may need a per-tier swap (npu queue for
+    NPU models, gpu for GPU models) if CPU/iGPU models register; revisit
+    then."""
+    return model_swap.swap(name)
+
+
+@app.task(name="model.status", queue="gpu")
+def status_task() -> dict:
+    """Read-only snapshot of resident models + VRAM accounting on this
+    worker. For the dashboard + ad-hoc debugging."""
+    return model_swap.status()
