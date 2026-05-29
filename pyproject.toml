@@ -51,7 +51,10 @@ imagegen = [
 # resident in the worker process; no HTTP hop, no Ollama daemon. CUDA builds
 # need a matching `llama-cpp-python` wheel:
 #   uv pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-#   uv sync --extra llama_cpp
+#   uv sync --extra llama-cpp
+# (uv normalizes extra names per PEP 685; `--extra llama-cpp` and
+# `--extra llama_cpp` both resolve to the same group, but `llama-cpp` is the
+# canonical form recorded in uv.lock's `provides-extras`.)
 # Opt-in via CASCADE_GPU_BACKEND=llama_cpp; default stays `ollama` until the
 # Slice 2 parity findings prove the direct path matches.
 llama_cpp = [

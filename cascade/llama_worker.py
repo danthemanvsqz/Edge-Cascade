@@ -11,7 +11,7 @@ behind the `CASCADE_GPU_BACKEND=llama_cpp` flag (default stays `ollama`
 until the Slice 2 parity findings prove the direct path matches).
 
 llama-cpp-python is lazy-loaded (only inside `make_llama_worker`), so this
-module imports without the optional `llama_cpp` extra -- the import only
+module imports without the optional `llama-cpp` extra -- the import only
 happens when the backend is actually selected.
 
 Weights resolution: parses the Ollama manifest at
@@ -90,14 +90,16 @@ def _resolve_ollama_blob(model_id: str, models_dir: Path) -> Path:
 
 
 def _llama():
-    """Lazy import. The optional `llama_cpp` extra is only required when
-    `CASCADE_GPU_BACKEND=llama_cpp`; this module's IMPORT remains free."""
+    """Lazy import. The optional `llama-cpp` extra is only required when
+    `CASCADE_GPU_BACKEND=llama_cpp`; this module's IMPORT remains free.
+    (Note the underscore vs hyphen: `llama_cpp` is the Python module name,
+    `llama-cpp` is the uv extra name -- they're independently spelled.)"""
     try:
         import llama_cpp
     except ModuleNotFoundError as e:  # pragma: no cover - env-dependent
         raise RuntimeError(
             "llama-cpp-python is required for the llama_cpp GPU backend. "
-            "Install it: uv sync --extra llama_cpp"
+            "Install it: uv sync --extra llama-cpp"
         ) from e
     return llama_cpp
 
