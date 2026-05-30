@@ -15,7 +15,23 @@ previous step's output, via Celery), and the gpu-solve handoff uses
 from __future__ import annotations
 
 from cascade import mesh
-from cascade.topologies_canvas import balanced_signature
+from cascade.topologies_canvas import balanced_signature, low_latency_signature
+
+
+def _to_outcome(env: dict) -> mesh.Outcome:
+    """Adapt a final Canvas envelope to the `mesh.Outcome` dataclass `mesh.solve`
+    returns, so every Canvas topology is consumed identically to the pipe path
+    (charter inv. 3). Shared by all `solve_*_canvas` entries."""
+    return mesh.Outcome(
+        answer=env["answer"],
+        final_tier=env["final_tier"] or "capped->tier3",
+        resolved=bool(env["resolved"]),
+        capped=bool(env["capped"]),
+        repair_rounds=int(env["repair_rounds"]),
+        difficulty=float(env["difficulty"]),
+        topology=env["topology"],
+        trace=tuple(env["trace"]),
+    )
 
 
 def solve_balanced_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
@@ -30,14 +46,17 @@ def solve_balanced_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
     change.
     """
     env = balanced_signature(query, dsl).apply_async().get(timeout=600)
-    final_tier = env["final_tier"] or "capped->tier3"
-    return mesh.Outcome(
-        answer=env["answer"],
-        final_tier=final_tier,
-        resolved=bool(env["resolved"]),
-        capped=bool(env["capped"]),
-        repair_rounds=int(env["repair_rounds"]),
-        difficulty=float(env["difficulty"]),
-        topology=env["topology"],
-        trace=tuple(env["trace"]),
-    )
+    return _to_outcome(env)
+
+
+def solve_low_latency_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
+    """Dispatch the `low_latency` Canvas signature (NPU draft raced against the
+    GPU generate via a chord) and adapt the callback's envelope to
+    `mesh.Outcome` -- same return shape as `solve_balanced_canvas`, so a caller
+    swaps topologies by choosing the entry point, not by reshaping output.
+
+    Speculative: both tiers always run (trades GPU cost for latency); resolves
+    to the first verified candidate or caps to Tier-3 on a double miss. See
+    docs/FINDINGS-canvas-phase2-low-latency.md."""
+    env = low_latency_signature(query, dsl).apply_async().get(timeout=600)
+    return _to_outcome(env)

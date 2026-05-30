@@ -291,3 +291,31 @@ def test_model_status_task_dispatchable_via_broker(
     result = tasks.status_task.apply_async().get(timeout=30)
     assert "resident" in result
     assert "vram_total_mb" in result
+
+
+def test_low_latency_chord_resolves_over_broker(
+    celery_integration_worker, mocker,
+):
+    """Slice 6b: the low_latency chord -- group(npu draft, [swap+]gpu generate)
+    + the `_pick_first_verified` callback -- runs end-to-end over the embedded
+    worker. The parseable mocked NPU draft (from _mock_tier_ops) wins the race
+    under the syntax gate; the GPU arm still EXECUTES (it's a race) but isn't
+    selected. Proves chord + group + chord-callback dispatch + `.get()` work on
+    a real broker, not just eager mode -- the same class of broker-only bug
+    Slice 4 was built to catch.
+
+    `generate_qwen14b_task` calls `generate_qwen14b` directly (NOT the `generate`
+    alias `_mock_tier_ops` patches), so mock it explicitly to keep the GPU race
+    arm off real Ollama."""
+    mocker.patch(
+        "cascade.tasks.generate_qwen14b",
+        return_value={"available": True,
+                      "text": "```python\ndef g(): return 2\n```",
+                      "model": "fake-14b", "tokens_per_s": 0.0,
+                      "latency_s": 0.01},
+    )
+    outcome = canvas_client.solve_low_latency_canvas("anything parseable")
+    assert isinstance(outcome, mesh.Outcome)
+    assert outcome.topology == "low_latency"
+    assert outcome.resolved is True
+    assert outcome.final_tier == "npu"  # the parseable draft wins the race
