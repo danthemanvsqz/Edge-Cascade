@@ -12,6 +12,7 @@ import {
   HEARTBEAT_MS,
   HOT_MS,
   isFlashing,
+  isNodeActive,
   isNodeHot,
   nodeForParticle,
   particlePosition,
@@ -356,5 +357,20 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     ctx.store.ingest("cascade", { final_tier: "gpu", ts: "100" });
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).not.toContain("outcome-flash--active");
+  });
+});
+
+describe("isNodeActive (live spinning-ring indicator)", () => {
+  it("matches by id", () => {
+    expect(isNodeActive("gpu_solve", "gpu_solve", new Set(["gpu_solve"]))).toBe(true);
+  });
+
+  it("matches by label (live 'draft_gate' lights the node whose id is 'gate')", () => {
+    expect(isNodeActive("gate", "draft_gate", new Set(["draft_gate"]))).toBe(true);
+  });
+
+  it("is false when neither id nor label is active", () => {
+    expect(isNodeActive("gpu_solve", "gpu_solve", new Set(["route"]))).toBe(false);
+    expect(isNodeActive("route", "route", new Set())).toBe(false);
   });
 });

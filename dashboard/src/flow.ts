@@ -242,6 +242,7 @@ function overlaySvg(ctx: DashContext): VNode {
   const particles = ctx.store.particles();
   const byNode = bucketByNode(particles);
   const lastOutcome = ctx.store.lastOutcome();
+  const activeNodes = ctx.store.activeNodes();
   return h(
     "svg",
     {
@@ -251,6 +252,11 @@ function overlaySvg(ctx: DashContext): VNode {
       "aria-hidden": "true",
     },
     outcomeFlash(lastOutcome, nowMs),
+    h(
+      "g",
+      { class: "node-spins" },
+      ...NODES.map((n) => spinRing(n, activeNodes)),
+    ),
     h(
       "g",
       { class: "node-hots" },
@@ -423,6 +429,42 @@ function hotRing(
     height: String(n.h + 6),
     rx: "9",
     ry: "9",
+    fill: "none",
+    "aria-hidden": "true",
+  });
+}
+
+/** Is this node executing right now, per the LIVE lane (the receiver's pub/sub
+ * deltas, surfaced as store.activeNodes())? Matched by id OR label so the live
+ * "draft_gate" id lights the node whose id is "gate"; live-only ids with no
+ * flow node (merge_gpu/done/pick) match nothing and are ignored. Pure -- no
+ * DOM. Exported for unit tests. */
+export function isNodeActive(
+  id: string,
+  label: string,
+  activeNodes: ReadonlySet<string>,
+): boolean {
+  return activeNodes.has(id) || activeNodes.has(label);
+}
+
+/** Per-node spinning ring overlay -- the LIVE "in progress" signal (a task is
+ * executing on this node this instant), distinct from the post-completion hot
+ * ring the .rec stream drives. The `--spinning` class runs a continuous CSS
+ * rotation while the node is in store.activeNodes(); it sits just outside the
+ * hot ring so both can read at once (spinning now, glowing from a recent land). */
+function spinRing(n: ChainNode, activeNodes: ReadonlySet<string>): VNode {
+  const spinning = isNodeActive(n.id, n.label, activeNodes);
+  const cls = spinning
+    ? `node-spin node-spin--spinning node-spin--tone-${n.tier}`
+    : `node-spin node-spin--tone-${n.tier}`;
+  return h("rect", {
+    class: cls,
+    x: String(n.x - 6),
+    y: String(n.y - 6),
+    width: String(n.w + 12),
+    height: String(n.h + 12),
+    rx: "12",
+    ry: "12",
     fill: "none",
     "aria-hidden": "true",
   });
