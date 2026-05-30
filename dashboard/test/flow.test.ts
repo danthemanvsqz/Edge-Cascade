@@ -50,15 +50,18 @@ function outcome(finalTier: string, tsMs: number, won: boolean): LastOutcome {
 }
 
 describe("cascadeFlowTopology (static Canvas chain)", () => {
-  it("renders an 880x400 SVG with the chain node labels and the chain arcs", () => {
+  it("renders a 1208x400 SVG with the chain node labels and the chain arcs", () => {
     const html = renderToString(cascadeFlowTopology());
-    expect(html).toContain('viewBox="0 0 880 400"');
+    expect(html).toContain('viewBox="0 0 1208 400"');
     // Every chain node label appears -- the real Celery tasks, not abstract
     // tier blobs.
     for (const label of [
       "route",
       "draft",
-      "verify",
+      "verify_syntax",
+      "verify_functional",
+      "repair_prompt",
+      "resolve_npu",
       "gpu_solve",
       "Tier 3 · CLI",
       "cloud",
@@ -73,8 +76,10 @@ describe("cascadeFlowTopology (static Canvas chain)", () => {
     for (const pathId of [
       "entry-route",
       "route-draft",
-      "draft-verify",
-      "verify-resolve_npu",
+      "draft-verify_syntax",
+      "verify_syntax-verify_functional",
+      "verify_functional-repair_prompt",
+      "repair_prompt-resolve_npu",
       "resolve_npu-gpu_solve",
       "repair-loop",
       "cap-tier3",
@@ -102,7 +107,8 @@ describe("nodeForParticle (tier+tool -> chain node)", () => {
   it("maps a non-route NPU tool (e.g. status) to draft", () => {
     expect(nodeForParticle(part("npu", 0, 0, "status"))).toBe("draft");
   });
-  it("maps verify->resolve_npu (last verify node), gpu->gpu_solve, cloud->cloud", () => {
+  it("maps verify-tier particles to node by tool name, fallback to last verify node", () => {
+    // Unknown verify tool falls back to tierToNodeId (last verify node = resolve_npu)
     expect(nodeForParticle(part("verify", 0))).toBe("resolve_npu");
     expect(nodeForParticle(part("gpu", 0))).toBe("gpu_solve");
     expect(nodeForParticle(part("cloud", 0))).toBe("cloud");
@@ -219,7 +225,7 @@ describe("isFlashing / FLASH_MS", () => {
 
 describe("enteringArcStart (particle motion origin)", () => {
   it("returns a start for each particle node, null for tier3", () => {
-    for (const id of ["route", "draft", "verify", "resolve_npu", "gpu_solve", "cloud"] as const) {
+    for (const id of ["route", "draft", "verify_syntax", "verify_functional", "repair_prompt", "resolve_npu", "gpu_solve", "cloud"] as const) {
       expect(enteringArcStart(id)).not.toBeNull();
     }
     expect(enteringArcStart("tier3")).toBeNull();
@@ -277,7 +283,7 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).toContain('class="overlay"');
     // One hot ring per node (6); none active at rest.
-    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(7);
+    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(9);
     expect(html).not.toContain("node-hot--hot");
     // No particles, no flash.
     expect(html.match(/class="particle particle--/g)).toBeNull();
@@ -368,7 +374,7 @@ describe("isNodeActive (live spinning-ring indicator)", () => {
   });
 
   it("matches by label (label matching as a general capability)", () => {
-    expect(isNodeActive("verify", "verify", new Set(["verify"]))).toBe(true);
+    expect(isNodeActive("verify_syntax", "verify_syntax", new Set(["verify_syntax"]))).toBe(true);
   });
 
   it("is false when neither id nor label is active", () => {
@@ -386,9 +392,9 @@ describe("cascadeSpinRegion (liveness lane, its own region)", () => {
     expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
   });
 
-  it("lights the verify node when active node id 'verify' is set", () => {
+  it("lights the verify_syntax node when active node id 'verify_syntax' is set", () => {
     const ctx = makeCtx();
-    ctx.store.setActiveNodes(["verify"]);
+    ctx.store.setActiveNodes(["verify_syntax"]);
     const html = renderToString(cascadeSpinRegion.render(ctx));
     expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
   });

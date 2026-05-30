@@ -36,7 +36,6 @@ from __future__ import annotations
 from celery.exceptions import MaxRetriesExceededError
 
 from cascade import tasks
-from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
 from cascade.config import CONFIG
 
@@ -106,10 +105,10 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
         passed = bool(verdict.get("passed"))
         failures = tuple(verdict.get("failures", ()))
     else:
-        v = syntax_verifier.verify(gen["text"])
-        passed = v.passed
-        failures = () if v.passed else (
-            {"expr": "syntax", "observed": v.reason,
+        result = tasks.verify_syntax(gen["text"])
+        passed = bool(result.get("passed"))
+        failures = () if passed else (
+            {"expr": "syntax", "observed": result.get("reason", ""),
              "requirement": "fenced Python block that compiles"},
         )
     if passed:

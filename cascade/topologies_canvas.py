@@ -49,7 +49,6 @@ from celery import chain, chord, group
 
 from cascade import canvas_spike, tasks, ts_verifier
 from cascade import topologies as topo_module
-from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
 from cascade.config import CONFIG
 
@@ -161,10 +160,10 @@ def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
             return True, []
         return False, [{"expr": "ts-syntax", "observed": v.reason,
                         "requirement": "fenced TypeScript block that parses"}]
-    v = syntax_verifier.verify(text)
-    if v.passed:
+    result = tasks.verify_syntax(text)
+    if result.get("passed"):
         return True, []
-    return False, [{"expr": "syntax", "observed": v.reason,
+    return False, [{"expr": "syntax", "observed": result.get("reason", ""),
                     "requirement": "fenced Python block that compiles"}]
 
 

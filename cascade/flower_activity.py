@@ -27,7 +27,7 @@ FLOWER_URL = "http://127.0.0.1:5555"
 NODE_BY_TASK: dict[str, tuple[str, str]] = {
     "mesh.balanced._route": ("route", "npu"),
     "mesh.balanced._draft": ("draft", "npu"),
-    "mesh.balanced._verify": ("verify", "verify"),
+    "mesh.balanced._verify": ("verify_syntax", "verify"),
     "mesh.balanced._resolve_npu": ("resolve_npu", "verify"),
     "mesh.balanced._gpu_solve": ("gpu_solve", "gpu"),
     "mesh.balanced._merge_gpu": ("merge_gpu", "gpu"),

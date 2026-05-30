@@ -57,8 +57,10 @@ export interface NodeSpec {
 export const CHAIN_SPECS: readonly NodeSpec[] = [
   { task: "mesh.balanced._route",      id: "route",       label: "route",         queue: "npu",    tier: "npu"    },
   { task: "mesh.balanced._draft",       id: "draft",       label: "draft",         queue: "npu",    tier: "npu"    },
-  { task: "mesh.balanced._verify",      id: "verify",      label: "verify",        queue: "verify", tier: "verify" },
-  { task: "mesh.balanced._resolve_npu", id: "resolve_npu", label: "resolve_npu",   queue: "verify", tier: "verify" },
+  { task: "mesh.balanced._verify",      id: "verify_syntax",     label: "verify_syntax",     queue: "verify", tier: "verify" },
+  { task: null,                          id: "verify_functional", label: "verify_functional", queue: "verify", tier: "verify" },
+  { task: null,                          id: "repair_prompt",     label: "repair_prompt",     queue: "verify", tier: "verify" },
+  { task: "mesh.balanced._resolve_npu", id: "resolve_npu",       label: "resolve_npu",       queue: "verify", tier: "verify" },
   { task: "mesh.balanced._gpu_solve",   id: "gpu_solve",   label: "gpu_solve",     queue: "gpu",    tier: "gpu"    },
   // Synthetic -- always shown regardless of what the worker has registered.
   { task: null, id: "tier3", label: "Tier 3 · CLI", queue: "—",     tier: "tier3" },
@@ -234,9 +236,16 @@ function nodeById(id: string): ChainNode {
  * node, everything else lands on the primary npu node (draft). Exported for
  * unit tests. */
 export function nodeForParticle(p: Particle): string {
+  // NPU: differentiate route from draft by tool name.
   if (p.tier === "npu" && p.tool === "route") {
     const routeNode = _topo.nodes.find(n => n.tier === "npu" && n.id === "route");
     if (routeNode) return routeNode.id;
+  }
+  // Verify: each tool (verify_syntax, verify_functional, repair_prompt) maps to
+  // its own node so the dashboard shows WHICH gate operation ran.
+  if (p.tier === "verify") {
+    const opNode = _topo.nodes.find(n => n.id === p.tool);
+    if (opNode) return opNode.id;
   }
   return _topo.tierToNodeId.get(p.tier) ?? p.tier;
 }
