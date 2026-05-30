@@ -17,9 +17,9 @@ dropped, the `S4` row is parked + de-risked.
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                       I4 Critical
  S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1                        — (none)
- S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate              — (none)
+ S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
                                        #5 PT-4 verbump   #2 PT-2 (Slice 7: blocked)
-                                       #10 ts-shortcut
+                                       #10 ts-shortcut*  *#10 superseded by #7
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal
                                                          #9 draft_gate-decompose
@@ -27,9 +27,12 @@ dropped, the `S4` row is parked + de-risked.
 ```
 
 No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked**
-(not parked) — see below. **#6 OBS-1 is done** (struck from the actionable set).
-The next-session pick is **#7 (ts-verify-gate)** — highest leverage in the arc:
-it converts a 0%-win lane (see evidence) into a winnable one.
+(not parked) — see below. **#6 OBS-1 and #7 ts-verify-gate are done** (struck
+from the actionable set). **#7 SHIPPED (PR #115)** — verified live: a TS task
+that capped 100% before now wins @ npu; that also retires **#10 ts-shortcut**
+(the stopgap is moot now the gate works). The next pick is **#8
+(difficulty-recal)** — confirmed live during the #7 demo (a generic-type
+one-liner rated 0.85, skipped the cheap NPU draft, and capped at GPU).
 
 ---
 
@@ -42,7 +45,12 @@ routing wall-time 13.1 min, of which the **6 caps consumed ~5.5 min (42%) for
 zero usable output**. Language split: **TypeScript 0/3 won (0%)** vs
 Python/algo **18/21 (86%)**.
 
-### #7 · ts-verify-gate — a TS backend for the deterministic gate  (I3 · S2)
+### ✅ #7 · ts-verify-gate — a TS backend for the deterministic gate  (I3 · S2) — SHIPPED (PR #115)
+**Done:** `cascade/ts_verifier.py` + `dashboard/scripts/ts-syntax-check.mjs`
+(single-file `ts.transpileModule` syntax check, parity with the Python AST gate)
++ `_gate` language dispatch. Live-verified: a TS task that capped 100% before now
+wins @ npu; Python parity intact. Original analysis retained below.
+
 **The gap:** all **3 TS routes capped (100%)**. The locals *draft* TS fine; the
 `edge-verify` gate is Python-only ([[edge-verify-ts-gap]]), so every TS draft
 fails gating and burns both GPU repair rounds before `capped→tier3`. **The gate,
@@ -80,7 +88,11 @@ chain — the cap invariant + the pipe-parity contract
 ([FINDINGS-canvas-phase1.md]) must hold across the split; eager-test the new
 composition before it lands.
 
-### #10 · ts-shortcut — hand TS straight to Tier 3 until #7 lands  (I2 · S2)
+### ~~#10 · ts-shortcut~~ — RETIRED (superseded by #7)  (I2 · S2)
+**Dropped:** #7 shipped, so the gate now wins TS instead of guaranteed-capping
+it — the stopgap has no remaining purpose. Kept for the record only.
+
+(original) — hand TS straight to Tier 3 until #7 lands:
 **The gap (stopgap):** while the gate can't certify TS (#7), a TS task is a
 *guaranteed* cap — ~35s of draft + 2 GPU rounds for nothing. Detect TS and route
 it directly to `capped→tier3` (still logged), skipping the futile draft/repair.
