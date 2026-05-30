@@ -199,6 +199,12 @@ def _balanced_gpu_solve(self, env: dict):
             tasks.swap_task.s("qwen14b"),
             canvas_spike.gpu_solve_task.si(
                 query=env["query"], dsl=env["dsl"], prior=env["prior"],
+                # Canvas->pipe round alignment (Slice 6a): a non-empty prior is
+                # the failed NPU/iGPU draft, so gpu_solve_task's FIRST generate
+                # already repairs it = round 1 (round_base=1), bounding the run
+                # to `cap` GPU calls like mesh.solve's range(1, cap+1). No prior
+                # (skip-draft / NPU unavailable) => fresh generate = round 0.
+                round_base=1 if env["prior"] else 0,
             ),
             _merge_gpu_into_env.s(env=env),
         )
