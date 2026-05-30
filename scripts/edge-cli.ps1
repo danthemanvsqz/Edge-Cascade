@@ -46,11 +46,25 @@
   driving a non-interactive run, headless CI, or already have the dashboard
   open and don't want a second instance fighting for port 8789.
 
+.PARAMETER Canvas
+  Also stand up the Celery Canvas test-drive substrate alongside the normal
+  launch: sync the `celery` extra, bring up the Redis broker
+  (docker compose up -d redis), and spawn a resident Celery worker covering the
+  npu,gpu,verify queues (never `cloud` — the spend invariant) in a new window,
+  then launch Claude as usual. Drive the pipeline with
+  `python scripts\mesh_solve_canvas.py --topology {balanced,low_latency} "<task>"`
+  and watch the dashboard (the SD-4 effectiveness panel now counts Canvas runs).
+  Broker + worker outlive the session (spawn-and-leave, like the dashboard):
+  Ctrl-C the worker window and `docker stop edge-cascade-redis` to tear down.
+  Requires Docker Desktop running. Combine with -SkipSync only if the `celery`
+  extra is already in .venv (otherwise the spawned worker fails to import it).
+
 .EXAMPLE
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -ProjectDir C:\src\myapp
-  powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Check   # verify wiring, don't launch
+  powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Check    # verify wiring, don't launch
+  powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Canvas   # + Celery broker/worker for the Canvas path
 #>
 [CmdletBinding()]
 param(
@@ -60,7 +74,8 @@ param(
   [switch]   $SkipSync,
   [switch]   $Check,
   [switch]   $NoSummary,
-  [switch]   $NoDashboard
+  [switch]   $NoDashboard,
+  [switch]   $Canvas
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,9 +131,13 @@ $ClaudeCli = Resolve-ClaudeCli
 # user who launches edge-cli after setting them up. See memory:
 # edge-cascade-imagegen-env-setup for the failure mode that motivated this.
 if (-not $SkipSync) {
-  Write-Host "[edge-cli] uv sync --inexact --extra accel --extra mcp ..." -ForegroundColor Cyan
+  # -Canvas needs the `celery` extra too (broker client + worker). --inexact so
+  # adding it never purges accel/mcp/imagegen/llama_cpp.
+  $syncExtras = @('--extra', 'accel', '--extra', 'mcp')
+  if ($Canvas) { $syncExtras += @('--extra', 'celery') }
+  Write-Host "[edge-cli] uv sync --inexact $($syncExtras -join ' ') ..." -ForegroundColor Cyan
   Push-Location $RepoRoot
-  try { uv sync --inexact --extra accel --extra mcp | Out-Null } finally { Pop-Location }
+  try { uv sync --inexact @syncExtras | Out-Null } finally { Pop-Location }
 }
 
 # --- generate the machine-correct local MCP config ---------------------------
@@ -186,6 +205,42 @@ if (-not $NoSummary -and -not $Check) {
   $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
   & $VenvPython $SummaryScript $ConfigPath
   Write-Host ""
+}
+
+# --- Canvas substrate (-Canvas): Redis broker + a resident Celery worker ----
+# Stands up the Celery Canvas test-drive environment alongside the normal
+# launch: the Redis broker (container) + ONE worker covering the npu,gpu,verify
+# queues (single box). The paid `cloud` queue is deliberately excluded -- the
+# spend invariant, which _celery-worker.ps1 also enforces by refusing it.
+# Spawn-and-leave like the dashboard below: the broker + worker outlive this
+# session. Drive with `python scripts\mesh_solve_canvas.py --topology ...`.
+# Skipped under -Check (a wiring probe shouldn't spin up docker + a worker).
+if ($Canvas -and -not $Check) {
+  # Broker. `docker compose up -d` is idempotent; restart:unless-stopped keeps
+  # it up across crashes/engine restarts (docker-compose.yml).
+  if (Get-Command docker -ErrorAction SilentlyContinue) {
+    Write-Host "[edge-cli] docker compose up -d redis ..." -ForegroundColor Cyan
+    Push-Location $RepoRoot
+    try { docker compose up -d redis | Out-Null } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "[edge-cli] 'docker compose up -d redis' failed (is Docker Desktop running?) - the worker won't reach the broker."
+    }
+  } else {
+    Write-Warning "[edge-cli] docker not found on PATH - skipping Redis broker. Start it yourself (docker compose up -d redis) before driving the Canvas path."
+  }
+  # Worker -- reuse the Slice-5 launcher (python -m celery, --pool=solo, cloud-
+  # queue refusal). New window, resident. -SkipSync: the uv sync above already
+  # put accel+mcp+celery in the shared .venv this worker uses. -PropagateNpuModelDir
+  # so the npu tier resolves its model dir regardless of inherited env.
+  $WorkerScript = Join-Path $PSScriptRoot '_celery-worker.ps1'
+  Write-Host "[edge-cli] launching Celery worker (npu,gpu,verify) in a new window" -ForegroundColor Cyan
+  Start-Process powershell -ArgumentList @(
+    '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', $WorkerScript,
+    '-Queues', 'npu,gpu,verify', '-NodeName', 'edge-local',
+    '-PropagateNpuModelDir', '-SkipSync'
+  ) | Out-Null
+  Write-Host "[edge-cli] Canvas drive: python scripts\mesh_solve_canvas.py --topology low_latency `"<task>`"" -ForegroundColor DarkGray
+  Write-Host "[edge-cli] teardown: Ctrl-C the worker window; docker stop edge-cascade-redis" -ForegroundColor DarkGray
 }
 
 # --- SD-3: auto-launch the dashboard in a separate console ------------------
