@@ -15,7 +15,8 @@ CHAIN SHAPE (balanced):
     chain(
       _balanced_route.s(env)       # NPU route -> env["difficulty"]
       _balanced_draft.s()          # NPU draft if not skip_draft_above
-      _balanced_draft_gate.s()     # verify_functional on draft -> resolve or carry-forward
+      _balanced_verify.s()         # gate the draft -> env["_gate_passed"] + trace
+      _balanced_resolve_npu.s()    # PASS -> resolve @ npu; FAIL -> carry failures forward
       _balanced_gpu_solve.s()      # self.replace() into spike's bounded repair loop
       _balanced_cloud.s()          # paid escalation on cap (no-op if cloud disabled)
     )
@@ -167,24 +168,45 @@ def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
                     "requirement": "fenced Python block that compiles"}]
 
 
-@app.task(name="mesh.balanced._draft_gate", queue="verify", bind=True)
-def _balanced_draft_gate(self, env: dict) -> dict:
-    """Step 3: gate the NPU draft. PASS => resolve (final_tier="npu").
-    FAIL => carry env["prior"]/env["failures"] forward so GPU repairs on
-    it (the bounded repair loop). Gate semantics: syntax when env["dsl"]
-    is None (parity with the pipe path), functional otherwise."""
+def _verify_step(env: dict, gate_fn=_gate) -> dict:
+    """Pure step: gate the NPU draft. Sets env["_gate_passed"] (bool) and
+    appends a trace line. Injectable gate_fn means tests call this directly
+    with a fake gate instead of mocking at the module boundary."""
     if _shortcut(env) or not env["prior"]:
         return env
-    passed, failures = _gate(env["prior"], env["dsl"])
+    passed, failures = gate_fn(env["prior"], env["dsl"])
+    env["_gate_passed"] = passed
     if passed:
-        env["answer"] = env["prior"]
-        env["final_tier"] = "npu"
-        env["resolved"] = True
         env["trace"].append("npu gate PASS")
-        return env
-    env["failures"] = failures
-    env["trace"].append("npu gate FAIL")
+    else:
+        env["failures"] = failures
+        env["trace"].append("npu gate FAIL")
     return env
+
+
+@app.task(name="mesh.balanced._verify", queue="verify", bind=True)
+def _balanced_verify(self, env: dict) -> dict:
+    """Step 3: gate the NPU draft via the injectable _verify_step helper."""
+    return _verify_step(env)
+
+
+def _resolve_step(env: dict) -> dict:
+    """Pure step: resolve the run at NPU on a gate PASS. No-op when the
+    verify step was skipped (_gate_passed absent) or the gate failed."""
+    if "_gate_passed" not in env or not env["_gate_passed"]:
+        return env
+    env["answer"] = env["prior"]
+    env["final_tier"] = "npu"
+    env["resolved"] = True
+    return env
+
+
+@app.task(name="mesh.balanced._resolve_npu", queue="verify", bind=True)
+def _balanced_resolve_npu(self, env: dict) -> dict:
+    """Step 4: finalise an NPU win (gate PASS) or carry failures to GPU."""
+    if _shortcut(env):
+        return env
+    return _resolve_step(env)
 
 
 @app.task(name="mesh.balanced._gpu_solve", queue="gpu", bind=True)
@@ -324,7 +346,8 @@ def balanced_signature(query: str, dsl: str | None = None):
     return chain(
         _balanced_route.s(env),
         _balanced_draft.s(),
-        _balanced_draft_gate.s(),
+        _balanced_verify.s(),
+        _balanced_resolve_npu.s(),
         _balanced_gpu_solve.s(),
         _balanced_cloud.s(),
         _balanced_done.s(),

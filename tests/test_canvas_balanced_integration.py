@@ -99,11 +99,13 @@ def test_pr91_regression_all_chain_tasks_registered_on_worker(
     must know about every task the balanced chain dispatches."""
     registered = set(celery_integration_worker.app.tasks.keys())
     # Chain steps (cascade.topologies_canvas) -- these are the ones the
-    # pre-#91 bug missed.
+    # pre-#91 bug missed. _draft_gate was decomposed into _verify + _resolve_npu
+    # by BACKLOG #9.
     expected_chain_steps = {
         "mesh.balanced._route",
         "mesh.balanced._draft",
-        "mesh.balanced._draft_gate",
+        "mesh.balanced._verify",
+        "mesh.balanced._resolve_npu",
         "mesh.balanced._gpu_solve",
         "mesh.balanced._merge_gpu",
         "mesh.balanced._cloud",
@@ -319,3 +321,57 @@ def test_low_latency_chord_resolves_over_broker(
     assert outcome.topology == "low_latency"
     assert outcome.resolved is True
     assert outcome.final_tier == "npu"  # the parseable draft wins the race
+
+
+# ---------------------------------------------------------------------------
+# WI-2 parity pins (BACKLOG #9): the decomposed verify+resolve_npu nodes must
+# preserve the same trace contract as the former monolithic _draft_gate.
+# ---------------------------------------------------------------------------
+
+
+def test_npu_resolve_trace_contains_gate_pass(celery_integration_worker):
+    """The _verify step MUST append 'npu gate PASS' when the mocked draft
+    (parseable Python) passes the syntax gate. The _resolve_npu step sets
+    final_tier='npu'. Pins the trace contract across the #9 decompose."""
+    outcome = canvas_client.solve_balanced_canvas("resolve at npu")
+    assert outcome.final_tier == "npu"
+    assert outcome.resolved is True
+    assert "npu gate PASS" in outcome.trace
+
+
+def test_gpu_escalate_trace_contains_gate_fail(celery_integration_worker, mocker):
+    """The _verify step MUST append 'npu gate FAIL' when the draft fails
+    the gate; _resolve_npu is a no-op; _gpu_solve escalates. Pins the
+    trace contract for the escalate path across the #9 decompose."""
+    mocker.patch(
+        "cascade.tasks.draft",
+        return_value={"available": True, "text": "not parseable",
+                      "latency_s": 0.01, "device": "NPU"},
+    )
+    outcome = canvas_client.solve_balanced_canvas("trigger gpu escalate")
+    assert outcome.final_tier == "gpu"
+    assert outcome.resolved is True
+    assert "npu gate FAIL" in outcome.trace
+
+
+def test_cap_path_trace_contains_gate_fail(celery_integration_worker, mocker):
+    """All drafts/repairs fail the gate -> capped->tier3. The 'npu gate FAIL'
+    trace line from _verify must still be present on the cap path."""
+    from cascade.config import CONFIG
+    mocker.patch(
+        "cascade.tasks.draft",
+        return_value={"available": True, "text": "not parseable",
+                      "latency_s": 0.01, "device": "NPU"},
+    )
+    mocker.patch(
+        "cascade.tasks.generate",
+        return_value={"available": True, "text": "still not parseable",
+                      "model": "fake", "tokens_per_s": 0.0,
+                      "latency_s": 0.01},
+    )
+    mocker.patch("cascade.topologies_canvas.CONFIG",
+                 mocker.Mock(spec=CONFIG, enable_cloud=False))
+    outcome = canvas_client.solve_balanced_canvas("cap path")
+    assert outcome.capped is True
+    assert outcome.final_tier == "capped->tier3"
+    assert "npu gate FAIL" in outcome.trace
