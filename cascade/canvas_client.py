@@ -14,8 +14,57 @@ previous step's output, via Celery), and the gpu-solve handoff uses
 """
 from __future__ import annotations
 
+import time
+import uuid
+from itertools import count
+from pathlib import Path
+
 from cascade import mesh
+from cascade.config import CONFIG
+from cascade.logfmt import dump_record
 from cascade.topologies_canvas import balanced_signature, low_latency_signature
+
+# --- cascade-outcome telemetry lane (the SD-4 dashboard panel) --------------
+# The in-process orchestrator (cascade.orchestrator.write_record) appends one
+# record per Outcome to runs/cascade.rec; the dashboard's mesh-effectiveness
+# panel reads that lane. The Canvas client bypasses the orchestrator, so emit
+# the SAME lane here -- otherwise SD-4 stays blank on Canvas runs even though
+# the per-tier edge-*.rec lanes (the flow river) light up. Process-stable
+# run_id + a per-process seq mirror the orchestrator's session fields.
+_RUN_ID = uuid.uuid4().hex[:12]
+_seq = count()
+
+
+def _cascade_rec_path() -> Path:
+    """`runs/cascade.rec` -- resolved at call time (CONFIG is a frozen instance
+    set at import; resolving here keeps the path patchable in tests so they
+    don't append to the real runs/ lane)."""
+    return Path(CONFIG.log_path).with_suffix(".rec")
+
+
+def _record_outcome(query: str, outcome: mesh.Outcome, wall_s: float) -> None:
+    """Append one cascade-outcome record so the dashboard counts Canvas runs
+    like pipe runs. Field set matches `cascade.orchestrator.write_record` (the
+    dashboard reads `final_tier` + `trace`; `replay.py` reads the rest).
+    Best-effort: telemetry must never break a solve, so a write error is
+    swallowed."""
+    rec = dump_record(next(_seq), {
+        "ts": f"{time.time():.3f}",
+        "run_id": _RUN_ID,
+        "query": query,
+        "answer": outcome.answer or "",
+        "final_tier": outcome.final_tier,
+        "topology": outcome.topology,
+        "total_latency_s": f"{wall_s:.2f}",
+        "trace": "\n".join(outcome.trace),
+    })
+    try:
+        path = _cascade_rec_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as fh:
+            fh.write(rec)
+    except OSError:
+        pass  # best-effort telemetry; never fail a solve on a .rec write
 
 
 def _to_outcome(env: dict) -> mesh.Outcome:
@@ -45,8 +94,11 @@ def solve_balanced_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
     `outcome.resolved` / `outcome.capped` consumers) swap with no shape
     change.
     """
+    t0 = time.perf_counter()
     env = balanced_signature(query, dsl).apply_async().get(timeout=600)
-    return _to_outcome(env)
+    outcome = _to_outcome(env)
+    _record_outcome(query, outcome, time.perf_counter() - t0)
+    return outcome
 
 
 def solve_low_latency_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
@@ -58,5 +110,8 @@ def solve_low_latency_canvas(query: str, dsl: str | None = None) -> mesh.Outcome
     Speculative: both tiers always run (trades GPU cost for latency); resolves
     to the first verified candidate or caps to Tier-3 on a double miss. See
     docs/FINDINGS-canvas-phase2-low-latency.md."""
+    t0 = time.perf_counter()
     env = low_latency_signature(query, dsl).apply_async().get(timeout=600)
-    return _to_outcome(env)
+    outcome = _to_outcome(env)
+    _record_outcome(query, outcome, time.perf_counter() - t0)
+    return outcome
