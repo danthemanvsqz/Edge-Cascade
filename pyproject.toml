@@ -169,6 +169,7 @@ omit = [
     # scripts/: only edge_summary.py is in-scope. Everything else is
     # live/hardware/interactive (paid API, MCP stdio probes, SDXL server,
     # benchmark drivers) -- live-validated, not unit-coverable.
+    "scripts/cascade_top.py",
     "scripts/celery_smoke.py",
     "scripts/debate.py",
     "scripts/mesh_solve_canvas.py",
