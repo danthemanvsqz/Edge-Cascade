@@ -170,6 +170,28 @@ def test_low_latency_dsl_none_caps_on_nonparseable(eager, mocker):
 # ---------------------------------------------------------------------------
 
 
+def test_low_latency_emits_cascade_outcome_record(eager, mocker, tmp_path):
+    """A Canvas solve appends one record to the `cascade` .rec lane (the SD-4
+    dashboard mesh-effectiveness panel reads `final_tier` + `trace` from it).
+    Without this the per-tier flow river lights up on a Canvas run but the
+    effectiveness panel stays blank. Path is redirected to tmp so the assertion
+    is isolated from the real runs/ lane."""
+    from cascade import canvas_client
+    from cascade.logfmt import parse_stream_incremental
+    rec_path = tmp_path / "cascade.rec"
+    mocker.patch.object(canvas_client, "_cascade_rec_path", lambda: rec_path)
+    _draft(mocker, text="```python\nbad\n```")
+    _generate(mocker, text="```python\ngpu fix\n```")
+    _verify(mocker, [False, True])  # npu FAIL, gpu PASS
+    canvas_client.solve_low_latency_canvas("write a fn", dsl="DSL")
+    assert rec_path.exists()
+    records, _ = parse_stream_incremental(rec_path.read_bytes())
+    assert len(records) == 1
+    assert records[0]["final_tier"] == "gpu"
+    assert records[0]["topology"] == "low_latency"
+    assert "trace" in records[0]
+
+
 def test_low_latency_returns_mesh_outcome_shape(eager, mocker):
     """The client returns the SAME mesh.Outcome dataclass as balanced/pipe, so
     a caller swaps topologies by entry point, not by reshaping output."""

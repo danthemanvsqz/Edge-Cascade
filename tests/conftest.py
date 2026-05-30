@@ -22,6 +22,21 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cascade_rec(tmp_path, monkeypatch):
+    """Redirect the Canvas client's cascade-outcome `.rec` lane to a tmp file so
+    any test driving `solve_*_canvas` doesn't append telemetry to the real
+    `runs/cascade.rec`. Lazy + CI-safe: only patches when `canvas_client` is
+    already imported (i.e. a canvas test module was collected); a celery-less CI
+    run never imports it, so this is a no-op there."""
+    import sys
+    cc = sys.modules.get("cascade.canvas_client")
+    if cc is not None:
+        monkeypatch.setattr(
+            cc, "_cascade_rec_path", lambda: tmp_path / "cascade.rec",
+        )
+
+
 @pytest.fixture(scope="session")
 def celery_integration_app():
     """Override `cascade.celery_app.app` for the integration test
