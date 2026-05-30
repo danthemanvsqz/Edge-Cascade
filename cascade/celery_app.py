@@ -69,6 +69,11 @@ app.conf.update(
     accept_content=["json"],
     result_expires=3600,
     task_track_started=True,
+    # Emit task lifecycle events so a monitor (Flower -> cascade/flower_activity.py)
+    # can see STARTED tasks live, not just completed .rec records. Config-level so
+    # EVERY launch path emits (edge-cli, per-box scripts, manual `celery worker`),
+    # not only the ones that remember `-E`. Pairs with task_track_started above.
+    worker_send_task_events=True,
     # Backpressure WITHOUT RabbitMQ: a worker holds at most one unacked task and
     # pulls the next only when free. acks_late = a task is re-queued if its
     # worker dies mid-run (LLM calls are long; we want at-least-once).
