@@ -6,20 +6,99 @@ impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
 > Last groomed: **2026-05-30** (after Phase 2 Slice 6 merged; main `ed7588c`).
+> Updated **2026-05-30 (eve)**: added **★ #6 live cascade-activity tool (OBS-1)**
+> as the **next-session high-priority pick** (user directive). See the starred
+> section below.
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                 I4 Critical
  S1 Safe                  ✗ (none)     —                 #1 PT-1                  — (none)
- S2 Low                   ✗ (none)     #4 gate-helper    #2 PT-2                  — (none)
-                                       #5 PT-4 verbump   (Slice 7: blocked)
+ S2 Low                   ✗ (none)     #4 gate-helper    ★ #6 live-activity NEXT  — (none)
+                                       #5 PT-4 verbump   #2 PT-2
+                                                         (Slice 7: blocked)
  S3 Moderate              ✗ (none)     —                 #3 PT-3                  — (none)
  S4 Severe (park)         ✗ (none)     ⏳ none           ⏳ none                  ⏳ none
 ```
 
 No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked**
 (not parked) — see below.
+
+---
+
+## ★ #6 — live cascade-activity tool (OBS-1)  (I3 · S2) — **NEXT SESSION**
+
+**High-priority pick for next session** (user directive, 2026-05-30). Take this
+on first.
+
+**The gap (found this session):** the dashboard can't show *which node is
+currently spinning* because `.rec` records are written at task **completion**,
+not start. While `gpu_solve` actually grinds (~60s on a hard task), zero records
+exist, so the node only blips "hot" for a couple seconds *after* each generate
+finishes — there is no in-progress signal in the `.rec` stream. Confirmed live:
+a red-black-tree solve ran `gpu_solve` ~60s with the node dark the whole time.
+
+**The data already exists natively — no Flower needed.** Celery's
+`app.control.inspect().active()` returns the currently-executing task per worker
+in real time (verified this session: `{'celery@Alienware': []}` idle; it lists
+the running task during a solve). `task_track_started=True` is already set in
+`cascade/celery_app.py`. A ~60-line module over `inspect.active()` is more
+decoupled and reusable than wrapping Flower's HTTP API; Flower stays an optional
+heavyweight UI, not a dependency.
+
+**Design — a DECOUPLED tool, not a dashboard feature** (user directive: one
+source of truth usable by the UI, debugging, AND experimentation):
+
+`cascade/live_activity.py` — thin, read-only probe (no broker writes; safe to
+call from anywhere):
+
+```python
+@dataclass(frozen=True)
+class ActiveTask:
+    task_name: str   # "mesh.balanced._gpu_solve"
+    node: str        # "gpu_solve"  (mapped chain-node id)
+    tier: str        # "gpu"
+    task_id: str
+    worker: str
+    runtime_s: float
+
+def snapshot(timeout=2.0) -> list[ActiveTask]   # running tasks, all workers
+def active_nodes(snap) -> set[str]              # {"gpu_solve"}
+NODE_BY_TASK: dict[str, str]                    # celery task name -> node id
+```
+
+Three thin consumers on top (each just imports or fetches the tool):
+1. **Debugging** — `scripts/cascade_top.py`: a live `top`-style view of active
+   cascade tasks (~2 Hz refresh).
+2. **Experimentation** — experiments `import snapshot()` / `active_nodes()` to
+   measure tier occupancy + timings.
+3. **UI** — a tiny JSON endpoint `GET /active` → `snapshot()`; the Node
+   dashboard polls it and `dashboard/src/flow.ts` renders a **spinning ring** on
+   the active node (distinct from the post-completion "hot" blip added this
+   session). Transport choice **A (HTTP/JSON)** so the same endpoint also serves
+   curl-debugging + experiments.
+
+**Build order:** module + debug CLI first (the decoupled core, immediately
+useful for debug/experiments), then the JSON endpoint + the UI spinning ring.
+
+**Route-first:** from-scratch build → through the pipeline (route → GPU draft
+for the self-contained snapshot/mapping logic → Tier-3 for the Celery-integration
+glue), per the route-every-coding-task rule.
+
+**Acceptance:**
+- `snapshot()` returns the running task during a live solve; its mapped node
+  matches the chain step actually executing.
+- `cascade_top.py` shows `gpu_solve` lit for the *whole* GPU phase, not a blip.
+- Dashboard spinning ring tracks the active node live (`gpu_solve` spins the
+  full ~60s of a hard solve).
+
+**Why I3·S2:** Major — one reusable observability source unblocks the live
+"spinning node" UI *plus* debugging *plus* experiment instrumentation
+(multi-consumer payoff). Not I4 (the cascade runs fine without it). S2 —
+additive, read-only `inspect.active()`, touches neither the hot path nor the
+repair/self-heal loop, needs no worker config change (`-E` not required),
+fully reversible.
 
 ---
 
