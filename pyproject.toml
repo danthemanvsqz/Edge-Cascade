@@ -33,10 +33,22 @@ celery = [
     "celery[redis]>=5.4",
 ]
 # The edge-image tier (C2): SDXL via diffusers on the NVIDIA GPU, behind a tiny
-# FastAPI server. Opt-in + heavy. NOTE torch on Windows: the default PyPI wheel
-# may be CPU-only -- install the CUDA build explicitly, e.g.
-#   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
-#   uv sync --extra imagegen   (then verify torch.cuda.is_available())
+# FastAPI server. Opt-in + heavy. Setup on Windows is fiddly -- see the steps
+# below in order; deviating eats hours.
+#
+#   1. Python 3.13. Pinned in .python-version. cp314 has NO torch CUDA wheels
+#      (any version, any index) -- the default PyPI fallback installs a CPU
+#      torch that loads SDXL fine but dies at `.to("cuda")`. The .venv must be
+#      on 3.13.
+#   2. uv sync --all-extras   (NOT --extra imagegen alone -- that purges
+#      mcp/openvino/pywin32 from the env and breaks edge-cli + the NPU tier.)
+#   3. CUDA wheel, picked by GPU architecture:
+#        Blackwell (RTX 50-series, sm_120):
+#          uv pip install torch --index-url https://download.pytorch.org/whl/cu128 --reinstall
+#        Ada/Hopper and older (sm_<=90):
+#          uv pip install torch --index-url https://download.pytorch.org/whl/cu124 --reinstall
+#      Verify: `python -c "import torch; print(torch.cuda.is_available())"` -> True
+#      and a tiny `torch.zeros(1024,1024).cuda() @ ...` actually runs.
 imagegen = [
     "torch>=2.2",
     "diffusers>=0.30",
