@@ -1,26 +1,24 @@
-"""Eager-mode + cap-invariant tests for the balanced Canvas chain (Slice 3).
+"""Eager-mode tests for the balanced Canvas chain (Slice 3) -- the residue
+that no other layer covers.
 
-Mock the underlying tier ops (`tasks.route`, `tasks.draft`,
-`tasks.verify_functional`, `tasks.generate`, `tasks.cloud_generate`) so no
-real NPU / GPU / cloud call happens; drive the full chain via
-`solve_balanced_canvas` under `task_always_eager`. The four parity cases
-mirror the in-process `mesh.solve(query, "balanced", ops)` outcomes:
+`cascade.topologies_canvas`, `cascade.canvas_client`, and `cascade.tasks` are
+all in `[tool.coverage.run] omit` (the celery substrate is live-validated, not
+unit-cov'd), so the mocks here earn ZERO coverage. The npu-resolve /
+gpu-escalate / cap / syntax-fallback parity cases that used to live here were
+pruned as no-payoff duplicates -- they are proven more robustly elsewhere with
+fewer or no mocks:
+  * test_canvas_spike      -- OWNS the cap invariant (mocks only the two seams
+                              the retry loop calls; asserts call counts).
+  * test_canvas_balanced_integration -- resolve/escalate/cap over a REAL broker
+                              (embedded worker), mocking only the model boundary.
+  * test_canvas_live_behavior        -- the same behaviors on the LIVE mesh,
+                              NO mocks at all.
 
-  1. NPU draft gates PASS                        => final_tier="npu", resolved
-  2. NPU draft FAILS, GPU first attempt PASSES   => final_tier="gpu", resolved, rounds=0
-  3. All GPU attempts FAIL, cloud disabled       => final_tier="capped->tier3", capped
-  4. All GPU attempts FAIL, cloud enabled        => final_tier="cloud", resolved
-
-The cap-invariant test asserts that with scripted always-fail GPU, the chain
-makes EXACTLY `cap+1` calls to `tasks.generate` (the spike's invariant,
-delegated through the Canvas chain via the `self.replace()` handoff). The
-cap lives in `gpu_solve_task.max_retries`, so the composed graph cannot
-breach it -- the chain's composition is irrelevant to the cap.
-
-`cascade.topologies_canvas`, `cascade.canvas_client`, and `cascade.tasks`
-are all in `[tool.coverage.run] omit` (the celery substrate is
-live-validated, not unit-cov'd). These tests still exercise the chain
-end-to-end but their coverage doesn't count toward the 100% gate.
+What remains here is only what those layers can't reach without extra
+infrastructure: the cloud-enabled escalation (integration has no cloud worker;
+live runs cloud-disabled), the win/lose log classification, the skip-draft
+decision, the client Outcome shape, and the model registry/alias contracts.
+Mock at the tier-op boundary (`tasks.*`) the chain calls -- never deeper.
 """
 from __future__ import annotations
 
@@ -111,74 +109,20 @@ def _cloud(mocker, *, available=True, text="```python\ncloud answer\n```"):
 
 
 # ---------------------------------------------------------------------------
-# Parity vs mesh.solve -- 4 cases.
+# Cloud escalation -- the ONE balanced-chain path no other layer covers
+# (test_canvas_balanced_integration has no cloud worker; the live suite runs
+# cloud-disabled). The npu-resolve / gpu-escalate / cap parity cases that used
+# to live here were pruned as no-payoff duplicates: this module is in
+# [tool.coverage.run] omit (zero coverage), test_canvas_spike OWNS the cap with
+# tighter seam mocks, and the integration + live suites prove resolve/escalate/
+# cap with model-boundary-only / zero mocks.
 # ---------------------------------------------------------------------------
-
-
-def test_balanced_chain_resolves_at_npu_when_gate_passes(eager, mocker):
-    """Case 1: NPU draft passes the gate. final_tier='npu', resolved=True,
-    no GPU repairs, no cloud."""
-    _route(mocker)
-    _draft(mocker, text="```python\nrev\n```")
-    _verify(mocker, [True])
-    gen = mocker.patch("cascade.tasks.generate")
-    cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("reverse a string", dsl="DSL")
-    assert isinstance(outcome, mesh.Outcome)
-    assert outcome.final_tier == "npu"
-    assert outcome.resolved is True
-    assert outcome.capped is False
-    assert outcome.answer == "```python\nrev\n```"
-    assert outcome.repair_rounds == 0
-    gen.assert_not_called()
-    cloud.assert_not_called()
-
-
-def test_balanced_chain_escalates_to_gpu_when_npu_gate_fails(eager, mocker):
-    """Case 2: NPU draft fails the gate; the GPU first attempt repairs that
-    draft and passes. final_tier='gpu', repair_rounds=1 -- Canvas->pipe
-    alignment (Slice 6a): the first GPU call on a failed prior is round 1, the
-    same number mesh.solve reports for `range(1, cap+1)`'s first iteration."""
-    _route(mocker)
-    _draft(mocker, text="```python\nbad draft\n```")
-    # NPU gate FAIL, then gpu_solve_task's first verify PASS.
-    _verify(mocker, [False, True])
-    _generate(mocker, text="```python\ngpu fix\n```")
-    cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("write a fn", dsl="DSL")
-    assert outcome.final_tier == "gpu"
-    assert outcome.resolved is True
-    assert outcome.answer == "```python\ngpu fix\n```"
-    assert outcome.repair_rounds == 1  # first GPU repair of the NPU draft
-    cloud.assert_not_called()
-
-
-def test_balanced_chain_caps_to_tier3_when_cloud_disabled(eager, mocker):
-    """Case 3: NPU + GPU all fail; cloud disabled => capped->tier3 handoff.
-    The agent (Tier 3) takes over."""
-    mocker.patch("cascade.topologies_canvas.CONFIG",
-                 mocker.Mock(enable_cloud=False))
-    _route(mocker)
-    _draft(mocker, text="bad")
-    # NPU FAIL + CAP GPU FAILs. With a prior (the failed NPU draft), the GPU
-    # phase repairs from round 1, so it makes exactly CAP generates before the
-    # cap (Slice 6a alignment); extra verify results are harmless slack.
-    _verify(mocker, [False] + [False] * (CAP + 1))
-    _generate(mocker)
-    cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
-    assert outcome.final_tier == "capped->tier3"
-    assert outcome.resolved is False
-    assert outcome.capped is True
-    assert outcome.answer is None
-    assert outcome.repair_rounds == CAP
-    cloud.assert_not_called()
 
 
 def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
     """Case 4: NPU + GPU all fail; cloud enabled + available => final_tier='cloud'."""
     mocker.patch("cascade.topologies_canvas.CONFIG",
-                 mocker.Mock(enable_cloud=True))
+                 mocker.Mock(spec=CONFIG, enable_cloud=True))
     _route(mocker)
     _draft(mocker, text="bad")
     _verify(mocker, [False] + [False] * (CAP + 1))
@@ -189,86 +133,6 @@ def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
     assert outcome.resolved is True
     assert outcome.capped is False
     assert outcome.answer == "```python\ncloud fix\n```"
-
-
-# ---------------------------------------------------------------------------
-# DSL-None syntax fallback -- parity with the pipe path (Slice-4 discovery).
-# ---------------------------------------------------------------------------
-
-
-def test_balanced_chain_uses_syntax_gate_when_dsl_is_none(eager, mocker):
-    """When dsl=None, both `_balanced_draft_gate` and `gpu_solve_task` must
-    use the SYNTAX gate (cascade.verifier.verify) instead of
-    tasks.verify_functional. This is the parity contract with the in-process
-    pipe path -- without this fallback every Canvas run without a DSL would
-    cap to Tier-3 (verify_functional returns applicable:false = passed:false
-    when no DSL is supplied; the Slice-4 live-broker run surfaced this)."""
-    _route(mocker)
-    # NPU draft returns a parseable Python block -- syntax gate should PASS.
-    _draft(mocker, text="```python\ndef f():\n    return 1\n```")
-    gen = mocker.patch("cascade.tasks.generate")
-    verify_func = mocker.patch("cascade.tasks.verify_functional")
-    cloud = mocker.patch("cascade.tasks.cloud_generate")
-    outcome = canvas_client.solve_balanced_canvas("reverse")  # dsl=None
-    assert outcome.final_tier == "npu"
-    assert outcome.resolved is True
-    verify_func.assert_not_called()
-    gen.assert_not_called()
-    cloud.assert_not_called()
-
-
-def test_balanced_chain_syntax_gate_escalates_on_nonparseable_draft(eager, mocker):
-    """dsl=None path: NPU draft is NOT a parseable Python block -> syntax
-    gate FAILS -> chain escalates to GPU. The escalation respects the same
-    cap as the functional-gate path."""
-    _route(mocker)
-    _draft(mocker, text="this is not python")
-    # GPU first attempt returns valid python -> syntax gate PASSES.
-    _generate(mocker, text="```python\ndef fixed():\n    return 1\n```")
-    verify_func = mocker.patch("cascade.tasks.verify_functional")
-    outcome = canvas_client.solve_balanced_canvas("x")  # dsl=None
-    assert outcome.final_tier == "gpu"
-    assert outcome.resolved is True
-    verify_func.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Cap invariant -- the load-bearing one.
-# ---------------------------------------------------------------------------
-
-
-def test_balanced_chain_holds_the_repair_cap(eager, mocker):
-    """With scripted always-fail GPU and a failed NPU draft (a prior to repair),
-    the chain produces EXACTLY `cap` `tasks.generate` calls and stops. Under
-    Canvas->pipe alignment (Slice 6a) the first GPU call repairs the NPU draft =
-    round 1, so the cap bounds the run to `cap` GPU calls -- identical to
-    mesh.solve's `range(1, cap+1)` loop with a prior. The cap lives in
-    `gpu_solve_task` (round_no >= max_retries), so the chain composition cannot
-    breach it.
-
-    (The no-prior path -- skip-draft / NPU unavailable -- still allows cap+1 GPU
-    calls, the uncounted fresh generate + cap repairs; that invariant is pinned
-    by `test_canvas_spike.test_always_fail_holds_the_cap` on the standalone
-    task, which dispatches with round_base=0.)"""
-    mocker.patch("cascade.topologies_canvas.CONFIG",
-                 mocker.Mock(enable_cloud=False))
-    _route(mocker)
-    _draft(mocker, text="bad")
-    # NPU FAIL + cap+5 generates available (we only need cap to land in the
-    # loop; the extras are slack so the test fails LOUD if the cap leaks).
-    _verify(mocker, [False] + [False] * (CAP + 5))
-    gen = mocker.patch(
-        "cascade.tasks.generate",
-        return_value={"available": True,
-                      "text": "```python\nstill bad\n```",
-                      "model": "fake", "tokens_per_s": 0.0,
-                      "latency_s": 0.0},
-    )
-    outcome = canvas_client.solve_balanced_canvas("impossible task", dsl="DSL")
-    assert outcome.capped is True
-    assert outcome.repair_rounds == CAP
-    # THE INVARIANT (with a prior): CAP repairs, NOT ONE MORE.
-    assert gen.call_count == CAP
 
 
 # ---------------------------------------------------------------------------
