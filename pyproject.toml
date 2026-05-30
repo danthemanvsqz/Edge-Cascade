@@ -31,6 +31,11 @@ mcp = [
 #   uv sync --extra celery   +   docker compose up -d redis
 celery = [
     "celery[redis]>=5.4",
+    # Flower: the live cascade-activity source (OBS-1, Flower-backed). A
+    # read-only Celery monitor exposing a REST API (/api/tasks); cascade/
+    # flower_activity.py is the thin parse layer over it. Runs as a separate
+    # service, never on the cloud queue -- observability only, no spend path.
+    "flower>=2.0",
 ]
 # The edge-image tier (C2): SDXL via diffusers on the NVIDIA GPU, behind a tiny
 # FastAPI server. Opt-in + heavy. Setup on Windows is fiddly -- see the steps

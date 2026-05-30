@@ -104,6 +104,9 @@ Write-Host "[worker] Ctrl-C to stop." -ForegroundColor DarkGray
 
 Push-Location $RepoRoot
 try {
+  # Task lifecycle events (for Flower's live-activity capture) are enabled at the
+  # config level -- worker_send_task_events=True in cascade/celery_app.py -- so
+  # every launch path emits them; no per-launch -E needed here.
   & $VenvPython -m celery -A cascade.celery_app worker `
       -Q ($queueList -join ',') `
       --pool=solo `
