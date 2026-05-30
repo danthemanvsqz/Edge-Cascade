@@ -12,11 +12,36 @@ Run (after `docker compose up -d redis` and `uv sync --extra celery`):
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 
 from celery import Celery
 
+
 # Redis for everything. One URL, two roles (broker + backend).
-REDIS_URL = os.environ.get("CASCADE_REDIS_URL", "redis://localhost:6379/0")
+def _redis_url() -> str:
+    """Broker+backend URL. Full override wins; else assemble from parts.
+
+    Single-box dev needs nothing -- defaults to localhost. Cross-box bare-metal
+    (Phase 2 Slice 5) points each worker at the broker box WITHOUT hand-writing
+    a URL on every host:
+        $env:CASCADE_REDIS_HOST = "10.0.0.5"     # the box running redis
+        $env:CASCADE_REDIS_PASSWORD = "..."       # iff redis has `requirepass`
+    `CASCADE_REDIS_URL` still wins when set, for layouts the parts can't express
+    (a non-zero db, rediss:// TLS, a unix socket). See docs/BARE-METAL-CELERY.md.
+    """
+    if url := os.environ.get("CASCADE_REDIS_URL"):
+        return url
+    host = os.environ.get("CASCADE_REDIS_HOST", "localhost")
+    port = os.environ.get("CASCADE_REDIS_PORT", "6379")
+    password = os.environ.get("CASCADE_REDIS_PASSWORD", "")
+    # URL-encode the secret: a requirepass value may contain @ : / # %, which
+    # would otherwise corrupt the URL and silently connect to the wrong host or
+    # fail auth (the exact `requirepass <strong-secret>` flow the runbook documents).
+    auth = f":{quote(password, safe='')}@" if password else ""
+    return f"redis://{auth}{host}:{port}/0"
+
+
+REDIS_URL = _redis_url()
 
 app = Celery(
     "edge_cascade",

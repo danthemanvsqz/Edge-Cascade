@@ -482,7 +482,7 @@ If parity diverges:
 | 2 | Parity findings (Ollama vs llama_cpp) | — | not started |
 | 3 | Per-model tasks + `model.swap` | — | not started |
 | 4 | pytest-celery integration infra | — | not started |
-| 5 | Bare-metal layout docs + launch scripts | — | not started |
+| 5 | Bare-metal layout docs + launch scripts | this PR | pending review |
 | 6 | `low_latency` chord | — | not started |
 | 7 | Default flip + Ollama deprecation | — | not started |
 
