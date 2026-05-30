@@ -542,6 +542,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
         resolvedGpu: 0,
         capped: 0,
         draftSkipped: 0,
+        npuGaveUp: 0,
         total: 0,
         effectivenessPct: 0,
       }),
@@ -550,7 +551,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     expect(html).toContain("no runs yet");
   });
 
-  it("renders the headline %, total, and all five chips when populated", () => {
+  it("renders the headline %, total, and all six chips when populated", () => {
     const html = renderToString(
       meshEffectivenessView({
         resolvedNpu: 1,
@@ -558,6 +559,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
         resolvedGpu: 5,
         capped: 2,
         draftSkipped: 3,
+        npuGaveUp: 2,
         total: 9,
         effectivenessPct: (7 / 9) * 100,
       }),
@@ -568,6 +570,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
     expect(html).toContain('class="mesh-eff-chip resolved-gpu"');
     expect(html).toContain('class="mesh-eff-chip capped"');
     expect(html).toContain('class="mesh-eff-chip skipped"');
+    expect(html).toContain('class="mesh-eff-chip npu-gaveup"');
   });
 
   it("trips the alarm class only when <50% AND total>=5 (small-sample guard)", () => {
@@ -579,6 +582,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
         resolvedGpu: 1,
         capped: 2,
         draftSkipped: 0,
+        npuGaveUp: 0,
         total: 3,
         effectivenessPct: 33,
       }),
@@ -594,6 +598,7 @@ describe("meshEffectivenessRegion / view (SD-4)", () => {
         resolvedGpu: 2,
         capped: 3,
         draftSkipped: 0,
+        npuGaveUp: 0,
         total: 5,
         effectivenessPct: 40,
       }),

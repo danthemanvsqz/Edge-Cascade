@@ -113,6 +113,11 @@ export interface CascadeOutcomes {
   readonly resolvedGpu: number;
   readonly capped: number;
   readonly draftSkipped: number;
+  /** Times the NPU drafted but its draft FAILED the gate (`npu gate FAIL` in
+   * the trace) -> escalated to GPU. The "NPU gave up" counter: the cost side of
+   * the NPU-first bet (how often the cheap local attempt didn't hold). Counted
+   * on top of an outcome, like draftSkipped. */
+  readonly npuGaveUp: number;
   readonly total: number;
   readonly effectivenessPct: number;
 }
@@ -247,6 +252,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   let resolvedGpu = 0;
   let cappedRuns = 0;
   let draftSkippedRuns = 0;
+  let npuGaveUpRuns = 0;
   let totalRuns = 0;
   let lastOutcome: LastOutcome | null = null;
   let outcomeSeq = 0;
@@ -371,6 +377,10 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     if ((record.trace ?? "").includes("draft skipped")) {
       draftSkippedRuns += 1;
     }
+    // "NPU gave up": the NPU drafted but its draft failed the gate and escalated.
+    if ((record.trace ?? "").includes("npu gate FAIL")) {
+      npuGaveUpRuns += 1;
+    }
   }
 
   function ingestDegen(record: Record<string, string>): void {
@@ -434,6 +444,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       resolvedGpu,
       capped: cappedRuns,
       draftSkipped: draftSkippedRuns,
+      npuGaveUp: npuGaveUpRuns,
       total: totalRuns,
       effectivenessPct:
         totalRuns === 0
