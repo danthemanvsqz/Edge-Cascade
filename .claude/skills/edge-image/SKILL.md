@@ -22,13 +22,26 @@ curl -s http://localhost:8188/health
 ```
 - `{"available": true, ...}` → go.
 - Connection refused / `available:false` → tell the user to start it (it holds
-  SDXL resident, ~30 s to load), then stop:
-  ```
-  uv sync --extra imagegen           # one-time (CUDA torch — see pyproject note)
-  CASCADE_FREE_OLLAMA=1 uv run uvicorn scripts.image_server:app --port 8188
+  SDXL resident, ~30 s to load). The launch is one line if the env is already
+  set up:
+  ```powershell
+  $env:CASCADE_FREE_OLLAMA = "1"
+  .\.venv\Scripts\python.exe -m uvicorn scripts.image_server:app --port 8188
   ```
   `CASCADE_FREE_OLLAMA=1` evicts the 14B coder — **SDXL and the coder cannot
   share 12 GB VRAM**, so imaging and coding don't run at the same time (yet).
+
+  If the env is NOT set up (`No module named 'fastapi'`, or `Torch not compiled
+  with CUDA enabled` after startup), do the full setup from
+  `pyproject.toml`'s `imagegen =` block comment — abbreviated:
+  - `.venv` must be on **Python 3.13** (cp314 has no torch CUDA wheels).
+  - Use **`uv sync --all-extras`** — never `uv sync --extra imagegen` alone
+    (that one purges `mcp`/`openvino`/`pywin32` and breaks edge-cli + Tier 1).
+  - Then install the CUDA torch wheel matching the GPU: **cu128** for RTX
+    50-series (Blackwell, sm_120), **cu124** for older.
+
+  Don't try to script the env fix yourself; hand the user the relevant
+  command and let them run it (they own the host).
 
 ## 1. Mediate — intent → a tuned SDXL spec
 

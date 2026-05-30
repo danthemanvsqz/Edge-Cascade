@@ -109,10 +109,16 @@ function Resolve-ClaudeCli {
 $ClaudeCli = Resolve-ClaudeCli
 
 # --- dependency check (idempotent; fast when already satisfied) ---
+# --inexact: ensure edge-cli's required extras are present WITHOUT removing
+# others. Without it, `uv sync --extra accel --extra mcp` is enforcing -- it
+# purges every other extra (imagegen/celery/llama_cpp) on each launch, breaking
+# the SDXL image server, Celery Canvas, and llama-cpp direct-load tiers for any
+# user who launches edge-cli after setting them up. See memory:
+# edge-cascade-imagegen-env-setup for the failure mode that motivated this.
 if (-not $SkipSync) {
-  Write-Host "[edge-cli] uv sync --extra accel --extra mcp ..." -ForegroundColor Cyan
+  Write-Host "[edge-cli] uv sync --inexact --extra accel --extra mcp ..." -ForegroundColor Cyan
   Push-Location $RepoRoot
-  try { uv sync --extra accel --extra mcp | Out-Null } finally { Pop-Location }
+  try { uv sync --inexact --extra accel --extra mcp | Out-Null } finally { Pop-Location }
 }
 
 # --- generate the machine-correct local MCP config ---------------------------
