@@ -167,6 +167,15 @@ export interface Store {
   lastOutcome(): LastOutcome | null;
   /** Total particles seen across all tiers (for the rate meter). */
   totalCount(): number;
+  /** The chain-node ids currently executing, per the live lane (the receiver's
+   * pub/sub deltas). A snapshot copy, not a live reference. Powers the spinning
+   * ring -- distinct from the post-completion "hot" blip the ledger drives. */
+  activeNodes(): ReadonlySet<string>;
+  /** Seed the active-node set wholesale -- the full current set GET from the
+   * live seed key on connect, before the delta stream takes over. */
+  setActiveNodes(nodes: Iterable<string>): void;
+  /** Apply one live transition: active=true adds the node, false removes it. */
+  applyNodeDelta(node: string, active: boolean): void;
 }
 
 export interface CreateStoreOptions {
@@ -241,6 +250,15 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   let totalRuns = 0;
   let lastOutcome: LastOutcome | null = null;
   let outcomeSeq = 0;
+  const activeNodeSet = new Set<string>();
+  function setActiveNodes(nodes: Iterable<string>): void {
+    activeNodeSet.clear();
+    for (const n of nodes) activeNodeSet.add(n);
+  }
+  function applyNodeDelta(node: string, active: boolean): void {
+    if (active) activeNodeSet.add(node);
+    else activeNodeSet.delete(node);
+  }
   function ingest(
     server: string,
     record: Record<string, string>,
@@ -424,6 +442,9 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     }),
     lastOutcome: () => lastOutcome,
     totalCount: () => totalParticles,
+    activeNodes: () => new Set(activeNodeSet),
+    setActiveNodes,
+    applyNodeDelta,
   };
 }
 

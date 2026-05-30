@@ -187,6 +187,40 @@ body.dashboard {
                    filter: drop-shadow(0 0 8px var(--tone)); }
 }
 
+/* LIVE spinning ring: the in-progress signal (a task executing on this node
+ * right now, from the event-receiver pub/sub lane). A rotating dashed ring sits
+ * just outside the hot ring, so "spinning now" reads distinctly from "recently
+ * landed" (the hot pulse). --tone re-declared per the sibling-SVG note above. */
+.node-spin--tone-npu    { --tone: var(--tier-npu); }
+.node-spin--tone-gpu    { --tone: var(--tier-gpu); }
+.node-spin--tone-verify { --tone: var(--tier-verify); }
+.node-spin--tone-tier3  { --tone: var(--tier-tier3); }
+.node-spin--tone-cloud  { --tone: var(--tier-cloud); }
+
+.node-spin {
+  stroke: var(--tone);
+  stroke-width: 2.5;
+  fill: none;
+  opacity: 0;
+  pointer-events: none;
+  /* Dashes MARCH around the border (animated stroke-dashoffset) rather than
+   * rotating the element -- rotating a wide rounded-rect tumbles its corners
+   * and reads as broken; a travelling dash reads as a clean "in progress". */
+  stroke-dasharray: 14 10;
+}
+.node-spin--spinning {
+  opacity: 0.95;
+  filter: drop-shadow(0 0 5px var(--tone));
+  animation: node-spin-march 0.8s linear infinite;
+}
+/* One full dash+gap period (14 + 10 = 24) per loop, so the march is seamless. */
+@keyframes node-spin-march {
+  to { stroke-dashoffset: -24; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-spin--spinning { animation: none; opacity: 0.95; }
+}
+
 .node-stat {
   font-size: 11px;
   font-weight: 600;

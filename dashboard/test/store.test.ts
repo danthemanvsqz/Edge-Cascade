@@ -626,3 +626,34 @@ describe("createStore — lastOutcome (win/lose flash trigger)", () => {
     expect(store.lastOutcome()).toBeNull();
   });
 });
+
+describe("createStore — live active nodes (the spinning-ring lane)", () => {
+  it("starts with an empty active set", () => {
+    expect(createStore().activeNodes()).toEqual(new Set());
+  });
+
+  it("setActiveNodes seeds the full set, replacing any prior", () => {
+    const store = createStore();
+    store.setActiveNodes(["route", "draft"]);
+    expect(store.activeNodes()).toEqual(new Set(["route", "draft"]));
+    store.setActiveNodes(["gpu_solve"]);
+    expect(store.activeNodes()).toEqual(new Set(["gpu_solve"]));
+  });
+
+  it("applyNodeDelta adds on active=true, removes on active=false", () => {
+    const store = createStore();
+    store.applyNodeDelta("gpu_solve", true);
+    store.applyNodeDelta("route", true);
+    expect(store.activeNodes()).toEqual(new Set(["gpu_solve", "route"]));
+    store.applyNodeDelta("gpu_solve", false);
+    expect(store.activeNodes()).toEqual(new Set(["route"]));
+  });
+
+  it("activeNodes() returns a snapshot copy, not a live reference", () => {
+    const store = createStore();
+    store.applyNodeDelta("route", true);
+    const snap = store.activeNodes();
+    store.applyNodeDelta("draft", true); // mutate after snapshot
+    expect(snap).toEqual(new Set(["route"]));
+  });
+});

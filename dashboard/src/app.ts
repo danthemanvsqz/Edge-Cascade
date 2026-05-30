@@ -17,7 +17,13 @@ import type {
   VinylWSServer,
 } from "@danthemanvsqz/vinyl";
 
-import { cascadeFlowRegion, hasActiveAnimation, HEARTBEAT_MS } from "./flow.js";
+import {
+  cascadeFlowRegion,
+  cascadeSpinRegion,
+  hasActiveAnimation,
+  HEARTBEAT_MS,
+  LIVE,
+} from "./flow.js";
 import { page } from "./page.js";
 import {
   cascadeHealthRegion,
@@ -32,6 +38,8 @@ import { CASCADE_SERVER, createStore, DEGEN_SERVER } from "./store.js";
 import type { Store } from "./store.js";
 import { createTailer } from "./lib/tailer.js";
 import type { Tailer } from "./lib/tailer.js";
+import { createLiveSource } from "./lib/liveSource.js";
+import type { LiveSource } from "./lib/liveSource.js";
 
 /** Per-connection context. The store + hub are shared across all connections
  * (single-host dashboard) so every region renders from the same state. */
@@ -46,6 +54,9 @@ export interface DashboardApp {
   readonly ctx: DashContext;
   readonly vws: VinylWSServer;
   readonly tailer: Tailer;
+  /** The liveness lane: subscribes the Redis node-state channel + seeds on
+   * start, driving the spinning ring by push. Started in server.ts. */
+  readonly liveSource: LiveSource;
   /** Render the initial HTTP shell. */
   page(): VNode;
 }
@@ -143,6 +154,9 @@ export function createDashboardApp(
         meshEffectivenessRegion,
         logFeedRegion,
       );
+      // Liveness lane on its own signal -- ledger TICKs never touch the spin
+      // region, so the ring's animation isn't restarted by particle/hot renders.
+      hub.subscribe(LIVE, conn, cascadeSpinRegion);
     },
     onMessage: () => {
       // Phase A page has no forms / actions; ignore any inbound frame.
@@ -152,10 +166,23 @@ export function createDashboardApp(
     },
   });
 
+  // Liveness lane: a node-state change re-renders ONLY the spin region via its
+  // own LIVE signal -- never TICK -- so the ledger lane and the liveness lane
+  // stay decoupled (no flicker either direction). The spin is CSS-continuous,
+  // so it needs no heartbeat. Construction is side-effect-free (no redis client
+  // until start()).
+  const liveSource = createLiveSource({
+    store,
+    onChange: () => {
+      hub.emit(LIVE);
+    },
+  });
+
   return {
     ctx,
     vws,
     tailer,
+    liveSource,
     page: () => page(ctx),
   };
 }

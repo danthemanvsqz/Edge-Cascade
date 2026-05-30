@@ -6,12 +6,14 @@ import {
   ANIM_MS,
   cascadeFlowRegion,
   cascadeFlowTopology,
+  cascadeSpinRegion,
   enteringArcStart,
   FLASH_MS,
   hasActiveAnimation,
   HEARTBEAT_MS,
   HOT_MS,
   isFlashing,
+  isNodeActive,
   isNodeHot,
   nodeForParticle,
   particlePosition,
@@ -356,5 +358,42 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     ctx.store.ingest("cascade", { final_tier: "gpu", ts: "100" });
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).not.toContain("outcome-flash--active");
+  });
+});
+
+describe("isNodeActive (live spinning-ring indicator)", () => {
+  it("matches by id", () => {
+    expect(isNodeActive("gpu_solve", "gpu_solve", new Set(["gpu_solve"]))).toBe(true);
+  });
+
+  it("matches by label (live 'draft_gate' lights the node whose id is 'gate')", () => {
+    expect(isNodeActive("gate", "draft_gate", new Set(["draft_gate"]))).toBe(true);
+  });
+
+  it("is false when neither id nor label is active", () => {
+    expect(isNodeActive("gpu_solve", "gpu_solve", new Set(["route"]))).toBe(false);
+    expect(isNodeActive("route", "route", new Set())).toBe(false);
+  });
+});
+
+describe("cascadeSpinRegion (liveness lane, its own region)", () => {
+  it("renders exactly one spinning ring for the active node", () => {
+    const ctx = makeCtx();
+    ctx.store.setActiveNodes(["gpu_solve"]);
+    const html = renderToString(cascadeSpinRegion.render(ctx));
+    expect(html).toContain("node-spin--spinning");
+    expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
+  });
+
+  it("lights a node by its label too (live 'draft_gate' -> the 'gate' node)", () => {
+    const ctx = makeCtx();
+    ctx.store.setActiveNodes(["draft_gate"]);
+    const html = renderToString(cascadeSpinRegion.render(ctx));
+    expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
+  });
+
+  it("renders no spinning ring when nothing is active", () => {
+    const html = renderToString(cascadeSpinRegion.render(makeCtx()));
+    expect(html).not.toContain("node-spin--spinning");
   });
 });

@@ -18,12 +18,10 @@ live-validated like the worker, not unit-cov'd.
 """
 from __future__ import annotations
 
-import json
-
 import redis
 
 from cascade.celery_app import app
-from cascade.live_receiver import LIVE_CHANNEL, node_delta, nodes_for
+from cascade.live_receiver import LIVE_CHANNEL, LIVE_STATE_KEY, nodes_for, publish_state
 
 
 def run(channel: str = LIVE_CHANNEL) -> None:
@@ -37,10 +35,7 @@ def run(channel: str = LIVE_CHANNEL) -> None:
         # The STARTED tasks are the ones actually spinning right now (task_track_
         # started makes the event fire at execution, not enqueue).
         active = [t.name for t in state.tasks.values() if t.name and t.state == "STARTED"]
-        curr = nodes_for(active)
-        for node, node_state in node_delta(prev, curr):
-            pub.publish(channel, json.dumps({"node": node, "state": node_state}))
-        prev = curr
+        prev = publish_state(pub, channel, LIVE_STATE_KEY, prev, nodes_for(active))
 
     with app.connection() as conn:
         receiver = app.events.Receiver(conn, handlers={"*": on_event})

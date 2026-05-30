@@ -237,6 +237,40 @@ export const cascadeFlowRegion: LiveRegion<DashContext> = liveRegion(
   (ctx) => overlaySvg(ctx),
 );
 
+/** The liveness signal -- emitted ONLY by the live source on a node-state delta,
+ * separate from the ledger `TICK`. The spin region subscribes to this alone, so
+ * ledger re-renders (particles arriving, a hot-ring "landing", the heartbeat)
+ * never replace the spin ring's DOM and restart its CSS animation. THIS is the
+ * lane boundary that stops the ring flickering when a highlight lands. */
+export const LIVE = "live";
+
+/** The spinning-ring overlay as its OWN live region (the liveness lane),
+ * decoupled from the ledger-driven cascadeFlowRegion: a separate stacked SVG
+ * that re-renders only on LIVE, so its animation runs uninterrupted between
+ * node transitions. */
+export const cascadeSpinRegion: LiveRegion<DashContext> = liveRegion(
+  "cascade-spin",
+  (ctx) => spinOverlaySvg(ctx),
+);
+
+function spinOverlaySvg(ctx: DashContext): VNode {
+  const activeNodes = ctx.store.activeNodes();
+  return h(
+    "svg",
+    {
+      class: "overlay",
+      viewBox: `0 0 ${String(VIEW_W)} ${String(VIEW_H)}`,
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": "true",
+    },
+    h(
+      "g",
+      { class: "node-spins" },
+      ...NODES.map((n) => spinRing(n, activeNodes)),
+    ),
+  );
+}
+
 function overlaySvg(ctx: DashContext): VNode {
   const nowMs = ctx.nowMs();
   const particles = ctx.store.particles();
@@ -423,6 +457,42 @@ function hotRing(
     height: String(n.h + 6),
     rx: "9",
     ry: "9",
+    fill: "none",
+    "aria-hidden": "true",
+  });
+}
+
+/** Is this node executing right now, per the LIVE lane (the receiver's pub/sub
+ * deltas, surfaced as store.activeNodes())? Matched by id OR label so the live
+ * "draft_gate" id lights the node whose id is "gate"; live-only ids with no
+ * flow node (merge_gpu/done/pick) match nothing and are ignored. Pure -- no
+ * DOM. Exported for unit tests. */
+export function isNodeActive(
+  id: string,
+  label: string,
+  activeNodes: ReadonlySet<string>,
+): boolean {
+  return activeNodes.has(id) || activeNodes.has(label);
+}
+
+/** Per-node spinning ring overlay -- the LIVE "in progress" signal (a task is
+ * executing on this node this instant), distinct from the post-completion hot
+ * ring the .rec stream drives. The `--spinning` class runs a continuous CSS
+ * rotation while the node is in store.activeNodes(); it sits just outside the
+ * hot ring so both can read at once (spinning now, glowing from a recent land). */
+function spinRing(n: ChainNode, activeNodes: ReadonlySet<string>): VNode {
+  const spinning = isNodeActive(n.id, n.label, activeNodes);
+  const cls = spinning
+    ? `node-spin node-spin--spinning node-spin--tone-${n.tier}`
+    : `node-spin node-spin--tone-${n.tier}`;
+  return h("rect", {
+    class: cls,
+    x: String(n.x - 6),
+    y: String(n.y - 6),
+    width: String(n.w + 12),
+    height: String(n.h + 12),
+    rx: "12",
+    ry: "12",
     fill: "none",
     "aria-hidden": "true",
   });

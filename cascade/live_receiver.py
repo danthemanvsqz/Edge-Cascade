@@ -14,13 +14,20 @@ substrate (a real broker + worker), not unit-cov'd.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 
 from cascade.flower_activity import NODE_BY_TASK
 
 # Redis pub/sub channel the receiver publishes node-state deltas on; the Node
 # dashboard subscribes. JSON frames: {"node": str, "state": "active"|"idle"}.
+# Contract mirror: dashboard/src/lib/liveSource.ts (rename both sides together).
 LIVE_CHANNEL = "cascade.live.nodes"
+
+# Redis key holding the CURRENT active-node set (JSON sorted list). Pub/sub is
+# fire-and-forget, so a dashboard that connects mid-solve would miss the deltas
+# that already fired; it GETs this key on connect to seed, then rides the deltas.
+LIVE_STATE_KEY = "cascade.live.active"
 
 
 def nodes_for(names: Iterable[str]) -> set[str]:
@@ -47,3 +54,17 @@ def node_delta(prev: set[str], curr: set[str]) -> list[tuple[str, str]]:
     transitions = [(node, "active") for node in curr - prev]
     transitions += [(node, "idle") for node in prev - curr]
     return sorted(transitions)
+
+
+def publish_state(pub, channel: str, state_key: str, prev: set[str], curr: set[str]) -> set[str]:
+    """Publish the transitions between two snapshots and update the seed key.
+
+    `pub` is an injected redis client (`.publish` + `.set`). Each `node_delta`
+    transition is published to `channel`; then the current active set is written
+    to `state_key` as a JSON sorted list so a late-joining subscriber can seed.
+    Returns `curr` so the caller can roll it into `prev`.
+    """
+    for node, node_state in node_delta(prev, curr):
+        pub.publish(channel, json.dumps({"node": node, "state": node_state}))
+    pub.set(state_key, json.dumps(sorted(curr)))
+    return curr

@@ -7,7 +7,9 @@ publish are live substrate (omitted), not exercised here.
 """
 from __future__ import annotations
 
-from cascade.live_receiver import node_delta, nodes_for
+import json
+
+from cascade.live_receiver import node_delta, nodes_for, publish_state
 
 
 def test_nodes_for_maps_known_skips_unknown():
@@ -33,3 +35,26 @@ def test_node_delta_sorted_by_node():
         ("gpu_solve", "active"),
         ("route", "active"),
     ]
+
+
+class _FakePub:
+    def __init__(self):
+        self.published: list[tuple[str, str]] = []
+        self.sets: list[tuple[str, str]] = []
+
+    def publish(self, channel, msg):
+        self.published.append((channel, msg))
+
+    def set(self, key, val):
+        self.sets.append((key, val))
+
+
+def test_publish_state_publishes_deltas_and_sets_seed():
+    pub = _FakePub()
+    result = publish_state(pub, "chan", "key", {"route"}, {"gpu_solve"})
+    assert pub.published == [
+        ("chan", json.dumps({"node": "gpu_solve", "state": "active"})),
+        ("chan", json.dumps({"node": "route", "state": "idle"})),
+    ]
+    assert pub.sets == [("key", json.dumps(["gpu_solve"]))]
+    assert result == {"gpu_solve"}

@@ -11,7 +11,7 @@ import { h } from "@danthemanvsqz/vinyl";
 import type { VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import { cascadeFlowRegion, cascadeFlowTopology } from "./flow.js";
+import { cascadeFlowRegion, cascadeFlowTopology, cascadeSpinRegion } from "./flow.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
@@ -48,11 +48,14 @@ export function page(ctx: DashContext): VNode {
       h(
         "main",
         { class: "stage" },
-        // Two stacked SVGs sharing the same 800x400 viewport: the static
-        // topology underneath, the live overlay (particles + sparklines +
-        // tier-stats) on top via the `cascade-flow` live region.
+        // Three stacked SVGs sharing the same 800x400 viewport: the static
+        // topology underneath, the ledger overlay (particles + sparklines +
+        // tier-stats) via `cascade-flow`, and the liveness overlay (the spinning
+        // ring) via `cascade-spin` on its own signal -- separate regions so the
+        // lanes render independently (no cross-lane flicker).
         cascadeFlowTopology(),
         cascadeFlowRegion.mount(ctx),
+        cascadeSpinRegion.mount(ctx),
       ),
       h(
         "aside",
