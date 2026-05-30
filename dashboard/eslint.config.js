@@ -17,4 +17,12 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Node build scripts (e.g. the TS-syntax-gate checker) run under Node, so
+    // Node globals like `process` are legitimate here.
+    files: ["scripts/**"],
+    languageOptions: {
+      globals: { process: "readonly" },
+    },
+  },
 );

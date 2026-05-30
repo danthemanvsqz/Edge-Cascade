@@ -46,7 +46,7 @@ import logging
 
 from celery import chain, chord, group
 
-from cascade import canvas_spike, tasks
+from cascade import canvas_spike, tasks, ts_verifier
 from cascade import topologies as topo_module
 from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
@@ -148,6 +148,16 @@ def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
     if dsl:
         verdict = tasks.verify_functional(text, dsl)
         return bool(verdict.get("passed")), list(verdict.get("failures", ()))
+    # Language dispatch (BACKLOG #7): a TypeScript draft can never pass the
+    # Python AST gate, so a TS-fenced draft is gated on TS syntax instead (the
+    # TS compiler's single-file transpile). Default stays the Python gate, so
+    # the pipe-parity contract for Python prompts is untouched.
+    if ts_verifier.is_typescript(text):
+        v = ts_verifier.verify_ts(text)
+        if v.passed:
+            return True, []
+        return False, [{"expr": "ts-syntax", "observed": v.reason,
+                        "requirement": "fenced TypeScript block that parses"}]
     v = syntax_verifier.verify(text)
     if v.passed:
         return True, []
