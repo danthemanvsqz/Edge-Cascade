@@ -83,7 +83,7 @@ describe("page render", () => {
     expect(html).toContain('class="topology"');
     // Chain nodes (the real Celery tasks), not abstract tier blobs.
     expect(html).toContain("gpu_solve");
-    expect(html).toContain("draft_gate");
+    expect(html).toContain("verify");
   });
 });
 
