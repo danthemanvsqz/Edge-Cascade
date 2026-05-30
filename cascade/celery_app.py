@@ -12,6 +12,7 @@ Run (after `docker compose up -d redis` and `uv sync --extra celery`):
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 
 from celery import Celery
 
@@ -33,7 +34,10 @@ def _redis_url() -> str:
     host = os.environ.get("CASCADE_REDIS_HOST", "localhost")
     port = os.environ.get("CASCADE_REDIS_PORT", "6379")
     password = os.environ.get("CASCADE_REDIS_PASSWORD", "")
-    auth = f":{password}@" if password else ""
+    # URL-encode the secret: a requirepass value may contain @ : / # %, which
+    # would otherwise corrupt the URL and silently connect to the wrong host or
+    # fail auth (the exact `requirepass <strong-secret>` flow the runbook documents).
+    auth = f":{quote(password, safe='')}@" if password else ""
     return f"redis://{auth}{host}:{port}/0"
 
 

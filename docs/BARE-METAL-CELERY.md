@@ -39,8 +39,9 @@ Queue → box assignment (the contract the launch scripts honor):
 | `cloud`  | `cloud_generate`                   | **nobody** (see below) |
 
 `verify` needs no accelerator (it just execs candidate code against the DSL), so
-it can ride with either worker. It defaults to the RTX worker; exactly one
-worker must cover it or `balanced` chains stall at the gate step.
+it can ride with either worker. It defaults to the RTX worker; **at least one**
+worker must cover it or `balanced` chains stall at the gate step (more than one
+is fine — the tasks just round-robin).
 
 ## 1. Broker box — Redis, reachable + authenticated
 
@@ -122,6 +123,11 @@ runs — structurally unspendable, the same guarantee edge-cli gets from
 `--strict-mcp-config`. The launch scripts **refuse to start** if `cloud` is in
 `-Queues`. To actually enable paid escalation you must consciously start a
 worker on `cloud` AND have `CASCADE_ENABLE_CLOUD=1` + a key (config layer).
+
+> **Always pass `-Q`.** If you invoke `python -m celery … worker` by hand
+> *without* `-Q`, Celery consumes **every declared queue including `cloud`** —
+> defeating the invariant. The launch scripts always pass `-Q`; bypass them and
+> you own this.
 
 ## `.rec` aggregation caveat (multi-box)
 
