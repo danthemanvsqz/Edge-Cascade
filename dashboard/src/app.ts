@@ -32,6 +32,8 @@ import { CASCADE_SERVER, createStore, DEGEN_SERVER } from "./store.js";
 import type { Store } from "./store.js";
 import { createTailer } from "./lib/tailer.js";
 import type { Tailer } from "./lib/tailer.js";
+import { createLiveSource } from "./lib/liveSource.js";
+import type { LiveSource } from "./lib/liveSource.js";
 
 /** Per-connection context. The store + hub are shared across all connections
  * (single-host dashboard) so every region renders from the same state. */
@@ -46,6 +48,9 @@ export interface DashboardApp {
   readonly ctx: DashContext;
   readonly vws: VinylWSServer;
   readonly tailer: Tailer;
+  /** The liveness lane: subscribes the Redis node-state channel + seeds on
+   * start, driving the spinning ring by push. Started in server.ts. */
+  readonly liveSource: LiveSource;
   /** Render the initial HTTP shell. */
   page(): VNode;
 }
@@ -152,10 +157,22 @@ export function createDashboardApp(
     },
   });
 
+  // Liveness lane: each node-state change re-renders by push (TICK) and kicks
+  // the heartbeat so the ring keeps spinning between deltas. Construction is
+  // side-effect-free (no redis client until start()).
+  const liveSource = createLiveSource({
+    store,
+    onChange: () => {
+      hub.emit(TICK);
+      maybeScheduleHeartbeat();
+    },
+  });
+
   return {
     ctx,
     vws,
     tailer,
+    liveSource,
     page: () => page(ctx),
   };
 }

@@ -42,6 +42,12 @@ const startFromEof = ["1", "true", "yes"].includes(
 
 const app = createDashboardApp({ runsDir, startFromEof });
 app.tailer.start();
+// Liveness lane (push): subscribe the Redis node-state channel + seed on start.
+// Best-effort -- a down broker must not take down the dashboard (the ledger lane
+// is independent); the spinning ring just stays dark until the receiver is up.
+void app.liveSource.start().catch((err: unknown) => {
+  console.warn(`[dashboard] live source not started: ${String(err)}`);
+});
 
 const server = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
