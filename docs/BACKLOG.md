@@ -6,31 +6,119 @@ impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
 > Last groomed: **2026-05-30** (after Phase 2 Slice 6 merged; main `ed7588c`).
-> Updated **2026-05-30 (eve)**: added **★ #6 live cascade-activity tool (OBS-1)**
-> as the **next-session high-priority pick** (user directive). See the starred
-> section below.
+> Updated **2026-05-30 (eve)**: added **★ #6 live cascade-activity tool (OBS-1)**.
+> Updated **2026-05-30 (late)**: **#6 OBS-1 SHIPPED** (PRs #109–#113: the
+> Flower-backed live lane + event-receiver push + the dashboard spinning ring).
+> Added the **self-healing arc #7–#11** from the 2026-05-30 routing-log analysis
+> (24 routes this session; see the section below for the evidence behind each).
 
 ## Current placement
 
 ```
- Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                 I4 Critical
- S1 Safe                  ✗ (none)     —                 #1 PT-1                  — (none)
- S2 Low                   ✗ (none)     #4 gate-helper    ★ #6 live-activity NEXT  — (none)
-                                       #5 PT-4 verbump   #2 PT-2
-                                                         (Slice 7: blocked)
- S3 Moderate              ✗ (none)     —                 #3 PT-3                  — (none)
- S4 Severe (park)         ✗ (none)     ⏳ none           ⏳ none                  ⏳ none
+ Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                       I4 Critical
+ S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1                        — (none)
+ S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
+                                       #5 PT-4 verbump   #2 PT-2 (Slice 7: blocked)
+                                       #10 ts-shortcut*  *#10 superseded by #7
+ S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
+                                                         #8 difficulty-recal
+                                                         #9 draft_gate-decompose
+ S4 Severe (park)         ✗ (none)     ⏳ none           ⏳ none                         — (none)
 ```
 
 No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked**
-(not parked) — see below.
+(not parked) — see below. **#6 OBS-1 and #7 ts-verify-gate are done** (struck
+from the actionable set). **#7 SHIPPED (PR #115)** — verified live: a TS task
+that capped 100% before now wins @ npu; that also retires **#10 ts-shortcut**
+(the stopgap is moot now the gate works). The next pick is **#8
+(difficulty-recal)** — confirmed live during the #7 demo (a generic-type
+one-liner rated 0.85, skipped the cheap NPU draft, and capped at GPU).
 
 ---
 
-## ★ #6 — live cascade-activity tool (OBS-1)  (I3 · S2) — **NEXT SESSION**
+## Self-healing arc #7–#11 (from the 2026-05-30 routing-log analysis)
 
-**High-priority pick for next session** (user directive, 2026-05-30). Take this
-on first.
+**Evidence base** — 24 routed outcomes this session (`runs/cascade.rec`,
+session-scoped by a 55-min ts gap): **18W / 6L (75%)**; final_tier `npu 2 · gpu
+16 · capped→tier3 6`; **11/24 (46%) skipped the NPU draft** (difficulty ≥ 0.7);
+routing wall-time 13.1 min, of which the **6 caps consumed ~5.5 min (42%) for
+zero usable output**. Language split: **TypeScript 0/3 won (0%)** vs
+Python/algo **18/21 (86%)**.
+
+### ✅ #7 · ts-verify-gate — a TS backend for the deterministic gate  (I3 · S2) — SHIPPED (PR #115)
+**Done:** `cascade/ts_verifier.py` + `dashboard/scripts/ts-syntax-check.mjs`
+(single-file `ts.transpileModule` syntax check, parity with the Python AST gate)
++ `_gate` language dispatch. Live-verified: a TS task that capped 100% before now
+wins @ npu; Python parity intact. Original analysis retained below.
+
+**The gap:** all **3 TS routes capped (100%)**. The locals *draft* TS fine; the
+`edge-verify` gate is Python-only ([[edge-verify-ts-gap]]), so every TS draft
+fails gating and burns both GPU repair rounds before `capped→tier3`. **The gate,
+not the model, is the wall.** Wire `tsc + eslint + vitest` as a verify backend
+keyed on `.ts`/language so TS drafts can actually PASS.
+**Why I3:** turns a structurally-0%-win lane winnable AND reclaims ~100s/session
+of guaranteed-cap GPU time; it's the linchpin of the whole arc. **Why S2:**
+additive — a new verify backend behind the existing gate interface; the Python
+gate path is untouched, fully reversible. Highest-leverage pick.
+
+### #8 · difficulty-recal — the NPU router over-rates short prompts  (I3 · S3)
+**The gap:** **11/24** routes scored ≥ 0.7 and skipped the NPU draft straight to
+GPU — but several were trivial single functions (e.g. "Write a single Python
+function `snapshot()`" scored **0.85**). Of those eleven 0.85s: 9 GPU wins, 2
+caps — and a chunk of the GPU wins were cheap enough the NPU likely could have
+taken them. Over-rating pushes work up a tier ($ + latency) needlessly. Length-
+correct or recalibrate the `≥0.7 ⇒ skip-draft` threshold.
+**Why I3:** affects every route's tier selection (cost/latency lever). **Why
+S3:** touches the router's difficulty signal — mis-calibration risks drafting a
+genuinely-hard task at NPU (a wasted round); guarded by the win/lose metric +
+parity tests, measure before/after on `cascade.rec`.
+
+### #9 · draft_gate-decompose — split the overloaded gate node  (I3 · S3)
+**The gap:** `mesh.balanced._draft_gate` is ONE node doing **three** jobs behind
+**two** verifiers: it (a) *verifies* via `_gate()` (syntax **or** functional
+engine), (b) *resolves* on PASS (`final_tier="npu"`, `resolved`), and (c)
+*escalate-routes* on FAIL (carry `failures` → GPU). The `verify` queue also runs
+`_done`, so the dashboard's single node conflates gating with final logging.
+Decompose into distinct chain nodes: **verify** (pure pass/fail) → **resolve**
+(finalize npu win) | **escalate** (carry to GPU).
+**Why I3:** the live ring (#6) gives per-node meaning only if a node is one
+responsibility; this also decouples verification from routing policy so either
+can change/reuse independently. **Why S3:** a refactor of the hot-path Canvas
+chain — the cap invariant + the pipe-parity contract
+([FINDINGS-canvas-phase1.md]) must hold across the split; eager-test the new
+composition before it lands.
+
+### ~~#10 · ts-shortcut~~ — RETIRED (superseded by #7)  (I2 · S2)
+**Dropped:** #7 shipped, so the gate now wins TS instead of guaranteed-capping
+it — the stopgap has no remaining purpose. Kept for the record only.
+
+(original) — hand TS straight to Tier 3 until #7 lands:
+**The gap (stopgap):** while the gate can't certify TS (#7), a TS task is a
+*guaranteed* cap — ~35s of draft + 2 GPU rounds for nothing. Detect TS and route
+it directly to `capped→tier3` (still logged), skipping the futile draft/repair.
+**Why I2:** saves ~35s/TS route but is a workaround, and goes **dead the moment
+#7 lands** — schedule behind #7, drop if #7 ships first. **Why S2:** a small
+routing branch on the language signal, reversible.
+
+### #11 · hook-scope — session-scope the advisory scoreboard  (I2 · S1)
+**The gap:** `pipeline_reminder.py` reports **all-time** metrics ("37 routed,
+20W/8L"), so a strong session (this one: 18W/6L, 75%) is diluted by history and
+W+L ≠ total (9 older records lack a `done:` trace line). Show *this session's*
+W/L alongside all-time (borrow the dashboard's `START_FROM_EOF` session-coupling).
+**Why I2:** observability nicety, sharpens the nudge. **Why S1:** additive to an
+advisory hook that already degrades to silence on any error — cannot break prompt
+submission. Quick surgical win.
+
+---
+
+## ✅ #6 — live cascade-activity tool (OBS-1)  (I3 · S2) — **SHIPPED 2026-05-30**
+
+**Done** (PRs #109–#113): `cascade/flower_activity.py` (Flower-backed probe) +
+`cascade_top` debug view + `sample_occupancy` + the event-receiver push producer
+(`cascade/live_receiver.py` / `scripts/cascade_live_receiver.py`) + the
+dashboard spinning ring on its own `cascade-spin` live region (event-driven push,
+no polling) + the `tool=status` probe filter + `docs/DESIGN-observability-lanes.md`.
+The original design notes are retained below for history.
 
 **The gap (found this session):** the dashboard can't show *which node is
 currently spinning* because `.rec` records are written at task **completion**,
