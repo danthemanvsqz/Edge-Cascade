@@ -21,6 +21,7 @@ from cascade.flower_activity import NODE_BY_TASK
 
 # Redis pub/sub channel the receiver publishes node-state deltas on; the Node
 # dashboard subscribes. JSON frames: {"node": str, "state": "active"|"idle"}.
+# Contract mirror: dashboard/src/lib/liveSource.ts (rename both sides together).
 LIVE_CHANNEL = "cascade.live.nodes"
 
 # Redis key holding the CURRENT active-node set (JSON sorted list). Pub/sub is

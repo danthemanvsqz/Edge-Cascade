@@ -21,7 +21,9 @@ export const LIVE_CHANNEL = "cascade.live.nodes";
 export const LIVE_STATE_KEY = "cascade.live.active";
 const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0";
 
-/** Parse one pub/sub delta frame `{node, state}`. Never throws: a malformed or
+/** Parse one pub/sub delta frame `{node, state}`. The receiver emits only
+ * `state: "active" | "idle"` (cascade/live_receiver.py:node_delta), so anything
+ * other than "active" is treated as idle. Never throws: a malformed or
  * non-object payload, or a missing/non-string node, yields null. */
 export function parseDelta(msg: string): { node: string; active: boolean } | null {
   let parsed: unknown;
@@ -96,8 +98,10 @@ export function createLiveSource(opts: CreateLiveSourceOptions): LiveSource {
   }
 
   async function stop(): Promise<void> {
-    await sub?.quit();
-    await seed?.quit();
+    // quit() on a never-connected / failed lazy client rejects -- swallow so
+    // teardown is always safe even if start() failed partway.
+    if (sub) await sub.quit().catch(() => undefined);
+    if (seed) await seed.quit().catch(() => undefined);
     sub = null;
     seed = null;
   }
