@@ -1,5 +1,19 @@
 # Edge Cascade — Architecture
 
+> **⚠️ SUPERSEDED FRAMING (2026-05-30).** This document specifies the original
+> **MCP topology** — the agent as MCP *client* hand-orchestrating one server per
+> tier (`edge-npu`/`edge-gpu`/`edge-verify`/`edge-cloud`). That per-tier
+> hand-driven path is **retired for inference**. The cascade is now defined ONCE
+> in code as `cascade.mesh.solve`, dispatched as a **Celery Canvas pipeline**
+> (NPU-first → draft → gate → bounded GPU repair → win/lose logger last) and
+> invoked as a single blocking call via `cascade.canvas_client.solve_*_canvas`
+> / `scripts/mesh_solve_canvas.py`. **The current architecture is
+> `docs/DESIGN-celery-canvas.md`; the agent contract is `CLAUDE.md` + the
+> `/edge-cascade` skill.** The hardware/trust-boundary mapping and tier
+> rationale below remain accurate as background; the *transport* (MCP request
+> dispatch) and the *client = orchestrator* inversion no longer describe how
+> inference is routed.
+
 A local-first, heterogeneous LLM inference mesh. Cheap local accelerators do the
 volume; a quota-windowed Claude subscription agent does the orchestration and the
 hard reasoning; a credit-guarded paid API is the autonomous backstop.

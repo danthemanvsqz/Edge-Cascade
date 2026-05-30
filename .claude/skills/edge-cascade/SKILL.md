@@ -2,63 +2,97 @@
 name: edge-cascade
 description: >-
   Route a coding/reasoning task through the local heterogeneous inference mesh
-  (Intel NPU/iGPU → NVIDIA RTX → deterministic gate → paid Opus backstop) acting
-  as the Central Architecture Router. Use when the user invokes /edge-cascade,
-  or asks to run a task "through the cascade / mesh / local tiers", or wants
-  local-first inference with the agent as the ceiling. Requires the edge-npu,
-  edge-gpu, edge-verify, edge-cloud MCP servers (see ARCHITECTURE.md §7).
+  via the Canvas pipeline (one call: NPU route → NPU/iGPU draft → deterministic
+  gate → bounded GPU repair → win/lose logger). Use when the user invokes
+  /edge-cascade, asks to run a task "through the cascade / mesh / pipeline /
+  local tiers", or wants local-first inference with the agent (Tier 3) as the
+  ceiling. The pipeline is the SINGLE inference path — you do not hand-drive
+  per-tier MCP servers. Needs the Canvas substrate up (Redis broker + a Celery
+  worker on npu,gpu,verify); launch with `edge-cli.ps1 -Canvas`.
 ---
 
 # Edge Cascade — router skill
 
-You are the **Central Architecture Router** (per `CLAUDE.md`). You are Tier 3
-and the MCP client. Compose the cascade yourself; do not delegate routing to
-`cli.py`. Architecture: see `ARCHITECTURE.md`.
+You are **Tier 3**: the agent, the ceiling, and the *only* tier that writes
+files and runs commands. You are **not** the per-step router anymore — the
+**Canvas pipeline** (`cascade.mesh.solve`, dispatched as a Celery signature) is
+the router, defined ONCE in code. You invoke it as a single blocking call and
+act on the one result it hands back. Do **not** hand-orchestrate `edge-npu` /
+`edge-gpu` / `edge-verify` / `edge-cloud` MCP tools step by step — that path is
+retired.
 
-## Output protocol
+## The rule (non-negotiable)
 
-Before acting, emit one `routing_dispatch` block per sub-task you delegate
-(syntax in `CLAUDE.md`). Pure orchestration/verification reasoning does not get a
-block — only actual dispatches to a tier.
+**Every line of code goes through the pipeline first.** The pipeline runs
+everything **NPU-first** and the **win/lose logger last**. You do not write
+from-scratch code by hand and skip the cascade — route the task, let the locals
+draft it, and take over only when the pipeline hands back `capped->tier3`.
 
-## Procedure
+## How to route (one call)
 
-1. **Classify.** Call `edge-npu.route(task)` → `{difficulty, category}`.
-2. **Chunk.** If the task is multi-part, split into independent sub-tasks and
-   run steps 3–6 per sub-task; dispatch parallel sub-tasks to Tier 1/2 together.
-3. **Route on difficulty** (thresholds live in `config.py` —
-   `escalate_to_gpu_difficulty`, `escalate_to_cloud_difficulty`):
-   - `< 0.70` → `edge-npu.draft`. Check Tier-1 input fits its static-shape cap
-     (`npu://status`); if not, treat as the next band up.
-   - `0.70 – 0.80` → `edge-gpu.generate`. First check `gpu://status`: if Ollama
-     is unavailable, or the task's context exceeds the live VRAM ceiling, treat
-     as the top band.
-   - `≥ 0.80` → skip local; **you answer directly** (you are the ceiling).
-4. **Gate every local answer.** Never trust a local tier's output ungated:
-   - `edge-verify.verify_syntax(text)` always.
-   - `edge-verify.verify_functional(text)` when a `checks.dsl` block matches a
-     symbol the answer defines.
-   - Treat your own direct answers (step 3, `≥0.80`) and `edge-cloud` answers as
-     already authoritative — do not re-gate them.
-5. **Repair on failure.** If a gate fails: `edge-verify.repair_prompt(task,
-   code, failures)`, then retry one tier up, passing the failed draft as
-   `prior_attempt`. One repair attempt per tier.
-6. **Deadlock → Tier 4.** If two of your own successive attempts are
-   `difflib.SequenceMatcher` ratio `≥ 0.90` (consensus inertia), OR you are
-   about to exceed your usable effort: call `edge-cloud.budget()`. If
-   `allowed`, `edge-cloud.escalate(query, prior_attempt, verifier_reason,
-   mode="critic")` for a clean-context second opinion. If not `allowed`, return
-   the best gated local answer, clearly labelled unverified.
-7. **Verify before returning.** Confirm the final answer passes the gate (or
-   came from you / `edge-cloud`). Report which tier answered and the trace.
+CLI (preferred for interactive use):
+
+```
+uv run python scripts/mesh_solve_canvas.py --topology balanced "<task>"
+```
+
+Programmatic (inside the repo):
+
+```python
+from cascade.canvas_client import solve_balanced_canvas, solve_low_latency_canvas
+outcome = solve_balanced_canvas(query, dsl=None)   # mesh.Outcome
+```
+
+- `--topology balanced` (default) — the sequential cost-ordered cascade. Use it
+  for almost everything.
+- `--topology low_latency` — races the NPU draft against the GPU generate (chord).
+  The GPU **always** runs, so it costs more than balanced on easy prompts: a
+  per-workload choice, **never the default** (quality + $cost rank above tok/s,
+  per the metric-priorities rule). Use only when wall-latency genuinely matters.
+- `--dsl "<text>"` — optional functional-gate assertions; omit for syntax-only
+  gating.
+
+## What the pipeline does (informational — you don't drive these)
+
+`route` (NPU, returns advisory difficulty) → NPU/iGPU `draft` → deterministic
+`gate` → bounded GPU repair loop (hard cap = `config.repair_cap`, default 2; a
+further round is structurally impossible) → **win/lose logger last** (appends
+the outcome to `runs/cascade.rec`; this is what makes the dashboard count the
+run, so a routed task is self-logging — never bypass it). Cloud (Tier 4) is
+**not** on the default worker's queues, so paid spend is structurally impossible
+without an explicit opt-in.
+
+## Acting on the Outcome
+
+`mesh.Outcome` fields: `answer`, `final_tier` (`"npu"｜"gpu"｜"capped->tier3"`),
+`resolved`, `capped`, `repair_rounds`, `difficulty`, `topology`, `trace`.
+
+1. **`resolved` is true (WIN, local @ npu/gpu):** use `outcome.answer`. Report
+   which tier answered and the `trace`. Integrate/review it as Tier 3 before it
+   lands in the repo — "verified by the gate" ≠ "fit for the codebase."
+2. **`capped` is true (`final_tier == "capped->tier3"`, LOSE):** the locals are
+   exhausted and have handed the task to **you**. Author it yourself (Tier 3).
+   Do **not** start another repair round — that breaches the cap. Reach for Tier
+   4 (paid cloud) only on a genuine deadlock *you* can't break or an explicit
+   user request, and only budget-gated.
 
 ## Rules
 
-- **Local first, always.** Exhaust Tier 1→2→(you) before any `edge-cloud` call.
-  `edge-cloud` is paid and credit-guarded — `budget()` before every `escalate`.
-- **Never re-route a crash.** `edge-npu` hides vpux aborts behind its iGPU
-  fallback; trust its device string.
-- **Unavailable ≠ error.** If `edge-gpu` reports unavailable, skip Tier 2 and
-  carry the Tier-1 draft (if any) up as `prior_attempt`.
-- If the MCP servers are not configured, say so and point to `ARCHITECTURE.md`
-  §7 — do not silently fall back to shelling out to `cli.py`.
+- **Pipeline-first, always.** No hand-written from-scratch code that skips the
+  cascade; no hand-driving the per-tier MCP tools. One `solve_*_canvas` call.
+- **Don't auto-skip to Tier 3 on the score.** The NPU difficulty signal is
+  advisory and over-rates short / well-scoped tasks — from-scratch code still
+  gets a local draft pass. Going straight to Tier 3 is for `capped` results or
+  genuinely surgical edits to existing code.
+- **Substrate must be up.** The pipeline needs the Redis broker + a Celery
+  worker on `npu,gpu,verify`. Stand it up with
+  `powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Canvas`
+  (or a worker by hand:
+  `uv run python -m celery -A cascade.celery_app worker -Q npu,gpu,verify --pool=solo -l info`).
+  If it is **not** running, say so and offer to launch it — do **not** silently
+  fall back to writing the code by hand. (`python cli.py --topology <name>
+  "<task>"` is the equivalent in-process pipe path if the broker is unavailable.)
+- **Cloud is paid + opt-in.** Tier 4 never runs on the default queues; it is the
+  budget-gated last resort, not a convenience.
+- Non-coding / conversational turns: handle directly as Tier 3 — don't route
+  them through the pipeline.
