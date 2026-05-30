@@ -161,6 +161,40 @@ def test_dsl_none_caps_when_syntax_fails(eager, mocker):
     verify_func.assert_not_called()
 
 
+def _run_gpu_solve(*, query="write add(a, b)", dsl="DSL", prior=None,
+                   round_base=0):
+    """Dispatch gpu_solve_task directly (eager) so round_base can be exercised --
+    solve_balanced never passes a prior/round_base (it's the standalone entry)."""
+    return canvas_spike.gpu_solve_task.apply_async(
+        kwargs={"query": query, "dsl": dsl, "prior": prior,
+                "round_base": round_base}).get()
+
+
+def test_round_base_one_first_repair_is_round_1(eager, mocker):
+    """round_base=1 (a failed NPU draft handed in as `prior`): the first GPU
+    generate REPAIRS it and, if it passes, is reported as round 1 -- the
+    Canvas->pipe alignment (Slice 6a). Contrast test_pass_first_try, where the
+    no-prior first generate is round 0."""
+    gen, verify = _patch(mocker, verify_seq=[True])
+    out = _run_gpu_solve(prior="```python\nbad npu draft\n```", round_base=1)
+    assert out["final_tier"] == "gpu"
+    assert out["rounds"] == 1          # first GPU call on a prior = round 1
+    assert gen.call_count == 1
+
+
+def test_round_base_one_caps_at_cap_generates(eager, mocker):
+    """round_base=1 + always-fail: the cap bounds the run to EXACTLY `cap` GPU
+    calls (the first is already a repair), vs cap+1 on the no-prior path. This
+    is the structural half of the alignment -- no extra generate when capping on
+    a prior, matching mesh.solve's range(1, cap+1)."""
+    gen, verify = _patch(mocker, verify_seq=[False] * (CAP + 5))
+    out = _run_gpu_solve(prior="```python\nbad npu draft\n```", round_base=1)
+    assert out["final_tier"] == "capped->tier3"
+    assert out["rounds"] == CAP
+    assert gen.call_count == CAP        # NOT cap+1 -- the first call is a repair
+    assert verify.call_count == CAP
+
+
 def test_repair_threads_prior_draft_forward(eager, mocker):
     # Distinct draft text per generate call so we can see the prior threaded in.
     texts = [f"```python\n# draft {i}\ndef add(a, b):\n    return a + b\n```"

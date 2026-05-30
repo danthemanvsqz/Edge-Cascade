@@ -64,22 +64,37 @@ def _capped(rounds: int, reason: str = "repair cap exhausted") -> dict:
 
 @app.task(bind=True, max_retries=CONFIG.repair_cap, queue="gpu")
 def gpu_solve_task(self, query: str, dsl: str | None = None,
-                   prior: str | None = None) -> dict:
+                   prior: str | None = None, round_base: int = 0) -> dict:
     """One bounded repair attempt as a retrying task. First execution has
     `prior=None` (fresh generate); each retry carries the previous failed draft
     forward as `prior` (a repair). `self.request.retries` is 0 on the first run
-    and increments per retry -- it IS the round counter, threaded by Celery.
+    and increments per retry -- it IS the retry counter, threaded by Celery.
+
+    `round_base` aligns BOTH the reported round number AND the cap with the
+    in-process pipe (`mesh.solve`) -- Slice 6a (Canvas->pipe). The "round
+    number" of an execution is `self.request.retries + round_base`:
+
+    - `round_base=0` (default; the spike's standalone path + the skip-draft /
+      NPU-unavailable chains): the first execution is a FRESH generate = round
+      0, then up to `cap` repairs = rounds 1..cap. cap+1 GPU calls max. Matches
+      mesh.solve's prior-is-None branch (fresh generate is uncounted).
+    - `round_base=1` (the balanced chain hands a FAILED npu/igpu draft in as
+      `prior`): the first execution already REPAIRS that draft, so it is round
+      1 and the run is bounded to `cap` GPU calls. Matches mesh.solve's
+      `range(1, cap+1)` loop, where the first GPU call on a prior is round 1.
 
     Returns a dict on every terminal path (won or capped); the only thing it
     raises is `self.retry`'s reschedule signal, which Celery handles internally
     and never surfaces to the client's `.get()`."""
     # generate + gate, each via the existing @recorded worker fns -> the .rec
     # write happens HERE, before any retry below ("record then raise").
+    round_no = self.request.retries + round_base
     gen = tasks.generate(query, prior_attempt=prior)
     if not gen.get("available", True):
         # Tier-2 down (Ollama unreachable) is a hand-off, not an error -- mirror
-        # mesh.solve's "gpu unavailable -> capped". No point retrying.
-        return _capped(self.request.retries, reason="gpu unavailable")
+        # mesh.solve's "gpu unavailable -> capped(rnd-1)": the round that failed
+        # to RUN isn't a completed round. No point retrying.
+        return _capped(max(0, round_no - 1), reason="gpu unavailable")
 
     # Gate. dsl=None => syntax-only (cascade.verifier.verify), matching the
     # in-process pipe path's mesh.solve. dsl supplied => functional gate
@@ -99,14 +114,15 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
         )
     if passed:
         return {"answer": gen["text"], "final_tier": "gpu",
-                "rounds": self.request.retries}
+                "rounds": round_no}
 
     # Gate FAIL. THE STRUCTURAL CAP: if this run is already the last allowed
-    # round, stop -- do NOT schedule another. range-loop parity: with
-    # max_retries=cap, runs are retries 0..cap (cap+1 total), so a (cap+1)'th
-    # repair is impossible. over_cap_episodes stays meaningful.
-    if self.request.retries >= self.max_retries:
-        return _capped(self.request.retries)
+    # round, stop -- do NOT schedule another. With round_base folded in, the
+    # last allowed round is `cap`: round_base=0 -> retries 0..cap (cap+1 GPU
+    # calls); round_base=1 -> retries 0..cap-1 (cap GPU calls). Either way a
+    # round past `cap` is impossible. over_cap_episodes stays meaningful.
+    if round_no >= self.max_retries:
+        return _capped(round_no)
 
     # Not capped -> repair on the failed draft. self.retry re-enqueues this same
     # task with `prior` set to the bad draft; raising is how Celery reschedules.
@@ -118,7 +134,8 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
     # tests pass either way; the broker path is what surfaces this.)
     raise self.retry(
         exc=GateFailed(gen["text"], failures),
-        kwargs={"query": query, "dsl": dsl, "prior": gen["text"]},
+        kwargs={"query": query, "dsl": dsl, "prior": gen["text"],
+                "round_base": round_base},
         countdown=0,
     )
 

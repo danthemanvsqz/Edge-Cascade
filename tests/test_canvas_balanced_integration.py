@@ -240,12 +240,13 @@ def test_balanced_chain_escalates_to_gpu_under_broker_dispatch(
 def test_balanced_chain_holds_cap_under_broker_dispatch(
     celery_integration_worker, mocker,
 ):
-    """Cap invariant on a live broker: NPU + 3 GPU attempts (cap+1)
-    all fail the syntax gate => capped->tier3. The spike's
-    `gpu_solve_task.max_retries=CONFIG.repair_cap` is what bounds the
-    loop. Same invariant as the eager-mode test but routed through the
-    embedded worker -- the Slice-4 explicit goal is "would have caught
-    PR #91's three bugs", and a cap-leak in the broker path would
+    """Cap invariant on a live broker: the NPU draft fails the syntax gate,
+    then `cap` GPU repair attempts (the first repairs that failed draft =
+    round 1 under Canvas->pipe alignment, Slice 6a) all fail too =>
+    capped->tier3. The spike's `gpu_solve_task` (round_no >= max_retries) is
+    what bounds the loop. Same invariant as the eager-mode test but routed
+    through the embedded worker -- the Slice-4 explicit goal is "would have
+    caught PR #91's three bugs", and a cap-leak in the broker path would
     qualify as exactly that class of regression."""
     from cascade.config import CONFIG
     mocker.patch(

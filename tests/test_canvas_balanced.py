@@ -133,8 +133,10 @@ def test_balanced_chain_resolves_at_npu_when_gate_passes(eager, mocker):
 
 
 def test_balanced_chain_escalates_to_gpu_when_npu_gate_fails(eager, mocker):
-    """Case 2: NPU draft fails the gate; GPU first attempt passes.
-    final_tier='gpu', repair_rounds=0 (first attempt is rounds=0)."""
+    """Case 2: NPU draft fails the gate; the GPU first attempt repairs that
+    draft and passes. final_tier='gpu', repair_rounds=1 -- Canvas->pipe
+    alignment (Slice 6a): the first GPU call on a failed prior is round 1, the
+    same number mesh.solve reports for `range(1, cap+1)`'s first iteration."""
     _route(mocker)
     _draft(mocker, text="```python\nbad draft\n```")
     # NPU gate FAIL, then gpu_solve_task's first verify PASS.
@@ -145,7 +147,7 @@ def test_balanced_chain_escalates_to_gpu_when_npu_gate_fails(eager, mocker):
     assert outcome.final_tier == "gpu"
     assert outcome.resolved is True
     assert outcome.answer == "```python\ngpu fix\n```"
-    assert outcome.repair_rounds == 0  # gpu_solve_task's `rounds` field
+    assert outcome.repair_rounds == 1  # first GPU repair of the NPU draft
     cloud.assert_not_called()
 
 
@@ -156,7 +158,9 @@ def test_balanced_chain_caps_to_tier3_when_cloud_disabled(eager, mocker):
                  mocker.Mock(enable_cloud=False))
     _route(mocker)
     _draft(mocker, text="bad")
-    # NPU FAIL + CAP+1 GPU FAILs (1 fresh + cap repairs).
+    # NPU FAIL + CAP GPU FAILs. With a prior (the failed NPU draft), the GPU
+    # phase repairs from round 1, so it makes exactly CAP generates before the
+    # cap (Slice 6a alignment); extra verify results are harmless slack.
     _verify(mocker, [False] + [False] * (CAP + 1))
     _generate(mocker)
     cloud = mocker.patch("cascade.tasks.cloud_generate")
@@ -232,20 +236,24 @@ def test_balanced_chain_syntax_gate_escalates_on_nonparseable_draft(eager, mocke
 
 
 def test_balanced_chain_holds_the_repair_cap(eager, mocker):
-    """With scripted always-fail GPU, the chain produces EXACTLY cap+1
-    `tasks.generate` calls and stops. The cap lives in
-    `gpu_solve_task.max_retries`, so the chain composition cannot breach it
-    -- delegated through `self.replace()` to the spike's proven retry loop.
+    """With scripted always-fail GPU and a failed NPU draft (a prior to repair),
+    the chain produces EXACTLY `cap` `tasks.generate` calls and stops. Under
+    Canvas->pipe alignment (Slice 6a) the first GPU call repairs the NPU draft =
+    round 1, so the cap bounds the run to `cap` GPU calls -- identical to
+    mesh.solve's `range(1, cap+1)` loop with a prior. The cap lives in
+    `gpu_solve_task` (round_no >= max_retries), so the chain composition cannot
+    breach it.
 
-    This is the SAME invariant `test_canvas_spike.test_always_fail_holds_the_cap`
-    asserts on the spike's standalone task; this test re-asserts it under
-    the full balanced-chain composition."""
+    (The no-prior path -- skip-draft / NPU unavailable -- still allows cap+1 GPU
+    calls, the uncounted fresh generate + cap repairs; that invariant is pinned
+    by `test_canvas_spike.test_always_fail_holds_the_cap` on the standalone
+    task, which dispatches with round_base=0.)"""
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(enable_cloud=False))
     _route(mocker)
     _draft(mocker, text="bad")
-    # NPU FAIL + cap+5 generates (we only need cap+1 to land in the loop;
-    # the extras are slack so the test fails LOUD if the cap leaks).
+    # NPU FAIL + cap+5 generates available (we only need cap to land in the
+    # loop; the extras are slack so the test fails LOUD if the cap leaks).
     _verify(mocker, [False] + [False] * (CAP + 5))
     gen = mocker.patch(
         "cascade.tasks.generate",
@@ -257,8 +265,8 @@ def test_balanced_chain_holds_the_repair_cap(eager, mocker):
     outcome = canvas_client.solve_balanced_canvas("impossible task", dsl="DSL")
     assert outcome.capped is True
     assert outcome.repair_rounds == CAP
-    # THE INVARIANT: 1 fresh GPU generate + CAP repairs, NOT ONE MORE.
-    assert gen.call_count == CAP + 1
+    # THE INVARIANT (with a prior): CAP repairs, NOT ONE MORE.
+    assert gen.call_count == CAP
 
 
 # ---------------------------------------------------------------------------
