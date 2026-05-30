@@ -142,6 +142,15 @@ describe("hasActiveAnimation (heartbeat predicate)", () => {
     expect(hasActiveAnimation([], o, 100_000 + FLASH_MS)).toBe(false);
   });
 
+  it("stays alive for the tier3 hot window on a capped->tier3 (HOT_MS > FLASH_MS)", () => {
+    // tier3's ring glows for HOT_MS from the outcome, which outlasts the flash;
+    // the heartbeat must cover it or the ring freezes mid-glow.
+    const o = outcome("capped->tier3", 100_000, false);
+    expect(FLASH_MS).toBeLessThan(HOT_MS);
+    expect(hasActiveAnimation([], o, 100_000 + FLASH_MS + 1)).toBe(true);
+    expect(hasActiveAnimation([], o, 100_000 + HOT_MS)).toBe(false);
+  });
+
   it("ignores future-stamped particles (clock skew can't pin the chain)", () => {
     const future = part("npu", 200_000);
     expect(hasActiveAnimation([future], null, 100_000)).toBe(false);

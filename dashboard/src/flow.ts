@@ -521,7 +521,8 @@ export const HEARTBEAT_MS = 80;
 
 /** Does the current store state warrant another TICK before any record
  * arrives? True iff a particle is still mid-arc (SD-P1), a node is still hot
- * (HOT_MS), OR a win/lose flash is still up (FLASH_MS). Pure -- app.ts composes
+ * (HOT_MS) -- including tier3's outcome-driven HOT_MS window, which outlasts
+ * the flash -- OR a win/lose flash is still up (FLASH_MS). Pure -- app.ts composes
  * it into a setTimeout chain; tests drive it deterministically.
  *
  * Each branch requires `age >= 0`: a far-future timestamp must not pin the
@@ -534,6 +535,14 @@ export function hasActiveAnimation(
   for (const p of particles) {
     const age = nowMs - p.tsMs;
     if (age >= 0 && age < ANIM_MS) return true;
+    if (age >= 0 && age < HOT_MS) return true;
+  }
+  // tier3 has no particle lane -- its hot ring glows for HOT_MS from a
+  // capped->tier3 outcome (see isNodeHot). HOT_MS > FLASH_MS, so the heartbeat
+  // must cover that window too, or the ring freezes mid-glow once the (shorter)
+  // flash window closes.
+  if (lastOutcome !== null && lastOutcome.finalTier === "capped->tier3") {
+    const age = nowMs - lastOutcome.tsMs;
     if (age >= 0 && age < HOT_MS) return true;
   }
   return isFlashing(lastOutcome, nowMs);
