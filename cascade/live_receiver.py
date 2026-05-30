@@ -87,14 +87,21 @@ def publish_state(
     node has been lit for `min_lit` (BACKLOG #12: keeps a fast route/draft node
     visible); a slow node is past that window, so it publishes immediately.
     `active_since` (caller-owned, mutated here) records each node's activation
-    time. Then the current set is written to `state_key` so a late subscriber
-    can seed. Returns `curr` to roll into `prev`. `sleep` is injectable for tests.
+    time and is popped on idle so it never grows. Then the current set is written
+    to `state_key` so a late subscriber can seed. Returns `curr` to roll into
+    `prev`. `sleep` is injectable for tests.
+
+    NB: the hold calls `sleep` SYNCHRONOUSLY, so this BLOCKS the caller (the
+    Celery event-receiver thread) for up to `min_lit` per idle. Fine for v1 --
+    holds serialize into a clean sequential light-up -- but a burst of fast
+    transitions delays later `active` publishes too. The v2 iteration is a
+    non-blocking scheduler (a `not_before` per node, flushed on the next event).
     """
     for node, node_state in node_delta(prev, curr):
         if node_state == "active":
             active_since[node] = now
         else:
-            wait = hold_remaining(active_since.get(node, now), now, min_lit)
+            wait = hold_remaining(active_since.pop(node, now), now, min_lit)
             if wait > 0:
                 sleep(wait)
         pub.publish(channel, json.dumps({"node": node, "state": node_state}))
