@@ -170,6 +170,7 @@ omit = [
     # live/hardware/interactive (paid API, MCP stdio probes, SDXL server,
     # benchmark drivers) -- live-validated, not unit-coverable.
     "scripts/cascade_top.py",
+    "scripts/cascade_live_receiver.py",
     "scripts/celery_smoke.py",
     "scripts/debate.py",
     "scripts/mesh_solve_canvas.py",
