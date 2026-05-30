@@ -56,7 +56,8 @@
   and watch the dashboard (the SD-4 effectiveness panel now counts Canvas runs).
   Broker + worker outlive the session (spawn-and-leave, like the dashboard):
   Ctrl-C the worker window and `docker stop edge-cascade-redis` to tear down.
-  Requires Docker Desktop running.
+  Requires Docker Desktop running. Combine with -SkipSync only if the `celery`
+  extra is already in .venv (otherwise the spawned worker fails to import it).
 
 .EXAMPLE
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
