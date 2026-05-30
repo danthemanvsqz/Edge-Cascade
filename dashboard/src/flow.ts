@@ -325,13 +325,25 @@ function buildTopologyFromGraph(g: RawGraphPayload): BuiltTopology {
     posOf.set(rn.id, { x: midX - NODE_W / 2, y: ROW_TOP_Y - 90 });
   }
 
-  // Step 5: position cap nodes below their sources.
+  // Step 5: position cap nodes.
+  // If the source is a TOP-ROW node → drop below it (same x, y = ROW_BOT_Y).
+  // If the source is another CAP node → place to the right (x = src.x + step, same y).
+  // This prevents tier3 and cloud from stacking on top of each other when the
+  // cap chain is  gpu_solve → tier3 → cloud.
   const capEdgesByTo = new Map<string, string>(); // to → from
   for (const e of g.edges.filter(e => e.kind === "cap")) capEdgesByTo.set(e.to, e.from);
+  const capNodeIds = new Set(capNodes.map(n => n.id));
   for (const cn of capNodes) {
     const srcId = capEdgesByTo.get(cn.id);
     const srcPos = srcId ? posOf.get(srcId) : null;
-    posOf.set(cn.id, { x: srcPos?.x ?? (24 + maxRank * (NODE_W + NODE_GAP)), y: ROW_BOT_Y });
+    const srcIsCapNode = srcId ? capNodeIds.has(srcId) : false;
+    if (srcPos && srcIsCapNode) {
+      // Horizontal: place to the right of the source cap node
+      posOf.set(cn.id, { x: srcPos.x + NODE_W + NODE_GAP, y: ROW_BOT_Y });
+    } else {
+      // Vertical: drop below the top-row source
+      posOf.set(cn.id, { x: srcPos?.x ?? (24 + maxRank * (NODE_W + NODE_GAP)), y: ROW_BOT_Y });
+    }
   }
 
   // Build ChainNode objects.
