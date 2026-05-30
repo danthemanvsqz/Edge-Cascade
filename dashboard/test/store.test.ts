@@ -54,6 +54,21 @@ describe("createStore — ingest + particles", () => {
     expect(store.totalCount()).toBe(0);
   });
 
+  it("filters tool=status health probes -- updates health, produces NO particle", () => {
+    const store = createStore();
+    const p = store.ingest(
+      "edge-gpu",
+      rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }),
+    );
+    // The probe must not pollute the flow / rate meter / log feed...
+    expect(p).toBeNull();
+    expect(store.particles()).toEqual([]);
+    expect(store.totalCount()).toBe(0);
+    // ...but it still drives the health side-channel.
+    expect(store.health().tiers.gpu.available).toBe(false);
+    expect(store.health().tiers.gpu.lastSeenMs).toBe(100000);
+  });
+
   it("preserves arrival order in the particle queue", () => {
     const store = createStore();
     store.ingest("edge-npu", rec(0, { tool: "route" }));

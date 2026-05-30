@@ -274,6 +274,23 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     if (tier === null) return null;
 
     const tsMs = parseTsMs(record.ts);
+
+    if ((record.tool ?? "") === STATUS_TOOL) {
+      // Tool=status records are the cascade-health PROBE channel: periodic
+      // liveness pings, not cascade work. They update the per-tier health flag
+      // but must NOT become particles -- else the flow graph / rate meter / log
+      // feed fill with probe noise (edge-gpu polls status ~as often as it
+      // generates). Health-only side-channel, like the degen/cascade lanes
+      // above: update + return null (no particle, no TICK). Only an explicit
+      // boolean `available` flips the flag; anything else leaves it alone (a
+      // malformed payload is conservatively "no signal", not a false-alarm
+      // flip). lastSeenMs always advances so panels can show staleness.
+      const avail = extractAvailable(record.result);
+      if (avail !== null) health[tier].available = avail;
+      health[tier].lastSeenMs = tsMs;
+      return null;
+    }
+
     const latencyMs = parseFloat(record.latency_ms ?? "0") || 0;
     const ok = record.ok !== "false";
     const seq = record._seq ?? "";
@@ -287,17 +304,6 @@ export function createStore(options: CreateStoreOptions = {}): Store {
       latencyMs,
       ok,
     };
-
-    if ((record.tool ?? "") === STATUS_TOOL) {
-      // Tool=status records are the cascade-health channel. Only an explicit
-      // boolean `available` flips the per-tier flag; anything else leaves it
-      // alone (so a malformed payload is conservatively "no signal", not a
-      // false-alarm flip). lastSeenMs always advances on a status record so
-      // panels can later show staleness.
-      const avail = extractAvailable(record.result);
-      if (avail !== null) health[tier].available = avail;
-      health[tier].lastSeenMs = tsMs;
-    }
 
     queue.push(particle);
     while (queue.length > ceiling) queue.shift();
