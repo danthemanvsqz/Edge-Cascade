@@ -12,6 +12,7 @@ import { cascadeFlowRegion } from "../src/flow.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
+  logFeedRegion,
   meshEffectivenessRegion,
   meshEffectivenessView,
   nowPlayingRegion,
@@ -76,11 +77,39 @@ describe("page render", () => {
     expect(html).toContain('id="vinyl-r-cascade-health"');
     expect(html).toContain('id="vinyl-r-degen-panel"');
     expect(html).toContain('id="vinyl-r-mesh-effectiveness"');
+    expect(html).toContain('id="vinyl-r-log-feed"');
     // The static topology lives inline in the initial paint (no live-region
     // wrapper) so search engines / curl see the architecture even pre-WS.
     expect(html).toContain('class="topology"');
-    expect(html).toContain("Tier 1 · NPU");
-    expect(html).toContain("Tier 4 · cloud");
+    // Chain nodes (the real Celery tasks), not abstract tier blobs.
+    expect(html).toContain("gpu_solve");
+    expect(html).toContain("draft_gate");
+  });
+});
+
+describe("logFeedRegion (roomy event log)", () => {
+  it("renders an empty state when the store is empty", () => {
+    const html = renderToString(logFeedRegion.render(app.ctx));
+    expect(html).toContain("log-feed empty");
+    expect(html).toContain("no records yet");
+  });
+
+  it("renders one row per record, newest first, with tier + tool + state", () => {
+    app.ctx.store.ingest("edge-npu", { _seq: "0", tool: "route", ts: "100" });
+    app.ctx.store.ingest("edge-gpu", {
+      _seq: "0",
+      tool: "generate",
+      ts: "101",
+      ok: "false",
+    });
+    const html = renderToString(logFeedRegion.render(app.ctx));
+    // Two rows.
+    expect((html.match(/class="log-row/g) ?? []).length).toBe(2);
+    // The failing gpu record carries the fail modifier + FAIL state.
+    expect(html).toContain("log-row fail");
+    expect(html).toContain("FAIL");
+    // Newest (gpu, seq later) renders before the npu row.
+    expect(html.indexOf("generate")).toBeLessThan(html.indexOf("route"));
   });
 });
 

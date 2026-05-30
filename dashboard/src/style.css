@@ -29,11 +29,12 @@ html, body {
 
 body.dashboard {
   display: grid;
-  grid-template-rows: auto 1fr;
-  grid-template-columns: 1fr 280px;
+  grid-template-rows: auto minmax(360px, 1fr) minmax(150px, 30vh);
+  grid-template-columns: 1fr 300px;
   grid-template-areas:
     "topbar topbar"
-    "stage side";
+    "stage  side"
+    "logs   logs";
   min-height: 100vh;
   gap: 16px;
   padding: 16px;
@@ -89,89 +90,160 @@ body.dashboard {
   text-transform: uppercase;
 }
 
-/* --- topology -------------------------------------------------------- */
-.zone-rect {
+/* --- topology: the Canvas chain --------------------------------------- */
+/* Per-tone palette var, set once per node `g` so the node rect, label tint,
+ * hot ring and glow all read from one source. */
+.node--tone-npu    { --tone: var(--tier-npu); }
+.node--tone-gpu    { --tone: var(--tier-gpu); }
+.node--tone-verify { --tone: var(--tier-verify); }
+.node--tone-tier3  { --tone: var(--tier-tier3); }
+.node--tone-cloud  { --tone: var(--tier-cloud); }
+
+.node-rect {
   fill: var(--grid);
-  stroke: rgba(207, 214, 223, 0.18);
-  stroke-width: 1;
+  stroke: var(--tone);
+  stroke-width: 1.4;
 }
-.zone--npu .zone-rect { stroke: var(--tier-npu); }
-/* iGPU shares the NPU mint stroke (both are Tier-1 capacity-band drafters)
- * but renders with a dashed border so the layout reads "optional sibling"
- * not "second NPU". No new palette colour. */
-.zone--igpu .zone-rect { stroke: var(--tier-npu); stroke-dasharray: 4 3; }
-.zone--gpu .zone-rect { stroke: var(--tier-gpu); }
-.zone--verify .zone-rect { stroke: var(--tier-verify); }
-.zone--tier3 .zone-rect { stroke: var(--tier-tier3); }
-.zone--cloud .zone-rect { stroke: var(--tier-cloud); }
+/* tier3 has no .rec lane -- dashed border reads "not a Celery worker". */
+.node--tier3 .node-rect { stroke-dasharray: 5 4; }
 
-.zone-label {
+.node-label {
   fill: var(--type);
-  font-size: 11px;
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
 }
-.arc {
-  stroke: rgba(207, 214, 223, 0.25);
-  stroke-width: 1.5;
-  stroke-dasharray: 2 3;
+.node-queue {
+  fill: var(--type-dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
 }
 
-/* --- overlay --------------------------------------------------------- */
+/* Forward flow is a solid faint line; repair + cap branches are dashed so
+ * the happy path and the escalation paths are distinguishable at a glance. */
+.arc { stroke-width: 1.5; fill: none; }
+.arc--flow   { stroke: rgba(207, 214, 223, 0.35); }
+.arc--repair { stroke: var(--tier-gpu); opacity: 0.4; stroke-dasharray: 3 3; }
+.arc--cap    { stroke: var(--tier-cloud); opacity: 0.4; stroke-dasharray: 3 3; }
+
+/* --- overlay: particles ---------------------------------------------- */
 .particle { stroke-width: 0; }
 .particle--npu { fill: var(--tier-npu); }
 .particle--gpu { fill: var(--tier-gpu); }
 .particle--verify { fill: var(--tier-verify); }
 .particle--cloud { fill: var(--tier-cloud); }
 .particle--fail { fill: var(--fail); }
-/* SD-P1: in-flight particles (mid-arc) get a brighter halo so the river
- * read is "the bright ones are moving, the dim ones are at rest." Pure
- * visual cue -- the in-flight class is set by particlePosition() on
- * particles whose age < ANIM_MS. */
+/* In-flight particles (mid-arc) get a brighter halo so the river reads
+ * "the bright ones are moving, the dim ones are at rest." */
 .particle--in-flight {
   filter: drop-shadow(0 0 3px currentColor);
   opacity: 0.95;
 }
 
-/* SD-P2: active-node pulse. Each tier zone has an overlay rect that flips
- * to `.zone-pulse--active` when the tier ingests a record. While the class
- * is present, `zone-pulse-anim` loops INFINITELY so the pulse keeps
- * breathing under sustained activity regardless of how Vinyl's DOM diff
- * handles the rerender (patch-in-place vs replace) -- with `forwards` the
- * keyframe would pin at its 100% (opacity 0) and the zone would go dim
- * mid-activity. When the class drops (ageMs >= PULSE_MS at the next TICK),
- * the animation stops and the baseline `opacity: 0` takes over. */
-.zone-pulse {
-  stroke: none;
+/* --- overlay: hot-node indicator ------------------------------------- */
+/* Every node has a hot ring rect; `--hot` flips on while the node is
+ * processing (a matching record within HOT_MS). The glow loops INFINITELY
+ * so it keeps breathing under sustained activity regardless of how Vinyl's
+ * DOM diff handles the rerender; when the class drops the baseline opacity:0
+ * takes over. The tone var drives both stroke and the drop-shadow colour so
+ * each worker glows in its own colour. */
+/* Per-tone var for the OVERLAY hot rings. The topology SVG's `--tone` does
+ * NOT cross into this sibling overlay SVG (CSS custom props inherit down the
+ * tree, not across siblings), so it must be set AGAIN on these classes --
+ * without it `stroke: var(--tone)` resolved to nothing and every hot ring was
+ * invisible regardless of state. */
+.node-hot--tone-npu    { --tone: var(--tier-npu); }
+.node-hot--tone-gpu    { --tone: var(--tier-gpu); }
+.node-hot--tone-verify { --tone: var(--tier-verify); }
+.node-hot--tone-tier3  { --tone: var(--tier-tier3); }
+.node-hot--tone-cloud  { --tone: var(--tier-cloud); }
+
+.node-hot {
+  stroke: var(--tone);
   stroke-width: 2;
+  fill: var(--tone);
+  fill-opacity: 0;
   opacity: 0;
   pointer-events: none;
 }
-.zone-pulse--npu    { stroke: var(--tier-npu); }
-.zone-pulse--gpu    { stroke: var(--tier-gpu); }
-.zone-pulse--verify { stroke: var(--tier-verify); }
-.zone-pulse--cloud  { stroke: var(--tier-cloud); }
-.zone-pulse--active {
-  animation: zone-pulse-anim 1.2s ease-in-out infinite;
+/* Active = "spinning": the node body fills with its tone AND a bright ring
+ * pulses with a wide glow, so active-vs-idle is unmistakable at a glance.
+ * Idle nodes keep fill-opacity:0 + opacity:0 (just the static outline shows). */
+.node-hot--hot {
+  opacity: 1;
+  fill-opacity: 0.16;
+  animation: node-hot-anim 0.9s ease-in-out infinite;
 }
-@keyframes zone-pulse-anim {
-  0%   { opacity: 0.25; stroke-width: 2; }
-  50%  { opacity: 0.95; stroke-width: 4; }
-  100% { opacity: 0.25; stroke-width: 2; }
+@keyframes node-hot-anim {
+  0%   { stroke-width: 2.5; filter: drop-shadow(0 0 5px var(--tone)); }
+  50%  { stroke-width: 5;   filter: drop-shadow(0 0 16px var(--tone)); }
+  100% { stroke-width: 2.5; filter: drop-shadow(0 0 5px var(--tone)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .zone-pulse--active { animation: none; opacity: 0.5; }
+  .node-hot--hot { animation: none; opacity: 1; fill-opacity: 0.2;
+                   filter: drop-shadow(0 0 8px var(--tone)); }
 }
 
-.sparkline { stroke-width: 1.2; opacity: 0.85; }
-.sparkline--npu { stroke: var(--tier-npu); }
-.sparkline--gpu { stroke: var(--tier-gpu); }
-.sparkline--verify { stroke: var(--tier-verify); }
-.sparkline--cloud { stroke: var(--tier-cloud); }
-
-.tier-stat {
-  fill: var(--type-dim);
-  font-size: 10px;
+.node-stat {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
+.node-stat--npu    { fill: var(--tier-npu); }
+.node-stat--gpu    { fill: var(--tier-gpu); }
+.node-stat--verify { fill: var(--tier-verify); }
+.node-stat--cloud  { fill: var(--tier-cloud); }
+.node-stat--tier3  { fill: var(--tier-tier3); }
+
+/* --- overlay: win/lose flash ----------------------------------------- */
+/* A full-stage colour wash + big word when a cascade Outcome lands. Green =
+ * the local pipe resolved it; red = it capped to a Tier-3 takeover. The wash
+ * fades over FLASH_MS; the heartbeat keeps ticking so the fade renders. */
+.outcome-flash-rect { opacity: 0; }
+.outcome-flash--active .outcome-flash-rect {
+  animation: outcome-wash 1.6s ease-out forwards;
+}
+.outcome-flash--win .outcome-flash-rect  { fill: var(--tier-npu); }
+.outcome-flash--lose .outcome-flash-rect { fill: var(--fail); }
+@keyframes outcome-wash {
+  0%   { opacity: 0.12; }
+  100% { opacity: 0; }
+}
+
+.outcome-banner-word {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  opacity: 0;
+}
+.outcome-banner-sub {
+  font-size: 12px;
+  letter-spacing: 1px;
+  fill: var(--type-dim);
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  opacity: 0;
+}
+.outcome-banner--active .outcome-banner-word,
+.outcome-banner--active .outcome-banner-sub {
+  animation: outcome-punch 1.6s ease-out forwards;
+}
+.outcome-banner--win .outcome-banner-word  { fill: var(--tier-npu); }
+.outcome-banner--lose .outcome-banner-word { fill: var(--fail); }
+@keyframes outcome-punch {
+  0%   { opacity: 0; }
+  18%  { opacity: 0.8; }
+  65%  { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .outcome-flash--active .outcome-flash-rect { animation: none; opacity: 0.08; }
+  .outcome-banner--active .outcome-banner-word,
+  .outcome-banner--active .outcome-banner-sub { animation: none; opacity: 0.8; }
 }
 
 /* --- panels: rate meter + now playing ------------------------------- */
@@ -382,3 +454,68 @@ body.dashboard {
 .mesh-eff-chip.resolved-gpu  .chip-count { color: var(--tier-gpu); }
 .mesh-eff-chip.capped        .chip-count { color: var(--fail); }
 .mesh-eff-chip.skipped       .chip-count { color: var(--type-dim); }
+
+/* --- panels: event log (the roomy feed) ------------------------------ */
+/* Full-width bottom panel; the cramped single-line "now playing" graduated
+ * to a real scrolling feed that uses the screen space. Newest row first,
+ * each row a fixed grid so columns line up: time, tier badge, tool,
+ * latency, state. Scrolls within its grid row -- the panel never pushes the
+ * stage. */
+.logs {
+  grid-area: logs;
+  background: var(--bg-elev);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* let the inner feed scroll instead of growing the panel */
+}
+.logs h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--type-dim);
+  text-transform: uppercase;
+}
+.log-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.log-feed.empty {
+  color: var(--type-dim);
+  font-style: italic;
+  opacity: 0.7;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 5.5em 4.5em 1fr 5em 3em;
+  gap: 10px;
+  align-items: baseline;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(207, 214, 223, 0.05);
+}
+.log-row .log-time { color: var(--type-dim); font-variant-numeric: tabular-nums; }
+.log-row .badge.tier {
+  justify-self: start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: var(--grid);
+  color: var(--type-dim);
+}
+.log-row[data-tier="npu"] .badge.tier { background: var(--tier-npu); color: var(--bg); }
+.log-row[data-tier="gpu"] .badge.tier { background: var(--tier-gpu); color: var(--bg); }
+.log-row[data-tier="verify"] .badge.tier { background: var(--tier-verify); color: var(--bg); }
+.log-row[data-tier="cloud"] .badge.tier { background: var(--tier-cloud); color: var(--bg); }
+.log-row .log-tool { color: var(--type); }
+.log-row .log-latency { color: var(--type-dim); text-align: right; font-variant-numeric: tabular-nums; }
+.log-row .log-state { color: var(--tier-npu); text-align: right; }
+.log-row.fail .log-state { color: var(--fail); font-weight: 600; }
+.log-row.fail .log-tool { color: var(--fail); }

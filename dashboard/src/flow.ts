@@ -1,129 +1,170 @@
 /**
- * The cascade-flow river -- the demo's centerpiece. The "architecture is the
- * eye candy": 5 tier zones laid out as the cascade's actual topology, with
- * static arcs showing the repair loop (verify->fail->gpu) and the escalation
- * path (verify->cap->tier3->cloud). Records arrive as colored particles
- * pooled in their tier's zone; per-tier sparklines show throughput over the
- * 60s window.
+ * The cascade-flow river -- the demo's centerpiece. "The architecture is the
+ * eye candy": the graph is the *actual* Canvas chain (`cascade.topologies_canvas`)
+ * rather than abstract tier blobs, so a viewer watches a real run flow
+ * step-by-step through the Celery pipeline:
+ *
+ *     route -> draft -> draft_gate -> gpu_solve --.
+ *       (npu)   (npu)    (verify)      (gpu)       | repair loop
+ *                          ^------------------------'
+ *                          |  cap
+ *                          v
+ *                        Tier 3 -> cloud
+ *                        (CLI)     (cloud)
+ *
+ * Each node maps to a Celery task on its queue (the comments tag the queue);
+ * records arriving on a tier's `.rec` lane light the node whose `(tier, tool)`
+ * they match. A node is "hot" while it has ingested within HOT_MS -- a bright
+ * ring + glow so it's obvious which worker is processing RIGHT NOW. When a
+ * cascade Outcome lands, the whole stage flashes green (the local pipe won) or
+ * red (it capped to a Tier-3 takeover).
  *
  * The static topology is one SVG (rendered once into the shell). The dynamic
- * elements -- particles, sparklines, per-tier counts -- live inside ONE
- * overlay live region (`cascadeFlowRegion`). Why one region: `<vinyl-slot>`
- * is an HTML custom element and would not legally nest inside the topology
- * SVG's element namespace; the overlay-SVG sibling works around that. Phase B
- * may split into per-tier regions for finer-grained re-renders.
+ * elements -- particles, hot rings, per-node counts, the win/lose flash --
+ * live inside ONE overlay live region (`cascadeFlowRegion`). Why one region:
+ * `<vinyl-slot>` is an HTML custom element and would not legally nest inside
+ * the topology SVG's element namespace; the overlay-SVG sibling works around
+ * that.
  */
 import { h, liveRegion } from "@danthemanvsqz/vinyl";
 import type { LiveRegion, VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import type { Particle, Tier } from "./store.js";
-import { WINDOW_SECONDS } from "./store.js";
+import type { LastOutcome, Particle, Tier } from "./store.js";
 
-const TIERS: readonly Tier[] = ["npu", "gpu", "verify", "cloud"];
 const VIEW_W = 800;
 const VIEW_H = 400;
 
-interface Zone {
-  /** Tier this zone represents. "tier3" is rendered but isn't on the
-   * record stream (the Claude CLI doesn't write `.rec` itself); "igpu" is
-   * rendered as the optional Tier-1b sibling drafter but currently has no
-   * dedicated `.rec` lane either (its MCP calls land in `edge-npu.rec`).
-   * Both are layout-only ids -- the `Tier` type stays the four .rec lanes
-   * that produce particles, so adding zones here doesn't expand the store. */
-  readonly id: Tier | "tier3" | "igpu";
+/** A node in the Canvas chain. `tier` selects the palette colour; `nodeForTool`
+ * (below) decides which node a record lands in. "tier3" is rendered but never
+ * receives a `.rec` particle (the Claude CLI doesn't write its own lane) -- it
+ * lights from a `capped->tier3` Outcome instead. */
+export type NodeId =
+  | "route"
+  | "draft"
+  | "gate"
+  | "gpu_solve"
+  | "tier3"
+  | "cloud";
+
+interface ChainNode {
+  readonly id: NodeId;
   readonly label: string;
+  /** The Celery queue the task runs on -- shown as a small sublabel so the
+   * "all the workers are represented" read is explicit. */
+  readonly queue: string;
+  /** Palette key (re-uses the four tier colours + the tier3 violet). */
+  readonly tier: Tier | "tier3";
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
 }
 
-const ZONE_W = 120;
-const ZONE_H = 80;
-// Tier-1 column (NPU + iGPU as sibling drafters) uses a slimmer height so the
-// two stack vertically within the same horizontal band. GPU + verify are
-// vertically centred against the pair so the horizontal arcs read cleanly.
-const TIER1_H = 60;
-const ZONES: readonly Zone[] = [
-  // Tier 1: NPU (top) + iGPU (bottom) -- parallel drafters; cascade.mesh.solve
-  // can pick either (or both, if the topology wires igpu_draft). iGPU is the
-  // optional Tier-1b sibling counted in SD-4's effectiveness panel and the
-  // SD-2b degen panel; before this change it had no representation in the
-  // flow graph, so a real iGPU win was invisible. Same Tier-1 colour band so
-  // the visual hierarchy still reads "Tier 1" as a unit.
-  { id: "npu", label: "Tier 1 · NPU", x: 60, y: 30, w: ZONE_W, h: TIER1_H },
-  { id: "igpu", label: "Tier 1b · iGPU", x: 60, y: 110, w: ZONE_W, h: TIER1_H },
-  // GPU + verify vertically centred against the NPU+iGPU pair (NPU top=30,
-  // iGPU bottom=170, midpoint=100; ZONE_H/2=40 -> y=60).
-  { id: "gpu", label: "Tier 2 · GPU", x: 240, y: 60, w: ZONE_W, h: ZONE_H },
-  { id: "verify", label: "verify", x: 420, y: 60, w: ZONE_W, h: ZONE_H },
-  { id: "tier3", label: "Tier 3 · Claude CLI", x: 420, y: 230, w: ZONE_W, h: ZONE_H },
-  { id: "cloud", label: "Tier 4 · cloud", x: 600, y: 230, w: ZONE_W, h: ZONE_H },
+const NODE_W = 124;
+const NODE_H = 66;
+const ROW_TOP_Y = 60;
+const ROW_BOT_Y = 250;
+
+/** The chain, left-to-right. Top row is the happy path (route -> draft ->
+ * gate -> gpu_solve); the bottom row is the cap escalation (Tier 3 -> cloud)
+ * dropped under gate/gpu_solve so the `cap` and `tier3->cloud` arcs read
+ * cleanly. Coordinates are in the 800x400 viewBox. */
+const NODES: readonly ChainNode[] = [
+  { id: "route", label: "route", queue: "npu", tier: "npu", x: 24, y: ROW_TOP_Y, w: NODE_W, h: NODE_H },
+  { id: "draft", label: "draft", queue: "npu", tier: "npu", x: 192, y: ROW_TOP_Y, w: NODE_W, h: NODE_H },
+  { id: "gate", label: "draft_gate", queue: "verify", tier: "verify", x: 360, y: ROW_TOP_Y, w: NODE_W, h: NODE_H },
+  { id: "gpu_solve", label: "gpu_solve", queue: "gpu", tier: "gpu", x: 528, y: ROW_TOP_Y, w: NODE_W, h: NODE_H },
+  { id: "tier3", label: "Tier 3 · CLI", queue: "—", tier: "tier3", x: 360, y: ROW_BOT_Y, w: NODE_W, h: NODE_H },
+  { id: "cloud", label: "cloud", queue: "cloud", tier: "cloud", x: 528, y: ROW_BOT_Y, w: NODE_W, h: NODE_H },
 ];
 
-function zoneById(id: Zone["id"]): Zone {
-  const z = ZONES.find((z) => z.id === id);
-  if (!z) throw new Error(`unknown zone id: ${id}`);
-  return z;
+/** Nodes that pool real `.rec` particles, in pipeline order. tier3 is excluded
+ * (no lane); it lights from the Outcome flash only. */
+const PARTICLE_NODES: readonly NodeId[] = [
+  "route",
+  "draft",
+  "gate",
+  "gpu_solve",
+  "cloud",
+];
+
+function nodeById(id: NodeId): ChainNode {
+  const n = NODES.find((n) => n.id === id);
+  if (!n) throw new Error(`unknown node id: ${id}`);
+  return n;
+}
+
+/** Which chain node a record belongs to, from its tier + tool. The NPU lane
+ * carries both `route` and `draft`; everything else is one node per tier.
+ * Status/unknown tools fall back to the tier's primary node so a `tool=status`
+ * heartbeat still lights the right worker. Exported for unit tests. */
+export function nodeForParticle(p: Particle): NodeId {
+  switch (p.tier) {
+    case "npu":
+      return p.tool === "route" ? "route" : "draft";
+    case "verify":
+      return "gate";
+    case "gpu":
+      return "gpu_solve";
+    case "cloud":
+      return "cloud";
+  }
 }
 
 interface PathDef {
   readonly id: string;
   readonly d: string;
+  /** repair/cap arcs render dashed + dimmer than the forward flow. */
+  readonly kind: "flow" | "repair" | "cap";
 }
 
-/** Static path definitions referenced by `<animateMotion href>` once Phase B
- * lands. Phase A only renders them as visible arcs. */
 const PATHS: readonly PathDef[] = [
-  // Entry from off-canvas (route) to the two Tier-1 drafters in parallel.
-  // cascade.mesh.solve picks NPU as the primary draft path; iGPU is the
-  // optional sibling drafter when the topology wires `igpu_draft`.
-  { id: "route-to-npu", d: `M 0 ${zoneCenterY("npu")} L ${zoneById("npu").x} ${zoneCenterY("npu")}` },
-  { id: "route-to-igpu", d: `M 0 ${zoneCenterY("igpu")} L ${zoneById("igpu").x} ${zoneCenterY("igpu")}` },
-  // Both Tier-1 drafters feed Tier-2 GPU (the repair-loop driver). NPU comes
-  // in from above-center, iGPU from below-center; pathBetween handles the
-  // diagonal edge-to-edge line.
-  { id: "npu-to-gpu", d: pathBetween("npu", "gpu") },
-  { id: "igpu-to-gpu", d: pathBetween("igpu", "gpu") },
-  { id: "gpu-to-verify", d: pathBetween("gpu", "verify") },
-  // Repair loop: verify -> gpu via an arc up over the row.
-  { id: "verify-loop", d: repairLoopPath() },
-  // Cap: verify -> tier-3 (straight down).
-  { id: "verify-cap-to-tier3", d: capPath() },
-  // Escalation: tier-3 -> cloud (rightward).
-  { id: "tier3-to-cloud", d: pathBetween("tier3", "cloud") },
+  { id: "entry-route", d: entryPath("route"), kind: "flow" },
+  { id: "route-draft", d: pathBetween("route", "draft"), kind: "flow" },
+  { id: "draft-gate", d: pathBetween("draft", "gate"), kind: "flow" },
+  { id: "gate-gpu", d: pathBetween("gate", "gpu_solve"), kind: "flow" },
+  // Bounded repair loop: gpu_solve sends the failed draft back to the gate.
+  { id: "repair-loop", d: repairLoopPath(), kind: "repair" },
+  // Cap: gate gives up (repair exhausted) -> Tier 3 takeover, straight down.
+  { id: "cap-tier3", d: capPath(), kind: "cap" },
+  // Escalation: Tier 3 -> cloud (only when cloud is wired + budget allows).
+  { id: "tier3-cloud", d: pathBetween("tier3", "cloud"), kind: "cap" },
 ];
 
-function zoneCenterY(id: Zone["id"]): number {
-  const z = zoneById(id);
-  return z.y + z.h / 2;
+function nodeCenterY(id: NodeId): number {
+  const n = nodeById(id);
+  return n.y + n.h / 2;
 }
-function pathBetween(a: Zone["id"], b: Zone["id"]): string {
-  const za = zoneById(a);
-  const zb = zoneById(b);
-  // Horizontal connector zone edge -> zone edge.
-  if (za.y === zb.y) {
-    const y = za.y + za.h / 2;
-    return `M ${za.x + za.w} ${y} L ${zb.x} ${y}`;
+function nodeCenterX(id: NodeId): number {
+  const n = nodeById(id);
+  return n.x + n.w / 2;
+}
+function entryPath(id: NodeId): string {
+  const y = nodeCenterY(id);
+  return `M 0 ${String(y)} L ${String(nodeById(id).x)} ${String(y)}`;
+}
+function pathBetween(a: NodeId, b: NodeId): string {
+  const na = nodeById(a);
+  const nb = nodeById(b);
+  const y = na.y + na.h / 2;
+  if (na.y === nb.y) {
+    return `M ${String(na.x + na.w)} ${String(y)} L ${String(nb.x)} ${String(y)}`;
   }
-  // Fallback (e.g. tier3 -> cloud, same y row): straight line edge-to-edge.
-  return `M ${za.x + za.w} ${za.y + za.h / 2} L ${zb.x} ${zb.y + zb.h / 2}`;
+  return `M ${String(na.x + na.w)} ${String(y)} L ${String(nb.x)} ${String(nb.y + nb.h / 2)}`;
 }
 function repairLoopPath(): string {
-  const v = zoneById("verify");
-  const g = zoneById("gpu");
-  const y0 = v.y; // top edge of verify
-  const yPeak = v.y - 30;
-  const sx = v.x + v.w / 2;
-  const ex = g.x + g.w / 2;
-  return `M ${sx} ${y0} C ${sx} ${yPeak}, ${ex} ${yPeak}, ${ex} ${g.y}`;
+  const sx = nodeCenterX("gpu_solve");
+  const ex = nodeCenterX("gate");
+  const y0 = ROW_TOP_Y; // top edge of the row
+  const yPeak = ROW_TOP_Y - 34;
+  return `M ${String(sx)} ${String(y0)} C ${String(sx)} ${String(yPeak)}, ${String(ex)} ${String(yPeak)}, ${String(ex)} ${String(y0)}`;
 }
 function capPath(): string {
-  const v = zoneById("verify");
-  const t = zoneById("tier3");
-  // Drop from verify's bottom to tier-3's top, same x (both at x=420 zone).
-  return `M ${v.x + v.w / 2} ${v.y + v.h} L ${t.x + t.w / 2} ${t.y}`;
+  const x = nodeCenterX("gate");
+  const y0 = nodeById("gate").y + nodeById("gate").h;
+  const y1 = nodeById("tier3").y;
+  return `M ${String(x)} ${String(y0)} L ${String(x)} ${String(y1)}`;
 }
 
 /** The static topology SVG -- rendered once into the initial paint. */
@@ -134,40 +175,55 @@ export function cascadeFlowTopology(): VNode {
       class: "topology",
       viewBox: `0 0 ${String(VIEW_W)} ${String(VIEW_H)}`,
       xmlns: "http://www.w3.org/2000/svg",
-      "aria-label": "edge-cascade tier topology",
+      "aria-label": "edge-cascade Canvas chain topology",
     },
     h(
       "g",
       { class: "paths" },
       ...PATHS.map((p) =>
-        h("path", { id: p.id, class: "arc", d: p.d, fill: "none" }),
+        h("path", {
+          id: p.id,
+          class: `arc arc--${p.kind}`,
+          d: p.d,
+          fill: "none",
+        }),
       ),
     ),
     h(
       "g",
-      { class: "zones" },
-      ...ZONES.map((z) =>
+      { class: "nodes" },
+      ...NODES.map((n) =>
         h(
           "g",
-          { class: `zone zone--${z.id}` },
+          { class: `node node--${n.id} node--tone-${n.tier}` },
           h("rect", {
-            class: "zone-rect",
-            x: String(z.x),
-            y: String(z.y),
-            width: String(z.w),
-            height: String(z.h),
-            rx: "6",
-            ry: "6",
+            class: "node-rect",
+            x: String(n.x),
+            y: String(n.y),
+            width: String(n.w),
+            height: String(n.h),
+            rx: "7",
+            ry: "7",
           }),
           h(
             "text",
             {
-              class: "zone-label",
-              x: String(z.x + z.w / 2),
-              y: String(z.y + z.h + 16),
+              class: "node-label",
+              x: String(n.x + n.w / 2),
+              y: String(n.y + n.h / 2 + 1),
               "text-anchor": "middle",
             },
-            z.label,
+            n.label,
+          ),
+          h(
+            "text",
+            {
+              class: "node-queue",
+              x: String(n.x + n.w / 2),
+              y: String(n.y + n.h - 10),
+              "text-anchor": "middle",
+            },
+            n.queue === "—" ? "tier 3" : `Q:${n.queue}`,
           ),
         ),
       ),
@@ -184,7 +240,8 @@ export const cascadeFlowRegion: LiveRegion<DashContext> = liveRegion(
 function overlaySvg(ctx: DashContext): VNode {
   const nowMs = ctx.nowMs();
   const particles = ctx.store.particles();
-  const byTier = bucketByTier(particles);
+  const byNode = bucketByNode(particles);
+  const lastOutcome = ctx.store.lastOutcome();
   return h(
     "svg",
     {
@@ -193,101 +250,102 @@ function overlaySvg(ctx: DashContext): VNode {
       xmlns: "http://www.w3.org/2000/svg",
       "aria-hidden": "true",
     },
+    outcomeFlash(lastOutcome, nowMs),
     h(
       "g",
-      { class: "zone-pulses" },
-      ...TIERS.map((tier) => zonePulse(ctx, tier, nowMs)),
+      { class: "node-hots" },
+      ...NODES.map((n) => hotRing(n, byNode, lastOutcome, nowMs)),
     ),
     h(
       "g",
-      { class: "sparklines" },
-      ...TIERS.map((tier) => sparklinePolyline(ctx, tier, nowMs)),
-    ),
-    h(
-      "g",
-      { class: "tier-stats" },
-      ...TIERS.map((tier) => tierStat(byTier.get(tier) ?? [], tier)),
+      { class: "node-stats" },
+      ...PARTICLE_NODES.map((id) => nodeStat(byNode.get(id) ?? [], id)),
     ),
     h(
       "g",
       { class: "particles" },
       ...particles.flatMap((p) =>
-        particleCircle(p, indexInTier(p, byTier), nowMs),
+        particleCircle(p, indexInNode(p, byNode), nowMs),
       ),
     ),
+    outcomeBanner(lastOutcome, nowMs),
   );
 }
 
-function bucketByTier(particles: readonly Particle[]): Map<Tier, Particle[]> {
-  const byTier = new Map<Tier, Particle[]>();
+function bucketByNode(particles: readonly Particle[]): Map<NodeId, Particle[]> {
+  const byNode = new Map<NodeId, Particle[]>();
   for (const p of particles) {
-    const arr = byTier.get(p.tier);
+    const id = nodeForParticle(p);
+    const arr = byNode.get(id);
     if (arr) arr.push(p);
-    else byTier.set(p.tier, [p]);
+    else byNode.set(id, [p]);
   }
-  return byTier;
+  return byNode;
 }
 
-function indexInTier(p: Particle, byTier: Map<Tier, Particle[]>): number {
-  const arr = byTier.get(p.tier);
+function indexInNode(p: Particle, byNode: Map<NodeId, Particle[]>): number {
+  const arr = byNode.get(nodeForParticle(p));
   if (!arr) return 0;
   return arr.indexOf(p);
 }
 
-const PARTICLES_PER_ZONE = 12; // visual cap per tier-pool
+const PARTICLES_PER_NODE = 12; // visual cap per node-pool
 /** SD-P1: how long a freshly-ingested particle takes to ride its entering arc
- * from arc-start to its final pool slot. Picked so the flow is visible (~1.5s
- * is a comfortable read) without piling up at the typical 5-50 rec/s. Exported
- * so unit tests can pin the boundary case `nowMs - tsMs === ANIM_MS`. */
+ * from arc-start to its final pool slot. Exported so unit tests can pin the
+ * boundary case `nowMs - tsMs === ANIM_MS`. */
 export const ANIM_MS = 1500;
 
-/** For each tier, the "entering arc" start point -- the off-zone position
- * particles glide FROM during the in-flight phase. Returns null when no
- * entering arc is modelled for the tier (currently every Tier has one;
- * future tier additions stay safe by getting an immediate pool render). */
-export function enteringArcStart(tier: Tier): { x: number; y: number } | null {
-  switch (tier) {
-    case "npu":
-      return { x: 0, y: zoneCenterY("npu") };
-    case "gpu": {
-      const npu = zoneById("npu");
-      return { x: npu.x + npu.w, y: zoneCenterY("npu") };
+/** For each particle node, the "entering arc" start point -- the off-node
+ * position particles glide FROM during the in-flight phase. It is the right
+ * edge of the pipeline predecessor (route enters from off-canvas; cloud enters
+ * from Tier 3). Exported for unit tests. */
+export function enteringArcStart(id: NodeId): { x: number; y: number } | null {
+  switch (id) {
+    case "route":
+      return { x: 0, y: nodeCenterY("route") };
+    case "draft": {
+      const prev = nodeById("route");
+      return { x: prev.x + prev.w, y: nodeCenterY("route") };
     }
-    case "verify": {
-      const gpu = zoneById("gpu");
-      return { x: gpu.x + gpu.w, y: zoneCenterY("gpu") };
+    case "gate": {
+      const prev = nodeById("draft");
+      return { x: prev.x + prev.w, y: nodeCenterY("draft") };
+    }
+    case "gpu_solve": {
+      const prev = nodeById("gate");
+      return { x: prev.x + prev.w, y: nodeCenterY("gate") };
     }
     case "cloud": {
-      const tier3 = zoneById("tier3");
-      return { x: tier3.x + tier3.w, y: zoneCenterY("tier3") };
+      const prev = nodeById("tier3");
+      return { x: prev.x + prev.w, y: nodeCenterY("tier3") };
     }
+    case "tier3":
+      return null; // tier3 never pools particles
   }
 }
 
 /** Pure render geometry for a particle. `inFlight` = animating along the
- * entering arc (age < ANIM_MS); otherwise pooled at the final slot. Exported
+ * entering arc (age < ANIM_MS); otherwise pooled at its final slot. Exported
  * so unit tests can assert the position math without booting a DashContext. */
 export function particlePosition(
   p: Particle,
   idx: number,
   nowMs: number,
 ): { cx: number; cy: number; inFlight: boolean } {
-  const z = zoneById(p.tier);
-  // Final pool slot (same layout as the pre-SD-P1 static render).
-  const slot = PARTICLES_PER_ZONE - 1 - idx;
-  const poolCx = z.x + 8 + slot * ((z.w - 16) / (PARTICLES_PER_ZONE - 1));
-  const poolCy = z.y + 14;
+  const id = nodeForParticle(p);
+  const n = nodeById(id);
+  const slot = PARTICLES_PER_NODE - 1 - idx;
+  const poolCx = n.x + 8 + slot * ((n.w - 16) / (PARTICLES_PER_NODE - 1));
+  const poolCy = n.y + 13;
 
   const ageMs = nowMs - p.tsMs;
-  // Clamp to pool render on (a) animation complete, (b) negative age (clock
-  // skew or fixture timestamps in the future), (c) no entering arc modelled.
   if (ageMs >= ANIM_MS || ageMs < 0) {
     return { cx: poolCx, cy: poolCy, inFlight: false };
   }
-  const start = enteringArcStart(p.tier);
+  const start = enteringArcStart(id);
   if (!start) return { cx: poolCx, cy: poolCy, inFlight: false };
 
-  const progress = ageMs / ANIM_MS; // 0..1
+  const progress = ageMs / ANIM_MS;
   return {
     cx: start.x + (poolCx - start.x) * progress,
     cy: start.y + (poolCy - start.y) * progress,
@@ -296,7 +354,7 @@ export function particlePosition(
 }
 
 function particleCircle(p: Particle, idx: number, nowMs: number): VNode[] {
-  if (idx >= PARTICLES_PER_ZONE) return []; // older particles fall off-screen
+  if (idx >= PARTICLES_PER_NODE) return []; // older particles fall off-screen
   const pos = particlePosition(p, idx, nowMs);
   const inFlightCls = pos.inFlight ? " particle--in-flight" : "";
   const failCls = p.ok ? "" : " particle--fail";
@@ -311,128 +369,172 @@ function particleCircle(p: Particle, idx: number, nowMs: number): VNode[] {
   ];
 }
 
-function sparklinePolyline(
-  ctx: DashContext,
-  tier: Tier,
+/** How long after ingest a node stays "hot" (bright ring + glow + fill).
+ * Longer than the particle-arc ANIM_MS so a node clearly reads as "spinning"
+ * for a beat after a record lands -- a single record gives a ~2.6s glow and a
+ * steady stream reads as sustained. Exported for unit tests pinning the
+ * boundary. (Note: .rec records land at task COMPLETION, so this is "recently
+ * active", the closest proxy the record stream offers to "in progress".) */
+export const HOT_MS = 2600;
+
+/** Is this node currently hot? A node is hot iff its most-recent matching
+ * particle landed within HOT_MS. tier3 has no lane, so it goes hot from a
+ * `capped->tier3` Outcome within HOT_MS instead. Pure -- no DOM. Exported. */
+export function isNodeHot(
+  id: NodeId,
+  byNode: Map<NodeId, Particle[]>,
+  lastOutcome: LastOutcome | null,
+  nowMs: number,
+): boolean {
+  if (id === "tier3") {
+    if (lastOutcome === null || lastOutcome.finalTier !== "capped->tier3") {
+      return false;
+    }
+    const age = nowMs - lastOutcome.tsMs;
+    return age >= 0 ? age < HOT_MS : true;
+  }
+  const arr = byNode.get(id);
+  if (!arr || arr.length === 0) return false;
+  // Particles are appended in arrival order; the last is the newest.
+  const newest = arr[arr.length - 1]!;
+  const age = nowMs - newest.tsMs;
+  if (age < 0) return true; // future-stamped record just landed
+  return age < HOT_MS;
+}
+
+/** Per-node hot ring overlay. Always rendered (one rect per node); the
+ * `--hot` class flips on while the node is processing so CSS keyframes run a
+ * single sustained glow without re-triggering on every render. */
+function hotRing(
+  n: ChainNode,
+  byNode: Map<NodeId, Particle[]>,
+  lastOutcome: LastOutcome | null,
   nowMs: number,
 ): VNode {
-  const z = zoneById(tier);
-  const buckets = ctx.store.sparkline(tier, nowMs);
-  const maxBucket = Math.max(1, ...buckets);
-  // Plot from zone left edge to right edge, scaled into the bottom half.
-  const yTop = z.y + z.h / 2 + 4;
-  const yBottom = z.y + z.h - 8;
-  const xs = WINDOW_SECONDS;
-  const points = buckets
-    .map((v, i) => {
-      const x = z.x + 8 + (i / (xs - 1)) * (z.w - 16);
-      const y = yBottom - (v / maxBucket) * (yBottom - yTop);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  return h("polyline", {
-    class: `sparkline sparkline--${tier}`,
-    points,
-    fill: "none",
-  });
-}
-
-/** SD-P2: how long the zone stays in the "active" visual state after a tier
- * ingests a record. Picked so a steady stream at 5+ rec/s reads as a
- * sustained pulse, while a single isolated record gives a clear 1-2s ping
- * before dimming. Exported for unit tests pinning the boundary. */
-export const PULSE_MS = 1200;
-
-/** SD-P2: is this tier currently in the active-pulse window? Pure helper
- * (no DOM) -- pulled out so tests can pin boundary cases without rendering. */
-export function isTierPulsing(
-  lastIngestMs: number | null,
-  nowMs: number,
-): boolean {
-  if (lastIngestMs === null) return false;
-  const age = nowMs - lastIngestMs;
-  // Defensive: a future-stamped record (clock skew / fixture in the future)
-  // counts as active -- it just landed, by any reasonable definition.
-  if (age < 0) return true;
-  return age < PULSE_MS;
-}
-
-/** SD-P3 heartbeat: how often the server re-emits TICK while animations are
- * still running. Picked at ~12 Hz -- visibly smooth on both motion (SD-P1)
- * and pulse-fade (SD-P2) without spamming WS frames. When no animation is
- * active the chain stops naturally, so an idle dashboard issues zero ticks.
- * Exported for app.ts to schedule against and for tests to pin. */
-export const HEARTBEAT_MS = 80;
-
-/** SD-P3: does the current store state warrant another TICK before any
- * record arrives? True iff EITHER an SD-P1 particle is still mid-arc
- * (0 <= age < ANIM_MS) OR an SD-P2 zone is still in its pulse window
- * (0 <= age < PULSE_MS). Pure -- no DOM, no time source beyond `nowMs` --
- * so app.ts can compose it into a setTimeout chain without owning the
- * animation constants, and tests can drive it deterministically.
- *
- * Note: this is INTENTIONALLY stricter than the visual `isTierPulsing`,
- * which counts negative-age (future-stamped) records as "active" so a
- * just-landed pulse renders even under clock skew. The heartbeat can't
- * adopt the same lenience -- a far-future timestamp would keep the
- * scheduler chain alive for (future - now) ms before it caught up. The
- * pulse branch below requires age >= 0 explicitly so a clock-skewed or
- * fixture-future record can't pin the heartbeat on for arbitrary time.
- *
- * The lookup callback shape mirrors `store.lastIngestMs` exactly so the
- * caller hands the bound method through without a per-tier closure. */
-export function hasActiveAnimation(
-  particles: readonly Particle[],
-  lastIngestMs: (tier: Tier) => number | null,
-  nowMs: number,
-): boolean {
-  for (const p of particles) {
-    const age = nowMs - p.tsMs;
-    if (age >= 0 && age < ANIM_MS) return true;
-  }
-  for (const tier of TIERS) {
-    const last = lastIngestMs(tier);
-    if (last === null) continue;
-    const age = nowMs - last;
-    if (age >= 0 && age < PULSE_MS) return true;
-  }
-  return false;
-}
-
-/** Per-zone pulse overlay. Always rendered (one rect per tier zone); the
- * `--active` class flips on when the tier has ingested in the last
- * PULSE_MS, so CSS keyframes can run a single short pulse without re-
- * triggering on every re-render. */
-function zonePulse(ctx: DashContext, tier: Tier, nowMs: number): VNode {
-  const z = zoneById(tier);
-  const last = ctx.store.lastIngestMs(tier);
-  const active = isTierPulsing(last, nowMs);
-  const cls = active
-    ? `zone-pulse zone-pulse--active zone-pulse--${tier}`
-    : `zone-pulse zone-pulse--${tier}`;
+  const hot = isNodeHot(n.id, byNode, lastOutcome, nowMs);
+  const cls = hot
+    ? `node-hot node-hot--hot node-hot--tone-${n.tier}`
+    : `node-hot node-hot--tone-${n.tier}`;
   return h("rect", {
     class: cls,
-    x: String(z.x - 2),
-    y: String(z.y - 2),
-    width: String(z.w + 4),
-    height: String(z.h + 4),
-    rx: "8",
-    ry: "8",
+    x: String(n.x - 3),
+    y: String(n.y - 3),
+    width: String(n.w + 6),
+    height: String(n.h + 6),
+    rx: "9",
+    ry: "9",
     fill: "none",
     "aria-hidden": "true",
   });
 }
 
-function tierStat(inTier: readonly Particle[], tier: Tier): VNode {
-  const z = zoneById(tier);
+function nodeStat(inNode: readonly Particle[], id: NodeId): VNode {
+  const n = nodeById(id);
   return h(
     "text",
     {
-      class: `tier-stat tier-stat--${tier}`,
-      x: String(z.x + z.w - 8),
-      y: String(z.y + z.h / 2 - 4),
+      class: `node-stat node-stat--${n.tier}`,
+      x: String(n.x + n.w - 8),
+      y: String(n.y + 16),
       "text-anchor": "end",
     },
-    String(inTier.length),
+    String(inNode.length),
   );
+}
+
+/** How long the win/lose flash stays up after an Outcome lands. Exported so
+ * the heartbeat (app.ts) keeps ticking through the whole flash. */
+export const FLASH_MS = 1600;
+
+/** True while the most-recent Outcome's flash window is still open. Pure;
+ * shared by the overlay render and the heartbeat so they agree on the window. */
+export function isFlashing(
+  lastOutcome: LastOutcome | null,
+  nowMs: number,
+): boolean {
+  if (lastOutcome === null) return false;
+  const age = nowMs - lastOutcome.tsMs;
+  return age >= 0 && age < FLASH_MS;
+}
+
+/** Full-stage green/red wash on a fresh Outcome. Rendered first (behind the
+ * nodes/particles) so it tints the whole graph without hiding the flow. */
+function outcomeFlash(lastOutcome: LastOutcome | null, nowMs: number): VNode {
+  if (!isFlashing(lastOutcome, nowMs)) {
+    return h("g", { class: "outcome-flash" });
+  }
+  const tone = lastOutcome!.won ? "win" : "lose";
+  return h(
+    "g",
+    { class: `outcome-flash outcome-flash--active outcome-flash--${tone}` },
+    h("rect", {
+      class: "outcome-flash-rect",
+      x: "0",
+      y: "0",
+      width: String(VIEW_W),
+      height: String(VIEW_H),
+      "aria-hidden": "true",
+    }),
+  );
+}
+
+/** The big WIN/LOSE word that punches in over the flash. */
+function outcomeBanner(lastOutcome: LastOutcome | null, nowMs: number): VNode {
+  if (!isFlashing(lastOutcome, nowMs)) {
+    return h("g", { class: "outcome-banner" });
+  }
+  const o = lastOutcome!;
+  const tone = o.won ? "win" : "lose";
+  const word = o.won ? "LOCAL WIN" : "CAPPED";
+  const sub = o.won ? `resolved @ ${o.finalTier}` : "→ Tier 3 takeover";
+  return h(
+    "g",
+    { class: `outcome-banner outcome-banner--active outcome-banner--${tone}` },
+    h(
+      "text",
+      {
+        class: "outcome-banner-word",
+        x: String(VIEW_W / 2),
+        y: String(VIEW_H / 2 - 6),
+        "text-anchor": "middle",
+      },
+      word,
+    ),
+    h(
+      "text",
+      {
+        class: "outcome-banner-sub",
+        x: String(VIEW_W / 2),
+        y: String(VIEW_H / 2 + 20),
+        "text-anchor": "middle",
+      },
+      sub,
+    ),
+  );
+}
+
+/** SD-P3 heartbeat: how often the server re-emits TICK while animations are
+ * still running. ~12 Hz -- smooth motion + glow fades without spamming WS
+ * frames. When nothing is animating the chain stops, so an idle dashboard
+ * issues zero ticks. Exported for app.ts to schedule against and tests to pin. */
+export const HEARTBEAT_MS = 80;
+
+/** Does the current store state warrant another TICK before any record
+ * arrives? True iff a particle is still mid-arc (SD-P1), a node is still hot
+ * (HOT_MS), OR a win/lose flash is still up (FLASH_MS). Pure -- app.ts composes
+ * it into a setTimeout chain; tests drive it deterministically.
+ *
+ * Each branch requires `age >= 0`: a far-future timestamp must not pin the
+ * heartbeat on for (future - now) ms. */
+export function hasActiveAnimation(
+  particles: readonly Particle[],
+  lastOutcome: LastOutcome | null,
+  nowMs: number,
+): boolean {
+  for (const p of particles) {
+    const age = nowMs - p.tsMs;
+    if (age >= 0 && age < ANIM_MS) return true;
+    if (age >= 0 && age < HOT_MS) return true;
+  }
+  return isFlashing(lastOutcome, nowMs);
 }

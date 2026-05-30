@@ -563,6 +563,55 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
   });
 });
 
+describe("createStore — lastOutcome (win/lose flash trigger)", () => {
+  it("starts null (no outcome seen yet)", () => {
+    expect(createStore().lastOutcome()).toBeNull();
+  });
+
+  it("marks a local-tier resolution as a win", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "gpu" }));
+    const o = store.lastOutcome();
+    expect(o?.won).toBe(true);
+    expect(o?.finalTier).toBe("gpu");
+    expect(o?.tsMs).toBe(1779801311500);
+  });
+
+  it("npu and igpu resolutions are wins too", () => {
+    const npu = createStore();
+    npu.ingest("cascade", cascadeRec(0, { final_tier: "npu" }));
+    expect(npu.lastOutcome()?.won).toBe(true);
+    const igpu = createStore();
+    igpu.ingest("cascade", cascadeRec(0, { final_tier: "igpu" }));
+    expect(igpu.lastOutcome()?.won).toBe(true);
+  });
+
+  it("marks a capped->tier3 takeover as a loss", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "capped->tier3" }));
+    const o = store.lastOutcome();
+    expect(o?.won).toBe(false);
+    expect(o?.finalTier).toBe("capped->tier3");
+  });
+
+  it("bumps seq on each new outcome and tracks the most recent", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "gpu" }));
+    const first = store.lastOutcome();
+    store.ingest("cascade", cascadeRec(1, { final_tier: "capped->tier3" }));
+    const second = store.lastOutcome();
+    expect(first?.seq).toBe(1);
+    expect(second?.seq).toBe(2);
+    expect(second?.won).toBe(false);
+  });
+
+  it("ignores unknown final_tier (no outcome recorded)", () => {
+    const store = createStore();
+    store.ingest("cascade", cascadeRec(0, { final_tier: "totally-bogus" }));
+    expect(store.lastOutcome()).toBeNull();
+  });
+});
+
 // SD-P2: per-tier lastIngestMs --------------------------------------------
 
 describe("createStore — lastIngestMs (SD-P2)", () => {

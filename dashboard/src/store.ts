@@ -117,6 +117,25 @@ export interface CascadeOutcomes {
   readonly effectivenessPct: number;
 }
 
+/** The single most-recent cascade outcome -- the trigger for the win/lose
+ * flash on the flow graph. `cascadeOutcomes()` gives cumulative counts; this
+ * gives "what just happened, when" so a region can flash green (the local
+ * pipe resolved it) or red (it capped to a Tier-3 takeover) for a short
+ * window after the outcome lands.
+ *
+ *  - `seq` increments once per counted outcome. A flash region compares it
+ *    against the last seq it rendered so a re-render mid-window doesn't
+ *    restart the flash, and a brand-new outcome does.
+ *  - `won` = the cascade resolved at a LOCAL draft tier (npu / igpu / gpu)
+ *    without a Tier-3 takeover. `capped->tier3` is a loss for the local pipe
+ *    (the bounded repair loop was exhausted). */
+export interface LastOutcome {
+  readonly seq: number;
+  readonly tsMs: number;
+  readonly finalTier: string;
+  readonly won: boolean;
+}
+
 export interface Store {
   /** Ingest one record from the tailer. Returns the particle iff the record
    * mapped to a known tier (so the caller knows whether to push it through
@@ -143,6 +162,9 @@ export interface Store {
   degen(tier: DegenTier): readonly DegenObservation[];
   /** Mesh effectiveness snapshot (cumulative this session). */
   cascadeOutcomes(): CascadeOutcomes;
+  /** The most-recent cascade outcome (win/lose flash trigger), or null if no
+   * `cascade.rec` Outcome has been seen yet this session. */
+  lastOutcome(): LastOutcome | null;
   /** Wall-clock ms of the most recent particle ingest for `tier`, or null
    * if none yet. Drives the SD-P2 active-node pulse on the flow SVG --
    * "this zone got a record in the last PULSE_MS." Independent of the
@@ -222,6 +244,8 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   let cappedRuns = 0;
   let draftSkippedRuns = 0;
   let totalRuns = 0;
+  let lastOutcome: LastOutcome | null = null;
+  let outcomeSeq = 0;
   // SD-P2: per-tier most-recent particle ingest wall-clock. Updated on every
   // particle (status records ALSO update it -- "the tier is busy" is the
   // signal, not "the tier produced a particle for the flow river"). null
@@ -330,6 +354,16 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     }
     if (!counted) return;
     totalRuns += 1;
+    // The win/lose flash trigger: a NEW outcome bumps the seq so the flash
+    // region restarts; `won` is true iff a local draft tier resolved it
+    // (capped->tier3 is the local pipe losing to a Tier-3 takeover).
+    outcomeSeq += 1;
+    lastOutcome = {
+      seq: outcomeSeq,
+      tsMs: parseTsMs(record.ts),
+      finalTier,
+      won: finalTier === "npu" || finalTier === "igpu" || finalTier === "gpu",
+    };
     // Skip rate is independent of outcome -- "the router decided not to try
     // Tier 1" can co-occur with any final_tier (including a successful gpu).
     if ((record.trace ?? "").includes("draft skipped")) {
@@ -404,6 +438,7 @@ export function createStore(options: CreateStoreOptions = {}): Store {
           ? 0
           : ((resolvedNpu + resolvedIgpu + resolvedGpu) / totalRuns) * 100,
     }),
+    lastOutcome: () => lastOutcome,
     lastIngestMs: (tier: Tier) => lastIngest[tier],
     totalCount: () => totalParticles,
   };
