@@ -15,9 +15,16 @@ substrate (a real broker + worker), not unit-cov'd.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable
 
 from cascade.flower_activity import NODE_BY_TASK
+
+# Minimum-lit window (BACKLOG #12): a fast node (route/draft is sub-second)
+# would blink on/off faster than the eye catches. Hold its `idle` for at least
+# this long after it went active, so every node visibly lights. Slow nodes
+# (gpu_solve ~60s) far exceed it, so they're unaffected -- they just spin.
+MIN_LIT_S = 0.6
 
 # Redis pub/sub channel the receiver publishes node-state deltas on; the Node
 # dashboard subscribes. JSON frames: {"node": str, "state": "active"|"idle"}.
@@ -56,15 +63,40 @@ def node_delta(prev: set[str], curr: set[str]) -> list[tuple[str, str]]:
     return sorted(transitions)
 
 
-def publish_state(pub, channel: str, state_key: str, prev: set[str], curr: set[str]) -> set[str]:
+def hold_remaining(active_since: float, now: float, min_lit: float) -> float:
+    """Seconds a node must stay lit to satisfy the minimum-lit window, or 0.0 if
+    it has already been lit long enough (BACKLOG #12). Never negative."""
+    return max(0.0, min_lit - (now - active_since))
+
+
+def publish_state(
+    pub,
+    channel: str,
+    state_key: str,
+    prev: set[str],
+    curr: set[str],
+    active_since: dict[str, float],
+    now: float,
+    min_lit: float = MIN_LIT_S,
+    sleep=time.sleep,
+) -> set[str]:
     """Publish the transitions between two snapshots and update the seed key.
 
     `pub` is an injected redis client (`.publish` + `.set`). Each `node_delta`
-    transition is published to `channel`; then the current active set is written
-    to `state_key` as a JSON sorted list so a late-joining subscriber can seed.
-    Returns `curr` so the caller can roll it into `prev`.
+    transition is published to `channel`. An `idle` is HELD (`sleep`) until the
+    node has been lit for `min_lit` (BACKLOG #12: keeps a fast route/draft node
+    visible); a slow node is past that window, so it publishes immediately.
+    `active_since` (caller-owned, mutated here) records each node's activation
+    time. Then the current set is written to `state_key` so a late subscriber
+    can seed. Returns `curr` to roll into `prev`. `sleep` is injectable for tests.
     """
     for node, node_state in node_delta(prev, curr):
+        if node_state == "active":
+            active_since[node] = now
+        else:
+            wait = hold_remaining(active_since.get(node, now), now, min_lit)
+            if wait > 0:
+                sleep(wait)
         pub.publish(channel, json.dumps({"node": node, "state": node_state}))
     pub.set(state_key, json.dumps(sorted(curr)))
     return curr

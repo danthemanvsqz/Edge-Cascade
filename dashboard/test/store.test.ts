@@ -479,6 +479,7 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
       resolvedGpu: 0,
       capped: 0,
       draftSkipped: 0,
+      npuGaveUp: 0,
       total: 0,
       effectivenessPct: 0,
     });
@@ -536,6 +537,22 @@ describe("createStore — cascade outcomes lane (SD-4)", () => {
     expect(o.resolvedGpu).toBe(1);
     expect(o.draftSkipped).toBe(1);
     expect(o.total).toBe(1);
+  });
+
+  it("counts 'npu gate FAIL' as an NPU-gave-up run (the NPU tried and lost)", () => {
+    const store = createStore();
+    // NPU drafted but failed the gate -> escalated and resolved at GPU.
+    store.ingest("cascade", cascadeRec(0, {
+      final_tier: "gpu",
+      trace: "mesh|-|0.00s|npu draft -> 200 chars\nmesh|-|0.00s|npu gate FAIL\nmesh|-|0.00s|gpu gate PASS",
+    }));
+    expect(store.cascadeOutcomes().npuGaveUp).toBe(1);
+    // A skip is NOT a give-up (it never tried).
+    store.ingest("cascade", cascadeRec(1, {
+      final_tier: "gpu",
+      trace: "mesh|-|0.00s|npu draft skipped (difficulty>=0.7)",
+    }));
+    expect(store.cascadeOutcomes().npuGaveUp).toBe(1);
   });
 
   it("ignores records with unknown final_tier (does not increment total)", () => {

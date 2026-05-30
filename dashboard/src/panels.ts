@@ -181,6 +181,7 @@ export function meshEffectivenessView(o: CascadeOutcomes): VNode {
       chip("resolved-gpu", "@GPU", o.resolvedGpu),
       chip("capped", "capped", o.capped),
       chip("skipped", "skipped", o.draftSkipped),
+      chip("npu-gaveup", "NPU gave up", o.npuGaveUp),
     ),
   );
 }

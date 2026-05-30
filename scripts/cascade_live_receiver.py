@@ -18,6 +18,8 @@ live-validated like the worker, not unit-cov'd.
 """
 from __future__ import annotations
 
+import time
+
 import redis
 
 from cascade.celery_app import app
@@ -28,6 +30,7 @@ def run(channel: str = LIVE_CHANNEL) -> None:
     pub = redis.Redis.from_url(app.conf.broker_url)
     state = app.events.State()
     prev: set[str] = set()
+    active_since: dict[str, float] = {}  # node -> activation time, for the min-lit hold
 
     def on_event(event: dict) -> None:
         nonlocal prev
@@ -35,7 +38,9 @@ def run(channel: str = LIVE_CHANNEL) -> None:
         # The STARTED tasks are the ones actually spinning right now (task_track_
         # started makes the event fire at execution, not enqueue).
         active = [t.name for t in state.tasks.values() if t.name and t.state == "STARTED"]
-        prev = publish_state(pub, channel, LIVE_STATE_KEY, prev, nodes_for(active))
+        prev = publish_state(
+            pub, channel, LIVE_STATE_KEY, prev, nodes_for(active), active_since, time.time()
+        )
 
     with app.connection() as conn:
         receiver = app.events.Receiver(conn, handlers={"*": on_event})
