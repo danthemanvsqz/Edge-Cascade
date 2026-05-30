@@ -100,7 +100,8 @@ def test_pr91_regression_all_chain_tasks_registered_on_worker(
     registered = set(celery_integration_worker.app.tasks.keys())
     # Chain steps (cascade.topologies_canvas) -- these are the ones the
     # pre-#91 bug missed. _draft_gate was decomposed into _verify + _resolve_npu
-    # by BACKLOG #9.
+    # by BACKLOG #9. _done is the win/lose logger; its absence would silently
+    # drop all telemetry, so it belongs in this pin.
     expected_chain_steps = {
         "mesh.balanced._route",
         "mesh.balanced._draft",
@@ -109,6 +110,7 @@ def test_pr91_regression_all_chain_tasks_registered_on_worker(
         "mesh.balanced._gpu_solve",
         "mesh.balanced._merge_gpu",
         "mesh.balanced._cloud",
+        "mesh.balanced._done",
     }
     missing = expected_chain_steps - registered
     assert not missing, (

@@ -112,17 +112,24 @@ function buildTopology(specs: readonly NodeSpec[]): BuiltTopology {
   const lastVerify = [...topNodes].reverse().find(n => n.tier === "verify") ?? null;
   const lastGpu    = [...topNodes].reverse().find(n => n.tier === "gpu")    ?? null;
 
+  // Synthetic nodes always appear. Anchor to their natural position (lastVerify /
+  // lastGpu) when present; fall back to the rightmost top-row node so the SVG
+  // is never blank and nodeById never throws on a cloud/tier3-tier record.
+  const lastTopNode = topNodes[topNodes.length - 1] ?? null;
+  const tier3AnchorX = (lastVerify ?? lastTopNode)?.x ?? 24;
+  const cloudAnchorX = (lastGpu    ?? lastTopNode)?.x ?? 24;
+
   const bottomNodes: ChainNode[] = [];
-  if (tier3Spec && lastVerify) {
+  if (tier3Spec) {
     bottomNodes.push({
       id: tier3Spec.id, label: tier3Spec.label, queue: tier3Spec.queue, tier: "tier3",
-      x: lastVerify.x, y: ROW_BOT_Y, w: NODE_W, h: NODE_H,
+      x: tier3AnchorX, y: ROW_BOT_Y, w: NODE_W, h: NODE_H,
     });
   }
-  if (cloudSpec && lastGpu) {
+  if (cloudSpec) {
     bottomNodes.push({
       id: cloudSpec.id, label: cloudSpec.label, queue: cloudSpec.queue, tier: "cloud",
-      x: lastGpu.x, y: ROW_BOT_Y, w: NODE_W, h: NODE_H,
+      x: cloudAnchorX, y: ROW_BOT_Y, w: NODE_W, h: NODE_H,
     });
   }
 
@@ -150,11 +157,12 @@ function buildTopology(specs: readonly NodeSpec[]): BuiltTopology {
     paths.push({ id: "repair-loop", d: `M ${sx} ${y0} C ${sx} ${yP}, ${ex} ${yP}, ${ex} ${y0}`, kind: "repair" });
   }
   const tier3Node = bottomNodes.find(n => n.tier === "tier3") ?? null;
-  // Cap arc originates at gpu_solve (GPU repair exhausted → Tier 3 takeover),
-  // not at the last verify node, to correctly represent the escalation source.
-  if (lastGpu && tier3Node) {
-    const x0 = cx(lastGpu), x1 = cx(tier3Node);
-    paths.push({ id: "cap-tier3", d: `M ${x0} ${lastGpu.y + lastGpu.h} L ${x1} ${tier3Node.y}`, kind: "cap" });
+  // Cap arc: GPU repair exhausted → Tier 3. Originates at gpu_solve when
+  // present; falls back to the last top-row node so the arc is never missing.
+  const capSource = lastGpu ?? lastTopNode;
+  if (capSource && tier3Node) {
+    const x0 = cx(capSource), x1 = cx(tier3Node);
+    paths.push({ id: "cap-tier3", d: `M ${x0} ${capSource.y + capSource.h} L ${x1} ${tier3Node.y}`, kind: "cap" });
   }
   const cloudNode = bottomNodes.find(n => n.tier === "cloud") ?? null;
   if (tier3Node && cloudNode) {

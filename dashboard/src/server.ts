@@ -115,7 +115,9 @@ try {
     const tasks = new Set<string>(
       Object.values(workers)
         .filter((w): w is { registered_tasks: string[] } =>
-          typeof w === "object" && w !== null && "registered_tasks" in w,
+          typeof w === "object" && w !== null &&
+          "registered_tasks" in w &&
+          Array.isArray((w as Record<string, unknown>).registered_tasks),
         )
         .flatMap(w => w.registered_tasks),
     );
