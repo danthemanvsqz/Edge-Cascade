@@ -51,23 +51,6 @@ log({ event: "startup", pid: process.pid, port });
 const app = createDashboardApp({ runsDir, startFromEof });
 app.tailer.start();
 
-// Topology: query Flower for registered tasks; fall back to full CHAIN_SPECS.
-void (async () => {
-  const FLOWER = process.env.FLOWER_URL ?? "http://127.0.0.1:5555";
-  try {
-    const res = await fetch(`${FLOWER}/api/workers?refresh=true&status=true`);
-    if (res.ok) {
-      const workers = (await res.json()) as Record<string, { registered_tasks?: string[] }>;
-      const tasks = new Set<string>(
-        Object.values(workers).flatMap(w => w.registered_tasks ?? []),
-      );
-      if (tasks.size > 0) setTopology(tasks);
-    }
-  } catch {
-    // Flower unavailable -- show full topology.
-  }
-})();
-
 void app.liveSource.start().catch((err: unknown) => {
   console.warn(`[dashboard] live source not started: ${String(err)}`);
   log({ event: "live_source_error", error: String(err) });
@@ -118,6 +101,30 @@ process.on("SIGTERM", () => {
   log({ event: "shutdown", signal: "SIGTERM" });
   server.close(() => process.exit(0));
 });
+
+// Topology: query Flower for registered tasks BEFORE accepting requests so every
+// client sees a consistent static SVG. 3 s timeout keeps startup fast when the
+// worker isn't up yet. Null-safe parse guards against disconnected worker entries.
+const FLOWER = process.env.FLOWER_URL ?? "http://127.0.0.1:5555";
+try {
+  const res = await fetch(`${FLOWER}/api/workers?refresh=true&status=true`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  if (res.ok) {
+    const workers = (await res.json()) as Record<string, unknown>;
+    const tasks = new Set<string>(
+      Object.values(workers)
+        .filter((w): w is { registered_tasks: string[] } =>
+          typeof w === "object" && w !== null && "registered_tasks" in w,
+        )
+        .flatMap(w => w.registered_tasks),
+    );
+    if (tasks.size > 0) setTopology(tasks);
+  }
+} catch {
+  // Flower unavailable or timed out -- show full CHAIN_SPECS topology.
+  log({ event: "topology_fallback", reason: "flower_unavailable" });
+}
 
 server.listen(port, () => {
   const mode = startFromEof ? " [session-coupled]" : "";

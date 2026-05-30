@@ -150,9 +150,11 @@ function buildTopology(specs: readonly NodeSpec[]): BuiltTopology {
     paths.push({ id: "repair-loop", d: `M ${sx} ${y0} C ${sx} ${yP}, ${ex} ${yP}, ${ex} ${y0}`, kind: "repair" });
   }
   const tier3Node = bottomNodes.find(n => n.tier === "tier3") ?? null;
-  if (lastVerify && tier3Node) {
-    const x = cx(lastVerify);
-    paths.push({ id: "cap-tier3", d: `M ${x} ${lastVerify.y + lastVerify.h} L ${x} ${tier3Node.y}`, kind: "cap" });
+  // Cap arc originates at gpu_solve (GPU repair exhausted → Tier 3 takeover),
+  // not at the last verify node, to correctly represent the escalation source.
+  if (lastGpu && tier3Node) {
+    const x0 = cx(lastGpu), x1 = cx(tier3Node);
+    paths.push({ id: "cap-tier3", d: `M ${x0} ${lastGpu.y + lastGpu.h} L ${x1} ${tier3Node.y}`, kind: "cap" });
   }
   const cloudNode = bottomNodes.find(n => n.tier === "cloud") ?? null;
   if (tier3Node && cloudNode) {
@@ -171,8 +173,13 @@ function buildTopology(specs: readonly NodeSpec[]): BuiltTopology {
   for (const n of nodes) {
     if (!tierToNodeId.has(n.tier)) tierToNodeId.set(n.tier, n.id);
   }
-  const npuNodes = topNodes.filter(n => n.tier === "npu");
-  if (npuNodes.length > 0) tierToNodeId.set("npu", npuNodes[npuNodes.length - 1]!.id);
+  // Override: for tiers with multiple nodes, pool particles at the LAST node
+  // so the rightmost step of each tier lights up. NPU: draft (not route).
+  // Verify: resolve_npu (not verify). Without this override, first-encounter wins.
+  const npuNodes    = topNodes.filter(n => n.tier === "npu");
+  const verifyNodes = topNodes.filter(n => n.tier === "verify");
+  if (npuNodes.length    > 0) tierToNodeId.set("npu",    npuNodes[npuNodes.length - 1]!.id);
+  if (verifyNodes.length > 0) tierToNodeId.set("verify", verifyNodes[verifyNodes.length - 1]!.id);
 
   const enteringArcStarts = new Map<string, { x: number; y: number } | null>();
   for (let i = 0; i < topNodes.length; i++) {

@@ -102,8 +102,8 @@ describe("nodeForParticle (tier+tool -> chain node)", () => {
   it("maps a non-route NPU tool (e.g. status) to draft", () => {
     expect(nodeForParticle(part("npu", 0, 0, "status"))).toBe("draft");
   });
-  it("maps verify->gate, gpu->gpu_solve, cloud->cloud", () => {
-    expect(nodeForParticle(part("verify", 0))).toBe("verify");
+  it("maps verify->resolve_npu (last verify node), gpu->gpu_solve, cloud->cloud", () => {
+    expect(nodeForParticle(part("verify", 0))).toBe("resolve_npu");
     expect(nodeForParticle(part("gpu", 0))).toBe("gpu_solve");
     expect(nodeForParticle(part("cloud", 0))).toBe("cloud");
   });
