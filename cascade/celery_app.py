@@ -11,10 +11,13 @@ Run (after `docker compose up -d redis` and `uv sync --extra celery`):
 """
 from __future__ import annotations
 
+import json
 import os
 from urllib.parse import quote
 
+import redis as _redis_lib
 from celery import Celery
+from celery.signals import worker_ready
 
 
 # Redis for everything. One URL, two roles (broker + backend).
@@ -61,6 +64,43 @@ app = Celery(
     ],
 )
 
+# ── Topology push ────────────────────────────────────────────────────────────
+# Redis pub/sub channel + state key for the dashboard topology live region.
+# Mirrors cascade.live_receiver.TOPOLOGY_CHANNEL / TOPOLOGY_STATE_KEY.
+_TOPOLOGY_CHANNEL = "cascade.live.topology"
+_TOPOLOGY_STATE_KEY = "cascade.live.topology.current"
+
+
+@app.task(name="cascade.push_topology", queue="verify")
+def push_topology() -> None:
+    """Publish the active topology graph to Redis so the dashboard live-updates
+    its SVG. The graph is derived by introspecting the live canvas signature
+    (the true topology), then augmented with sub-op and repair-loop edges that
+    aren't visible at the chain level.
+
+    For an experiment topology, override ACTIVE_GRAPH in topology_graph.py OR
+    call push_topology with a custom payload directly:
+        from cascade.topology_graph import my_experiment_graph
+        import cascade.celery_app as _ca
+        import redis, json
+        payload = json.dumps(my_experiment_graph.to_dict())
+        redis.Redis.from_url(_ca.REDIS_URL).publish(_ca._TOPOLOGY_CHANNEL, payload)
+    """
+    from cascade.topology_graph import ACTIVE_GRAPH
+
+    payload = json.dumps(ACTIVE_GRAPH.to_dict())
+    r = _redis_lib.Redis.from_url(REDIS_URL)
+    r.publish(_TOPOLOGY_CHANNEL, payload)
+    r.set(_TOPOLOGY_STATE_KEY, payload)
+
+
+@worker_ready.connect
+def _push_topology_on_ready(sender, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    """Fire once when the worker finishes loading so the dashboard gets the
+    topology the moment the worker comes up (not just at the next Beat tick)."""
+    push_topology.delay()
+
+
 app.conf.update(
     # JSON only -- task args/results cross the wire as plain data (charter
     # invariant 2: if it isn't serializable it can't be a task).
@@ -87,4 +127,12 @@ app.conf.update(
     # gets redelivered (double-run). LLM `generate` can take ~180s, so set the
     # window well above the longest task. (RabbitMQ wouldn't need this.)
     broker_transport_options={"visibility_timeout": 3600},
+    # Beat schedule: push the active topology graph to Redis every 30 s so the
+    # dashboard stays in sync after worker restarts or experiment topology swaps.
+    beat_schedule={
+        "push-topology": {
+            "task": "cascade.push_topology",
+            "schedule": 30.0,
+        },
+    },
 )

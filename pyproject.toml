@@ -165,6 +165,7 @@ omit = [
     "cascade/tasks.py",
     "cascade/canvas_spike.py",
     "cascade/topologies_canvas.py",
+    "cascade/topology_graph.py",
     "cascade/canvas_client.py",
     "mcp_servers/*",
     # scripts/: only edge_summary.py is in-scope. Everything else is

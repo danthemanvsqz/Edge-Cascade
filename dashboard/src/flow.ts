@@ -52,17 +52,20 @@ export interface NodeSpec {
   readonly tier: Tier | "tier3";
 }
 
-/** Ordered pipeline spec -- the SINGLE source of truth for layout, path
- * generation, and live-ring matching. Keep in pipeline order. */
+/** Fallback spec used when no Beat-pushed graph has arrived yet.
+ * The REAL topology is pushed from Python via `cascade.push_topology` (Beat
+ * task + worker_ready signal) and rendered by `setTopologyGraph()`. This
+ * spec only affects the initial paint before the first Beat message arrives. */
 export const CHAIN_SPECS: readonly NodeSpec[] = [
-  { task: "mesh.balanced._route",      id: "route",       label: "route",         queue: "npu",    tier: "npu"    },
-  { task: "mesh.balanced._draft",       id: "draft",       label: "draft",         queue: "npu",    tier: "npu"    },
-  { task: "mesh.balanced._verify",      id: "verify_syntax",     label: "verify_syntax",     queue: "verify", tier: "verify" },
-  { task: null,                          id: "verify_functional", label: "verify_functional", queue: "verify", tier: "verify" },
-  { task: null,                          id: "repair_prompt",     label: "repair_prompt",     queue: "verify", tier: "verify" },
-  { task: "mesh.balanced._resolve_npu", id: "resolve_npu",       label: "resolve_npu",       queue: "verify", tier: "verify" },
-  { task: "mesh.balanced._gpu_solve",   id: "gpu_solve",   label: "gpu_solve",     queue: "gpu",    tier: "gpu"    },
-  // Synthetic -- always shown regardless of what the worker has registered.
+  { task: "mesh.balanced._route",       id: "route",             label: "route",             queue: "npu",    tier: "npu"    },
+  { task: "mesh.balanced._draft",        id: "draft",             label: "draft",             queue: "npu",    tier: "npu"    },
+  { task: "mesh.balanced._verify",       id: "verify_syntax",     label: "verify_syntax",     queue: "verify", tier: "verify" },
+  { task: null,                           id: "verify_functional", label: "verify_func",       queue: "verify", tier: "verify" },
+  { task: "mesh.balanced._resolve_npu",  id: "resolve_npu",       label: "resolve_npu",       queue: "verify", tier: "verify" },
+  { task: "mesh.balanced._gpu_solve",    id: "gpu_solve",         label: "gpu_solve",         queue: "gpu",    tier: "gpu"    },
+  // repair_prompt is part of the GPU repair arc, not the forward chain.
+  // It is not in the top-row sequence here; the Beat-pushed graph positions it
+  // correctly above the repair arc. Particles route to gpu_solve as fallback.
   { task: null, id: "tier3", label: "Tier 3 · CLI", queue: "—",     tier: "tier3" },
   { task: null, id: "cloud",  label: "cloud",        queue: "cloud", tier: "cloud" },
 ];
@@ -223,6 +226,219 @@ export function setTopology(registeredTasks?: ReadonlySet<string>): void {
   _topo = buildTopology(specs);
 }
 
+// ── TOPOLOGY signal + live topology region ────────────────────────────────────
+
+/** Signal emitted when the Beat task pushes a new topology graph. The topology
+ * SVG region subscribes to this — topology changes push to all connected
+ * browser clients without a page refresh. */
+export const TOPOLOGY = "topology";
+
+/** Raw graph payload shape published by cascade.push_topology (Beat task).
+ * Mirrors cascade/topology_graph.py TopologyGraph.to_dict(). */
+interface RawGraphPayload {
+  name?: string;
+  nodes: { id: string; label: string; tier: string; queue: string; task: string | null }[];
+  edges: { from: string; to: string; kind: string }[];
+}
+
+/**
+ * Build a BuiltTopology from a raw graph payload (nodes + directed edges).
+ * Uses hierarchical layout: assigns ranks via topological sort on flow/alt
+ * edges, positions parallel alternatives at different rows, floats
+ * repair_prompt above the repair arc, places tier3/cloud in the bottom row.
+ */
+function buildTopologyFromGraph(g: RawGraphPayload): BuiltTopology {
+  const TOP_TIERS = new Set<string>(["npu", "verify", "gpu"]);
+  const REPAIR_KINDS = new Set(["repair"]);
+  const SKIP_FOR_RANK = new Set(["repair", "cap", "parallel"]);
+
+  // Step 1: rank assignment via longest-path on flow/alt edges only.
+  const rankOf = new Map<string, number>();
+  const pred = new Map<string, string[]>(); // predecessors
+  for (const n of g.nodes) { pred.set(n.id, []); rankOf.set(n.id, 0); }
+  for (const e of g.edges) {
+    if (!SKIP_FOR_RANK.has(e.kind)) pred.get(e.to)?.push(e.from);
+  }
+  // BFS-style longest-path: process in topological order
+  const processed = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const n of g.nodes) {
+      if (processed.has(n.id)) continue;
+      const preds = pred.get(n.id) ?? [];
+      if (preds.every(p => processed.has(p))) {
+        const newRank = preds.length === 0 ? 0 : Math.max(...preds.map(p => rankOf.get(p) ?? 0)) + 1;
+        if (newRank !== rankOf.get(n.id)) { rankOf.set(n.id, newRank); changed = true; }
+        processed.add(n.id);
+      }
+    }
+  }
+
+  // Step 2: separate nodes by layout role.
+  const repairNodeIds = new Set(
+    g.edges.filter(e => REPAIR_KINDS.has(e.kind)).flatMap(e => [e.from, e.to])
+  );
+  // A node is "repair-only" if it appears only in repair edges and not in the main flow.
+  const mainEdgeNodes = new Set(
+    g.edges.filter(e => !SKIP_FOR_RANK.has(e.kind)).flatMap(e => [e.from, e.to])
+  );
+  const isRepairFloating = (id: string) => repairNodeIds.has(id) && !mainEdgeNodes.has(id);
+
+  const mainNodes  = g.nodes.filter(n => TOP_TIERS.has(n.tier) && !isRepairFloating(n.id));
+  const repairNodes = g.nodes.filter(n => isRepairFloating(n.id));
+  const capNodes   = g.nodes.filter(n => n.tier === "tier3" || n.tier === "cloud");
+
+  // Step 3: group main nodes by rank, assign row within rank.
+  const byRank = new Map<number, typeof mainNodes>();
+  for (const n of mainNodes) {
+    const r = rankOf.get(n.id) ?? 0;
+    if (!byRank.has(r)) byRank.set(r, []);
+    byRank.get(r)!.push(n);
+  }
+  const posOf = new Map<string, { x: number; y: number }>();
+  const maxRank = mainNodes.length > 0 ? Math.max(...mainNodes.map(n => rankOf.get(n.id) ?? 0)) : 0;
+
+  // Vertical centering offset for multi-row ranks
+  const ROW_INNER_GAP = 24;
+  for (const [rank, nodesAtRank] of byRank) {
+    const count = nodesAtRank.length;
+    const totalH = count * NODE_H + (count - 1) * ROW_INNER_GAP;
+    const startY = ROW_TOP_Y - Math.floor((totalH - NODE_H) / 2);
+    nodesAtRank.forEach((n, rowIdx) => {
+      posOf.set(n.id, {
+        x: 24 + rank * (NODE_W + NODE_GAP),
+        y: startY + rowIdx * (NODE_H + ROW_INNER_GAP),
+      });
+    });
+  }
+
+  // Step 4: position repair-floating nodes above the repair arc midpoint.
+  const repairEdges = g.edges.filter(e => e.kind === "repair");
+  for (const rn of repairNodes) {
+    // Find the GPU-side source and the verify-side target of the repair arc.
+    const inEdge  = repairEdges.find(e => e.to === rn.id);
+    const outEdge = repairEdges.find(e => e.from === rn.id);
+    const srcPos  = inEdge  ? posOf.get(inEdge.from)  : null;
+    const dstPos  = outEdge ? posOf.get(outEdge.to)   : null;
+    const midX = srcPos && dstPos ? (srcPos.x + dstPos.x) / 2 : 24 + maxRank * (NODE_W + NODE_GAP) / 2;
+    posOf.set(rn.id, { x: midX - NODE_W / 2, y: ROW_TOP_Y - 90 });
+  }
+
+  // Step 5: position cap nodes below their sources.
+  const capEdgesByTo = new Map<string, string>(); // to → from
+  for (const e of g.edges.filter(e => e.kind === "cap")) capEdgesByTo.set(e.to, e.from);
+  for (const cn of capNodes) {
+    const srcId = capEdgesByTo.get(cn.id);
+    const srcPos = srcId ? posOf.get(srcId) : null;
+    posOf.set(cn.id, { x: srcPos?.x ?? (24 + maxRank * (NODE_W + NODE_GAP)), y: ROW_BOT_Y });
+  }
+
+  // Build ChainNode objects.
+  const allRawNodes = [...mainNodes, ...repairNodes, ...capNodes];
+  const nodes: ChainNode[] = allRawNodes
+    .filter(n => posOf.has(n.id))
+    .map(n => {
+      const p = posOf.get(n.id)!;
+      return { id: n.id, label: n.label, queue: n.queue, tier: n.tier as Tier | "tier3", x: p.x, y: p.y, w: NODE_W, h: NODE_H };
+    });
+
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const cx = (n: ChainNode) => n.x + n.w / 2;
+  const cy = (n: ChainNode) => n.y + n.h / 2;
+
+  // Step 6: compute viewW and viewH.
+  const xs = nodes.map(n => n.x + n.w);
+  const viewW = xs.length > 0 ? Math.max(...xs) + VIEW_MARGIN_R : 400;
+
+  // Step 7: build paths.
+  const paths: PathDef[] = [];
+  // Entry arc to first main node (leftmost, lowest rank)
+  const firstMain = [...byRank.get(0) ?? []].map(n => nodeMap.get(n.id)).filter(Boolean)[0];
+  if (firstMain) {
+    paths.push({ id: "entry-route", d: `M 0 ${cy(firstMain)} L ${firstMain.x} ${cy(firstMain)}`, kind: "flow" });
+  }
+
+  for (const e of g.edges) {
+    const from = nodeMap.get(e.from);
+    const to   = nodeMap.get(e.to);
+    if (!from || !to) continue;
+    const kind = (e.kind === "flow" || e.kind === "alt") ? "flow"
+               : (e.kind === "repair") ? "repair"
+               : "cap";
+
+    if (e.kind === "repair") {
+      // Curved arc through the floating repair node
+      const y0 = from.y, yP = from.y - 34;
+      const sx = cx(from), ex = cx(to);
+      if (isRepairFloating(from.id) || isRepairFloating(to.id)) {
+        // Straight line to/from the floating repair node
+        paths.push({ id: `${e.from}-${e.to}`, d: `M ${cx(from)} ${cy(from)} L ${cx(to)} ${cy(to)}`, kind: "repair" });
+      } else {
+        // Pure arc (no floating node) — legacy fallback
+        paths.push({ id: `repair-loop`, d: `M ${sx} ${y0} C ${sx} ${yP}, ${ex} ${yP}, ${ex} ${y0}`, kind: "repair" });
+      }
+    } else {
+      const fy = cy(from);
+      if (from.y === to.y) {
+        paths.push({ id: `${e.from}-${e.to}`, d: `M ${from.x + from.w} ${fy} L ${to.x} ${fy}`, kind });
+      } else {
+        paths.push({ id: `${e.from}-${e.to}`, d: `M ${from.x + from.w} ${fy} L ${to.x} ${cy(to)}`, kind });
+      }
+    }
+  }
+
+  // Step 8: particle nodes, tierToNodeId, enteringArcStarts.
+  const particleNodes: string[] = nodes
+    .filter(n => n.tier !== "tier3")
+    .map(n => n.id);
+
+  const tierToNodeId = new Map<string, string>();
+  for (const n of nodes) {
+    if (!tierToNodeId.has(n.tier)) tierToNodeId.set(n.tier, n.id);
+  }
+  const verifyNodes = nodes.filter(n => n.tier === "verify" && !isRepairFloating(n.id));
+  const npuNodes    = nodes.filter(n => n.tier === "npu");
+  if (npuNodes.length    > 0) tierToNodeId.set("npu",    npuNodes[npuNodes.length - 1]!.id);
+  if (verifyNodes.length > 0) tierToNodeId.set("verify", verifyNodes[verifyNodes.length - 1]!.id);
+
+  const enteringArcStarts = new Map<string, { x: number; y: number } | null>();
+  for (const n of nodes) {
+    if (n.tier === "tier3") { enteringArcStarts.set(n.id, null); continue; }
+    const incomingEdge = g.edges.find(e => e.to === n.id && (e.kind === "flow" || e.kind === "alt" || e.kind === "parallel"));
+    if (!incomingEdge) {
+      enteringArcStarts.set(n.id, { x: 0, y: cy(n) }); // entry node
+    } else {
+      const fromNode = nodeMap.get(incomingEdge.from);
+      if (fromNode) enteringArcStarts.set(n.id, { x: fromNode.x + fromNode.w, y: cy(fromNode) });
+      else enteringArcStarts.set(n.id, { x: 0, y: cy(n) });
+    }
+  }
+
+  return { nodes, paths, viewW, particleNodes, tierToNodeId, enteringArcStarts };
+}
+
+/** Called by liveSource.onTopologyChange when the Beat task pushes a new
+ * graph. Replaces _topo with a layout built from the real Python graph spec.
+ * The topology SVG live region re-renders automatically when TOPOLOGY is emitted. */
+export function setTopologyGraph(payload: unknown): void {
+  try {
+    const g = payload as RawGraphPayload;
+    if (!Array.isArray(g.nodes) || !Array.isArray(g.edges)) return;
+    _topo = buildTopologyFromGraph(g);
+  } catch {
+    // Malformed payload — keep current topology.
+  }
+}
+
+/** The topology SVG as a Vinyl live region -- re-renders when TOPOLOGY is
+ * emitted (Beat push) so connected browsers see the updated graph without
+ * a page refresh. */
+export const cascadeFlowTopologyRegion: LiveRegion<DashContext> = liveRegion(
+  "cascade-topology",
+  (_ctx) => cascadeFlowTopology(),
+);
+
 // ── Convenience helpers (use _topo) ──────────────────────────────────────────
 
 function nodeById(id: string): ChainNode {
@@ -241,11 +457,16 @@ export function nodeForParticle(p: Particle): string {
     const routeNode = _topo.nodes.find(n => n.tier === "npu" && n.id === "route");
     if (routeNode) return routeNode.id;
   }
-  // Verify: each tool (verify_syntax, verify_functional, repair_prompt) maps to
-  // its own node so the dashboard shows WHICH gate operation ran.
+  // Verify: route to the specific operation node by tool name when present.
+  // repair_prompt falls back to gpu_solve when no repair_prompt node exists
+  // (CHAIN_SPECS fallback mode — the Beat-pushed graph has the real node).
   if (p.tier === "verify") {
     const opNode = _topo.nodes.find(n => n.id === p.tool);
     if (opNode) return opNode.id;
+    if (p.tool === "repair_prompt") {
+      const gpuNode = _topo.nodes.find(n => n.id === "gpu_solve");
+      if (gpuNode) return gpuNode.id;
+    }
   }
   return _topo.tierToNodeId.get(p.tier) ?? p.tier;
 }

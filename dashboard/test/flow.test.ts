@@ -50,17 +50,16 @@ function outcome(finalTier: string, tsMs: number, won: boolean): LastOutcome {
 }
 
 describe("cascadeFlowTopology (static Canvas chain)", () => {
-  it("renders a 1208x400 SVG with the chain node labels and the chain arcs", () => {
+  it("renders a 1044x400 SVG with the chain node labels and the chain arcs", () => {
     const html = renderToString(cascadeFlowTopology());
-    expect(html).toContain('viewBox="0 0 1208 400"');
-    // Every chain node label appears -- the real Celery tasks, not abstract
-    // tier blobs.
+    expect(html).toContain('viewBox="0 0 1044 400"');
+    // Every forward-chain node label appears. repair_prompt is NOT in the
+    // fallback CHAIN_SPECS — it is positioned by the Beat-pushed graph.
     for (const label of [
       "route",
       "draft",
       "verify_syntax",
       "verify_functional",
-      "repair_prompt",
       "resolve_npu",
       "gpu_solve",
       "Tier 3 · CLI",
@@ -78,8 +77,7 @@ describe("cascadeFlowTopology (static Canvas chain)", () => {
       "route-draft",
       "draft-verify_syntax",
       "verify_syntax-verify_functional",
-      "verify_functional-repair_prompt",
-      "repair_prompt-resolve_npu",
+      "verify_functional-resolve_npu",
       "resolve_npu-gpu_solve",
       "repair-loop",
       "cap-tier3",
@@ -225,7 +223,7 @@ describe("isFlashing / FLASH_MS", () => {
 
 describe("enteringArcStart (particle motion origin)", () => {
   it("returns a start for each particle node, null for tier3", () => {
-    for (const id of ["route", "draft", "verify_syntax", "verify_functional", "repair_prompt", "resolve_npu", "gpu_solve", "cloud"] as const) {
+    for (const id of ["route", "draft", "verify_syntax", "verify_functional", "resolve_npu", "gpu_solve", "cloud"] as const) {
       expect(enteringArcStart(id)).not.toBeNull();
     }
     expect(enteringArcStart("tier3")).toBeNull();
@@ -283,7 +281,7 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).toContain('class="overlay"');
     // One hot ring per node (6); none active at rest.
-    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(9);
+    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(8);
     expect(html).not.toContain("node-hot--hot");
     // No particles, no flash.
     expect(html.match(/class="particle particle--/g)).toBeNull();

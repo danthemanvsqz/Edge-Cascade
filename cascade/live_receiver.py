@@ -36,6 +36,13 @@ LIVE_CHANNEL = "cascade.live.nodes"
 # that already fired; it GETs this key on connect to seed, then rides the deltas.
 LIVE_STATE_KEY = "cascade.live.active"
 
+# Topology graph channel: Celery Beat publishes the full {name, nodes, edges}
+# graph on this channel every 30 s and on worker startup. The dashboard
+# subscribes and calls setTopologyGraph() on each message so the SVG always
+# reflects the live canvas without a server restart.
+TOPOLOGY_CHANNEL = "cascade.live.topology"
+TOPOLOGY_STATE_KEY = "cascade.live.topology.current"
+
 
 def nodes_for(names: Iterable[str]) -> set[str]:
     """Map active celery task names to the set of chain-node ids they occupy.

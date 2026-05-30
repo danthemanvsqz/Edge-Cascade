@@ -19,6 +19,12 @@ import type { Store } from "../store.js";
 
 export const LIVE_CHANNEL = "cascade.live.nodes";
 export const LIVE_STATE_KEY = "cascade.live.active";
+
+// Topology graph channel: Beat publishes {name, nodes[], edges[]} here on
+// worker startup + every 30 s. Dashboard subscribes and calls onTopologyChange.
+export const TOPOLOGY_CHANNEL = "cascade.live.topology";
+export const TOPOLOGY_STATE_KEY = "cascade.live.topology.current";
+
 const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0";
 
 /** Parse one pub/sub delta frame `{node, state}`. The receiver emits only
@@ -63,6 +69,10 @@ export interface CreateLiveSourceOptions {
   /** Called after any active-node change (seed or delta) -- wired to
    * hub.emit(TICK) so the flow region re-renders by push. */
   readonly onChange: () => void;
+  /** Called when a topology graph update arrives from the Beat task. The
+   * argument is the raw parsed payload {name, nodes, edges}. Wire this to
+   * setTopologyGraph() + hub.emit(TOPOLOGY) so the SVG live-region updates. */
+  readonly onTopologyChange?: (payload: unknown) => void;
   readonly redisUrl?: string;
   /** Injectable client factory (default: a lazyConnect ioredis). Tests pass a
    * fake redis so no broker/network is touched. */
@@ -80,21 +90,37 @@ export function createLiveSource(opts: CreateLiveSourceOptions): LiveSource {
   async function start(): Promise<void> {
     sub = make(url);
     seed = make(url);
-    // Seed the current set first, then ride deltas. The tiny GET->subscribe
-    // window self-heals on the next transition -- acceptable for a viz lane.
+    // Seed the current active-node set, then ride deltas.
     const seeded = parseSeed(await seed.get(LIVE_STATE_KEY));
     if (seeded.length > 0) {
       opts.store.setActiveNodes(seeded);
       opts.onChange();
     }
-    sub.on("message", (_channel: string, message: string) => {
+    // Seed the topology graph (best-effort; fall back to CHAIN_SPECS if absent).
+    if (opts.onTopologyChange) {
+      const topoRaw = await seed.get(TOPOLOGY_STATE_KEY);
+      if (topoRaw) {
+        try {
+          opts.onTopologyChange(JSON.parse(topoRaw));
+        } catch { /* malformed — ignore, keep CHAIN_SPECS fallback */ }
+      }
+    }
+    sub.on("message", (channel: string, message: string) => {
+      if (channel === TOPOLOGY_CHANNEL) {
+        if (opts.onTopologyChange) {
+          try {
+            opts.onTopologyChange(JSON.parse(message));
+          } catch { /* ignore */ }
+        }
+        return;
+      }
       const delta = parseDelta(message);
       if (delta !== null) {
         opts.store.applyNodeDelta(delta.node, delta.active);
         opts.onChange();
       }
     });
-    await sub.subscribe(LIVE_CHANNEL);
+    await sub.subscribe(LIVE_CHANNEL, TOPOLOGY_CHANNEL);
   }
 
   async function stop(): Promise<void> {
