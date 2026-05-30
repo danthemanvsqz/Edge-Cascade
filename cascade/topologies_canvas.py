@@ -42,6 +42,8 @@ findings doc.
 """
 from __future__ import annotations
 
+import logging
+
 from celery import chain, chord, group
 
 from cascade import canvas_spike, tasks
@@ -49,6 +51,13 @@ from cascade import topologies as topo_module
 from cascade import verifier as syntax_verifier
 from cascade.celery_app import app
 from cascade.config import CONFIG
+
+_log = logging.getLogger(__name__)
+
+# The local mesh "wins" when one of these tiers resolved the run on its own.
+# capped->tier3 (the bounded repair loop exhausted) and cloud (paid escalation)
+# are losses for the local pipe.
+_LOCAL_TIERS = frozenset({"npu", "igpu", "gpu"})
 
 
 def _new_envelope(query: str, dsl: str | None, topology: str) -> dict:
@@ -274,6 +283,27 @@ def _balanced_cloud(self, env: dict) -> dict:
     return env
 
 
+@app.task(name="mesh.balanced._done", queue="verify", bind=True)
+def _balanced_done(self, env: dict) -> dict:
+    """Step 6 (end of pipe): classify the finished run as a local WIN or a
+    LOSS and emit a win/lose log line. A win is the local mesh (NPU/iGPU/GPU)
+    resolving on its own; a capped->tier3 hand-off or a paid cloud escalation
+    is a loss. Pure marker -- returns env unchanged (never alters the answer
+    or resolution), so appending it to the chain can't change an outcome.
+
+    Unlike the other steps it does NOT `_shortcut`: by the end of the pipe
+    `resolved`/`capped` are exactly what it reads to make the call."""
+    final_tier = env.get("final_tier") or "capped->tier3"
+    won = bool(env.get("resolved")) and final_tier in _LOCAL_TIERS
+    if won:
+        _log.info("cascade WIN  -- local pipe resolved @ %s", final_tier)
+        env["trace"].append(f"done: WIN (local @ {final_tier})")
+    else:
+        _log.info("cascade LOSE -- local pipe yielded -> %s", final_tier)
+        env["trace"].append(f"done: LOSE (-> {final_tier})")
+    return env
+
+
 def balanced_signature(query: str, dsl: str | None = None):
     """Build the Canvas signature for the `balanced` topology. The client
     dispatches this with `.apply_async()` and blocks on `.get()` for the
@@ -285,6 +315,7 @@ def balanced_signature(query: str, dsl: str | None = None):
         _balanced_draft_gate.s(),
         _balanced_gpu_solve.s(),
         _balanced_cloud.s(),
+        _balanced_done.s(),
     )
 
 

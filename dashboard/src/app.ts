@@ -22,6 +22,7 @@ import { page } from "./page.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
+  logFeedRegion,
   meshEffectivenessRegion,
   nowPlayingRegion,
   rateMeterRegion,
@@ -78,11 +79,12 @@ export function createDashboardApp(
   };
 
   // SD-P3 heartbeat: between record arrivals, particles ride their entering
-  // arcs (SD-P1, ANIM_MS=1500) and tier zones pulse (SD-P2, PULSE_MS=1200).
-  // Without a heartbeat the next render only happens when a new record lands,
-  // so an idle moment freezes mid-animation. The scheduler self-loops at
-  // HEARTBEAT_MS while `hasActiveAnimation` is true and stops naturally once
-  // the last in-flight thing settles -- an idle dashboard issues zero ticks.
+  // arcs (ANIM_MS), nodes glow while hot (HOT_MS), and the win/lose flash
+  // holds (FLASH_MS). Without a heartbeat the next render only happens when a
+  // new record lands, so an idle moment freezes mid-animation. The scheduler
+  // self-loops at HEARTBEAT_MS while `hasActiveAnimation` is true and stops
+  // naturally once the last in-flight thing settles -- an idle dashboard
+  // issues zero ticks.
   const scheduleTimer = options.scheduleTimer ??
     ((cb: () => void, ms: number) => setTimeout(cb, ms));
   let heartbeatHandle: unknown = null;
@@ -91,7 +93,7 @@ export function createDashboardApp(
     const now = ctx.nowMs();
     if (!hasActiveAnimation(
       store.particles(),
-      (t) => store.lastIngestMs(t),
+      store.lastOutcome(),
       now,
     )) return;
     heartbeatHandle = scheduleTimer(() => {
@@ -139,6 +141,7 @@ export function createDashboardApp(
         cascadeFlowRegion,
         degenPanelRegion,
         meshEffectivenessRegion,
+        logFeedRegion,
       );
     },
     onMessage: () => {

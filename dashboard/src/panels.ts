@@ -10,7 +10,13 @@ import { h, liveRegion } from "@danthemanvsqz/vinyl";
 import type { LiveRegion, VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import type { CascadeOutcomes, DegenObservation, DegenTier, Tier } from "./store.js";
+import type {
+  CascadeOutcomes,
+  DegenObservation,
+  DegenTier,
+  Particle,
+  Tier,
+} from "./store.js";
 
 /** The single signal that drives every region (for now). */
 export const TICK = "tick";
@@ -37,6 +43,49 @@ export const nowPlayingRegion: LiveRegion<DashContext> = liveRegion(
     );
   },
 );
+
+/** The roomy event log -- the full-width bottom panel. Phase A only had the
+ * single-line "now playing"; this is the scrolling feed the dead screen space
+ * was begging for. Newest record first, capped at LOG_ROWS so the DOM stays
+ * bounded. Each row: wall-clock, tier badge, tool, latency, ok/FAIL. */
+const LOG_ROWS = 60;
+
+export const logFeedRegion: LiveRegion<DashContext> = liveRegion(
+  "log-feed",
+  (ctx) => {
+    // particles() is oldest -> newest; show newest first.
+    const recent = ctx.store.particles().slice(-LOG_ROWS).reverse();
+    if (recent.length === 0) {
+      return h(
+        "div",
+        { class: "log-feed empty" },
+        "no records yet — push a task through the cascade to light it up…",
+      );
+    }
+    return h("div", { class: "log-feed" }, ...recent.map(logRow));
+  },
+);
+
+function logRow(p: Particle): VNode {
+  const cls = p.ok ? "log-row ok" : "log-row fail";
+  return h(
+    "div",
+    { class: cls, "data-tier": p.tier },
+    h("span", { class: "log-time" }, formatClock(p.tsMs)),
+    h("span", { class: "badge tier" }, p.tier),
+    h("span", { class: "log-tool" }, p.tool === "" ? "—" : p.tool),
+    h("span", { class: "log-latency" }, formatMs(p.latencyMs)),
+    h("span", { class: "log-state" }, p.ok ? "ok" : "FAIL"),
+  );
+}
+
+/** HH:MM:SS in local time. Display only -- unit tests assert row structure,
+ * not the exact clock string (which is timezone-dependent). */
+function formatClock(tsMs: number): string {
+  const d = new Date(tsMs);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 /** Header rate meter: total particles + records/sec over the live window. */
 export const rateMeterRegion: LiveRegion<DashContext> = liveRegion(
