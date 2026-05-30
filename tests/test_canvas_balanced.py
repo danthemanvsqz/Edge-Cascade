@@ -325,18 +325,21 @@ def test_balanced_done_logs_lose_on_capped(eager, mocker, caplog):
 
 
 def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
-    """When the router scores difficulty >= `skip_draft_above` (currently the
-    GPU-escalation threshold), the NPU draft is skipped entirely (the
+    """When the router scores difficulty >= `skip_draft_above` AND the prompt
+    clears the length gate (BACKLOG #8), the NPU draft is skipped entirely (the
     2026-05-20 finding: 1.5B drafts never win on hard tasks). The chain
-    proceeds straight to GPU without a draft to repair on."""
+    proceeds straight to GPU without a draft to repair on. A SHORT hard prompt
+    is no longer skipped -- the router over-rates short input."""
     from cascade import topologies as topo_module
+    from cascade.config import CONFIG
     balanced = topo_module.get("balanced")
     assert balanced.skip_draft_above is not None  # contract pin
     _route(mocker, difficulty=balanced.skip_draft_above + 0.01)
     draft = mocker.patch("cascade.tasks.draft")
     _verify(mocker, [True])
     _generate(mocker, text="```python\ngpu fresh\n```")
-    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
+    long_hard = "implement a hard task " * (CONFIG.skip_draft_min_chars // 20)
+    outcome = canvas_client.solve_balanced_canvas(long_hard, dsl="DSL")
     draft.assert_not_called()
     assert outcome.final_tier == "gpu"
     assert outcome.answer == "```python\ngpu fresh\n```"

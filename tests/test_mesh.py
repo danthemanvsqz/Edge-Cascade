@@ -13,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from cascade import mesh, topologies
+from cascade.config import CONFIG
 from cascade.mesh import Candidate, GateInfo, Ops, RouteInfo
 
 
@@ -163,12 +164,23 @@ def test_gpu_only_fresh_fails_then_repair_passes():
 
 
 def test_skip_draft_above_skips_the_npu_draft():
-    # Hard route -> skip the always-failing NPU draft, go straight to GPU.
+    # Hard AND long route -> skip the always-failing NPU draft, go to GPU.
+    # (BACKLOG #8: the skip now also requires the prompt to clear the length
+    # gate, so use a long query here.)
     topo = topologies.Topology("hard", ("npu", "gpu"), skip_draft_above=0.7)
     ops, c = make_ops(difficulty=0.85, gate_seq=[True])
-    out = mesh.solve("q", topo, ops)
+    out = mesh.solve("x" * (CONFIG.skip_draft_min_chars + 1), topo, ops)
     assert out.final_tier == "gpu" and c["draft"] == 0
     assert any("skipped" in line for line in out.trace)
+
+
+def test_short_hard_prompt_still_drafts_on_npu():
+    # BACKLOG #8: a SHORT hard prompt is no longer skipped -- the router over-
+    # rates short input, so it gets the cheap NPU shot (which here passes).
+    topo = topologies.Topology("hard", ("npu", "gpu"), skip_draft_above=0.7)
+    ops, c = make_ops(difficulty=0.85, gate_seq=[True])
+    out = mesh.solve("short hard prompt", topo, ops)
+    assert out.final_tier == "npu" and c["draft"] == 1
 
 
 def test_draft_not_skipped_below_threshold():
@@ -186,9 +198,10 @@ def test_gpu_unavailable_midway_through_repair_caps():
 
 
 def test_balanced_skips_npu_draft_on_hard_route():
-    # difficulty >= balanced.skip_draft_above (0.70) -> no NPU draft, GPU first.
+    # difficulty >= balanced.skip_draft_above (0.70) AND long enough (BACKLOG #8)
+    # -> no NPU draft, GPU first.
     ops, c = make_ops(difficulty=0.75, gate_seq=[True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("x" * (CONFIG.skip_draft_min_chars + 1), "balanced", ops)
     assert out.final_tier == "gpu" and c["draft"] == 0 and c["generate"] == 1
 
 

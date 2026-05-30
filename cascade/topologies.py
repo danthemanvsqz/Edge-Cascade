@@ -69,3 +69,18 @@ def get(name: str) -> Topology:
     except KeyError:
         valid = ", ".join(sorted(TOPOLOGIES))
         raise KeyError(f"unknown topology {name!r}; valid: {valid}") from None
+
+
+def should_skip_draft(
+    difficulty: float, query: str, threshold: float | None, min_chars: int
+) -> bool:
+    """Length-aware skip-draft decision (BACKLOG #8).
+
+    Skip the Tier-1 NPU draft only when the task is BOTH flagged hard
+    (`difficulty >= threshold`) AND the prompt is long enough
+    (`len(query) >= min_chars`) that the NPU attempt is genuinely wasteful.
+    Short prompts always get the cheap (~3s) NPU shot: the router over-rates
+    short input, so a high score on a one-liner is more likely a mis-rate than a
+    truly-hard task, and drafting it is fast. `threshold is None` => never skip.
+    """
+    return threshold is not None and difficulty >= threshold and len(query) >= min_chars

@@ -236,6 +236,16 @@ class Config:
     # hard. The small router rates trivial code ~0.5-0.65; clearly-hard ~0.85+.
     escalate_to_gpu_difficulty: float = 0.70
     escalate_to_cloud_difficulty: float = 0.80
+    # Length gate on the skip-draft rule (BACKLOG #8). The skip-draft optimization
+    # (skip the NPU draft when the router flags a task hard) over-fires because
+    # the small router OVER-RATES short input: a one-line "implement a red-black
+    # tree" gets the same 0.85 as a 2000-char spec. So skip the cheap (~3s) NPU
+    # draft only when the task is hard AND the prompt is at least this long;
+    # shorter prompts always get the NPU shot (wins the over-rated-easy cases,
+    # ~3s cost when it loses). 2026-05-30 log analysis: short over-rated skips
+    # clustered ~66-133 chars vs genuine specs ~770-2344 -- a clean gap, so any
+    # value in [160, 700] behaves identically on that data.
+    skip_draft_min_chars: int = 240
 
     @property
     def cloud_enabled(self) -> bool:
