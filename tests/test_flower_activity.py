@@ -97,6 +97,12 @@ def test_snapshot_bad_json_returns_empty(monkeypatch):
     assert snapshot() == []
 
 
+def test_snapshot_non_dict_json_returns_empty(monkeypatch):
+    # 200 + valid JSON that isn't an object: must not AttributeError out of the loop.
+    monkeypatch.setattr(fa.httpx, "get", lambda url, timeout: _FakeResp(200, payload=[]))
+    assert snapshot() == []
+
+
 def test_sample_occupancy_counts_one_interval(monkeypatch):
     # monotonic: deadline calc (0.0 -> deadline 1.0), enter loop (0.0 < 1.0),
     # exit loop (99.0 >= 1.0) -> exactly one sampled interval.

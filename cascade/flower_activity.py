@@ -93,7 +93,11 @@ def snapshot(base_url: str = FLOWER_URL, timeout: float = 2.0) -> list[ActiveTas
         resp = httpx.get(f"{base_url}/api/tasks", timeout=timeout)
         if resp.status_code != 200:
             return []
-        return parse_active(resp.json(), now=time.time())
+        body = resp.json()
+        # Guard the shape parse_active requires: a 200 carrying valid JSON that
+        # isn't an object (a list/str from a proxy or a future API change) would
+        # otherwise AttributeError out of `.items()` and break the poll loop.
+        return parse_active(body, now=time.time()) if isinstance(body, dict) else []
     except (httpx.HTTPError, ValueError):
         return []
 
