@@ -315,11 +315,18 @@ def _pick_first_verified(self, results: list[dict], env: dict) -> dict:
     does NOT enter the bounded GPU repair loop (that is `balanced`'s job) -- a
     double-miss hands straight to Tier-3. Trades GPU cost (the generate always
     runs) for latency; a per-workload topology choice, never a default."""
+    # `env` was captured by signature at dispatch time; the group arms return
+    # their OWN dicts (`results`) and never mutate the envelope, so reading the
+    # frozen `env` here is correct. (If an arm were ever changed to mutate
+    # envelope state, that mutation would be silently dropped -- keep arms pure.)
     draft_res = results[0] if len(results) > 0 else {}
     gpu_res = results[1] if len(results) > 1 else {}
     for tier, res in (("npu", draft_res), ("gpu", gpu_res)):
+        # A non-dict / unavailable / empty-text arm is never gated -- skip it.
+        # The isinstance guard must cover the .get below too (a non-dict result
+        # would otherwise raise AttributeError, not hand off cleanly).
         text = res.get("text", "") if isinstance(res, dict) else ""
-        if not (res.get("available", True) and text):
+        if not (isinstance(res, dict) and res.get("available", True) and text):
             env["trace"].append(f"low_latency: {tier} race candidate unavailable")
             continue
         passed, _ = _gate(text, env["dsl"])
