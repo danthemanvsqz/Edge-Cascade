@@ -483,7 +483,7 @@ If parity diverges:
 | 3 | Per-model tasks + `model.swap` | — | not started |
 | 4 | pytest-celery integration infra | — | not started |
 | 5 | Bare-metal layout docs + launch scripts | this PR | pending review |
-| 6 | `low_latency` chord | — | not started |
+| 6 | `low_latency` chord (6a align + 6b chord) | #102 + this PR | pending review |
 | 7 | Default flip + Ollama deprecation | — | not started |
 
 ## After Phase 2

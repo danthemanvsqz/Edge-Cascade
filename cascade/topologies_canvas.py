@@ -42,7 +42,7 @@ findings doc.
 """
 from __future__ import annotations
 
-from celery import chain
+from celery import chain, chord, group
 
 from cascade import canvas_spike, tasks
 from cascade import topologies as topo_module
@@ -285,4 +285,78 @@ def balanced_signature(query: str, dsl: str | None = None):
         _balanced_draft_gate.s(),
         _balanced_gpu_solve.s(),
         _balanced_cloud.s(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# low_latency -- Slice 6b. The headline composition Phase 2 was building
+# toward (subsumes the old P2c "speculative GPU"). Instead of the balanced
+# chain's SEQUENTIAL route -> draft -> gate -> swap -> generate, race the NPU
+# draft and the GPU generate CONCURRENTLY (a chord's group) and take the first
+# candidate that verifies. The latency win lands when the NPU draft usually
+# FAILS the gate (the 2026-05-20 finding for hard tasks): balanced pays npu +
+# gpu back-to-back, low_latency overlaps them.
+
+
+@app.task(name="mesh.low_latency._pick", queue="verify", bind=True)
+def _pick_first_verified(self, results: list[dict], env: dict) -> dict:
+    """Chord callback: gate the raced candidates, resolve to the first VERIFIED.
+
+    `results` is the group's output in arm order: [npu_draft_result,
+    gpu_generate_result]. Preference order is cheapest-first (npu before gpu):
+    a verified NPU draft wins because Tier-1 is ~free; otherwise the GPU
+    candidate; otherwise capped->Tier-3.
+
+    Celery semantics that shape this (documented in the findings): a chord
+    callback fires only AFTER ALL group members finish, so this is "first in
+    PREFERENCE order that verifies", NOT "first to FINISH" -- there is no
+    early-kill of the slower arm. The win is concurrency of the two arms, not
+    cancellation. And low_latency is the FAST speculative path: it deliberately
+    does NOT enter the bounded GPU repair loop (that is `balanced`'s job) -- a
+    double-miss hands straight to Tier-3. Trades GPU cost (the generate always
+    runs) for latency; a per-workload topology choice, never a default."""
+    draft_res = results[0] if len(results) > 0 else {}
+    gpu_res = results[1] if len(results) > 1 else {}
+    for tier, res in (("npu", draft_res), ("gpu", gpu_res)):
+        text = res.get("text", "") if isinstance(res, dict) else ""
+        if not (res.get("available", True) and text):
+            env["trace"].append(f"low_latency: {tier} race candidate unavailable")
+            continue
+        passed, _ = _gate(text, env["dsl"])
+        env["trace"].append(
+            f"low_latency: {tier} race candidate gate "
+            f"{'PASS' if passed else 'FAIL'}"
+        )
+        if passed:
+            env["answer"] = text
+            env["final_tier"] = tier
+            env["resolved"] = True
+            return env
+    env["capped"] = True
+    env["trace"].append(
+        "low_latency: neither raced candidate verified -> capped->tier3"
+    )
+    return env
+
+
+def low_latency_signature(query: str, dsl: str | None = None):
+    """Build the `low_latency` Canvas signature -- a chord racing the NPU draft
+    against the GPU generate, callback picks the first verified candidate.
+
+    The GPU arm prepends `model.swap("qwen14b")` so the production coder is
+    resident before generate (same guarantee as `balanced`'s gpu_solve handoff);
+    `.si()` keeps generate immutable so the swap's return dict isn't injected as
+    its prompt. No route step -- low_latency speculates rather than routing
+    (charter: topology IS the routing decision). Dispatched via
+    `cascade.canvas_client.solve_low_latency_canvas`."""
+    env = _new_envelope(query, dsl, topology="low_latency")
+    return chord(
+        group(
+            tasks.draft_task.s(query),
+            chain(
+                tasks.swap_task.s("qwen14b"),
+                tasks.generate_qwen14b_task.si(query),
+            ),
+        ),
+        _pick_first_verified.s(env=env),
     )

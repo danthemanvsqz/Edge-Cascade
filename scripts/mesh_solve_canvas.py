@@ -1,8 +1,13 @@
-"""Canvas client CLI: dispatch a balanced topology and print the Outcome.
+"""Canvas client CLI: dispatch a topology and print the Outcome.
 
 Usage (after `docker compose up -d redis` and a Celery worker running):
     uv run python scripts/mesh_solve_canvas.py "write a python function add(a, b) -> a + b"
     uv run python scripts/mesh_solve_canvas.py --dsl "<dsl-text>" "<query>"
+    uv run python scripts/mesh_solve_canvas.py --topology low_latency "<query>"
+
+The --topology flag picks balanced (sequential cascade) or low_latency (the
+Slice-6b chord racing NPU draft vs GPU generate). Time both on the same prompt
+to fill docs/FINDINGS-canvas-phase2-low-latency.md's wall-time table.
 
 Worker launch (separate shell -- no `cloud` queue by default, so cloud spend
 is structurally impossible without an explicit `-Q cloud` opt-in):
@@ -22,12 +27,21 @@ from __future__ import annotations
 import argparse
 import time
 
-from cascade.canvas_client import solve_balanced_canvas
+from cascade.canvas_client import solve_balanced_canvas, solve_low_latency_canvas
+
+_TOPOLOGIES = {
+    "balanced": solve_balanced_canvas,
+    "low_latency": solve_low_latency_canvas,
+}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Dispatch a balanced Canvas signature; print the Outcome.",
+        description="Dispatch a Canvas signature; print the Outcome.",
+    )
+    ap.add_argument(
+        "--topology", choices=sorted(_TOPOLOGIES), default="balanced",
+        help="which Canvas topology to dispatch (default: balanced).",
     )
     ap.add_argument(
         "--dsl", default=None,
@@ -39,11 +53,12 @@ def main() -> None:
     args = ap.parse_args()
 
     query = " ".join(args.query)
+    solve = _TOPOLOGIES[args.topology]
     t0 = time.perf_counter()
-    outcome = solve_balanced_canvas(query, dsl=args.dsl)
+    outcome = solve(query, dsl=args.dsl)
     wall = time.perf_counter() - t0
 
-    print(f"\n=== Canvas balanced ({wall:.2f}s) ===")
+    print(f"\n=== Canvas {args.topology} ({wall:.2f}s) ===")
     print(f"topology    : {outcome.topology}")
     print(f"final_tier  : {outcome.final_tier}")
     print(f"resolved    : {outcome.resolved}")
