@@ -24,6 +24,8 @@ end-to-end but their coverage doesn't count toward the 100% gate.
 """
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 pytest.importorskip("celery", reason="celery is an opt-in extra")
@@ -288,6 +290,38 @@ def test_balanced_chain_trace_records_each_step(eager, mocker):
     # Resolved at NPU; gpu/cloud steps are pass-throughs and don't trace.
     assert "gpu solve" not in joined
     assert "cloud" not in joined
+
+
+def test_balanced_done_logs_win_on_local_resolution(eager, mocker, caplog):
+    """End-of-pipe `_balanced_done` classifies an NPU/GPU resolution as a WIN:
+    a `done: WIN` trace entry + an INFO win log line. The marker returns env
+    unchanged, so the outcome itself is identical to the no-done chain."""
+    _route(mocker)
+    _draft(mocker, text="```python\nrev\n```")
+    _verify(mocker, [True])
+    with caplog.at_level(logging.INFO, logger="cascade.topologies_canvas"):
+        outcome = canvas_client.solve_balanced_canvas("reverse", dsl="DSL")
+    assert outcome.final_tier == "npu"
+    assert outcome.resolved is True
+    assert outcome.trace[-1] == "done: WIN (local @ npu)"
+    assert any("cascade WIN" in r.message for r in caplog.records)
+
+
+def test_balanced_done_logs_lose_on_capped(eager, mocker, caplog):
+    """A capped->tier3 run is a LOSS for the local pipe: `_balanced_done`
+    emits a `done: LOSE` trace entry + an INFO lose log line."""
+    mocker.patch("cascade.topologies_canvas.CONFIG",
+                 mocker.Mock(enable_cloud=False))
+    _route(mocker)
+    _draft(mocker, text="bad")
+    _verify(mocker, [False] + [False] * (CAP + 1))
+    _generate(mocker)
+    with caplog.at_level(logging.INFO, logger="cascade.topologies_canvas"):
+        outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
+    assert outcome.final_tier == "capped->tier3"
+    assert outcome.capped is True
+    assert outcome.trace[-1] == "done: LOSE (-> capped->tier3)"
+    assert any("cascade LOSE" in r.message for r in caplog.records)
 
 
 def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
