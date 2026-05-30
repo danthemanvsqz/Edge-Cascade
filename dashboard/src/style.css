@@ -199,24 +199,26 @@ body.dashboard {
 
 .node-spin {
   stroke: var(--tone);
-  stroke-width: 2;
+  stroke-width: 2.5;
   fill: none;
   opacity: 0;
   pointer-events: none;
+  /* Dashes MARCH around the border (animated stroke-dashoffset) rather than
+   * rotating the element -- rotating a wide rounded-rect tumbles its corners
+   * and reads as broken; a travelling dash reads as a clean "in progress". */
   stroke-dasharray: 14 10;
-  transform-box: fill-box;
-  transform-origin: center;
 }
 .node-spin--spinning {
-  opacity: 0.9;
-  filter: drop-shadow(0 0 6px var(--tone));
-  animation: node-spin-rot 2.4s linear infinite;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 5px var(--tone));
+  animation: node-spin-march 0.8s linear infinite;
 }
-@keyframes node-spin-rot {
-  to { transform: rotate(360deg); }
+/* One full dash+gap period (14 + 10 = 24) per loop, so the march is seamless. */
+@keyframes node-spin-march {
+  to { stroke-dashoffset: -24; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .node-spin--spinning { animation: none; opacity: 0.9; stroke-dasharray: none; }
+  .node-spin--spinning { animation: none; opacity: 0.95; }
 }
 
 .node-stat {

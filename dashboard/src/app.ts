@@ -17,7 +17,13 @@ import type {
   VinylWSServer,
 } from "@danthemanvsqz/vinyl";
 
-import { cascadeFlowRegion, hasActiveAnimation, HEARTBEAT_MS } from "./flow.js";
+import {
+  cascadeFlowRegion,
+  cascadeSpinRegion,
+  hasActiveAnimation,
+  HEARTBEAT_MS,
+  LIVE,
+} from "./flow.js";
 import { page } from "./page.js";
 import {
   cascadeHealthRegion,
@@ -148,6 +154,9 @@ export function createDashboardApp(
         meshEffectivenessRegion,
         logFeedRegion,
       );
+      // Liveness lane on its own signal -- ledger TICKs never touch the spin
+      // region, so the ring's animation isn't restarted by particle/hot renders.
+      hub.subscribe(LIVE, conn, cascadeSpinRegion);
     },
     onMessage: () => {
       // Phase A page has no forms / actions; ignore any inbound frame.
@@ -157,14 +166,15 @@ export function createDashboardApp(
     },
   });
 
-  // Liveness lane: each node-state change re-renders by push (TICK) and kicks
-  // the heartbeat so the ring keeps spinning between deltas. Construction is
-  // side-effect-free (no redis client until start()).
+  // Liveness lane: a node-state change re-renders ONLY the spin region via its
+  // own LIVE signal -- never TICK -- so the ledger lane and the liveness lane
+  // stay decoupled (no flicker either direction). The spin is CSS-continuous,
+  // so it needs no heartbeat. Construction is side-effect-free (no redis client
+  // until start()).
   const liveSource = createLiveSource({
     store,
     onChange: () => {
-      hub.emit(TICK);
-      maybeScheduleHeartbeat();
+      hub.emit(LIVE);
     },
   });
 

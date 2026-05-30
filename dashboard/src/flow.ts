@@ -237,11 +237,23 @@ export const cascadeFlowRegion: LiveRegion<DashContext> = liveRegion(
   (ctx) => overlaySvg(ctx),
 );
 
-function overlaySvg(ctx: DashContext): VNode {
-  const nowMs = ctx.nowMs();
-  const particles = ctx.store.particles();
-  const byNode = bucketByNode(particles);
-  const lastOutcome = ctx.store.lastOutcome();
+/** The liveness signal -- emitted ONLY by the live source on a node-state delta,
+ * separate from the ledger `TICK`. The spin region subscribes to this alone, so
+ * ledger re-renders (particles arriving, a hot-ring "landing", the heartbeat)
+ * never replace the spin ring's DOM and restart its CSS animation. THIS is the
+ * lane boundary that stops the ring flickering when a highlight lands. */
+export const LIVE = "live";
+
+/** The spinning-ring overlay as its OWN live region (the liveness lane),
+ * decoupled from the ledger-driven cascadeFlowRegion: a separate stacked SVG
+ * that re-renders only on LIVE, so its animation runs uninterrupted between
+ * node transitions. */
+export const cascadeSpinRegion: LiveRegion<DashContext> = liveRegion(
+  "cascade-spin",
+  (ctx) => spinOverlaySvg(ctx),
+);
+
+function spinOverlaySvg(ctx: DashContext): VNode {
   const activeNodes = ctx.store.activeNodes();
   return h(
     "svg",
@@ -251,12 +263,28 @@ function overlaySvg(ctx: DashContext): VNode {
       xmlns: "http://www.w3.org/2000/svg",
       "aria-hidden": "true",
     },
-    outcomeFlash(lastOutcome, nowMs),
     h(
       "g",
       { class: "node-spins" },
       ...NODES.map((n) => spinRing(n, activeNodes)),
     ),
+  );
+}
+
+function overlaySvg(ctx: DashContext): VNode {
+  const nowMs = ctx.nowMs();
+  const particles = ctx.store.particles();
+  const byNode = bucketByNode(particles);
+  const lastOutcome = ctx.store.lastOutcome();
+  return h(
+    "svg",
+    {
+      class: "overlay",
+      viewBox: `0 0 ${String(VIEW_W)} ${String(VIEW_H)}`,
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": "true",
+    },
+    outcomeFlash(lastOutcome, nowMs),
     h(
       "g",
       { class: "node-hots" },
