@@ -14,6 +14,7 @@ safe to import from anywhere (OBS-1, Flower-backed variant).
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
 
 import httpx
@@ -95,3 +96,22 @@ def snapshot(base_url: str = FLOWER_URL, timeout: float = 2.0) -> list[ActiveTas
         return parse_active(resp.json(), now=time.time())
     except (httpx.HTTPError, ValueError):
         return []
+
+
+def sample_occupancy(
+    duration_s: float, hz: float = 2.0, base_url: str = FLOWER_URL
+) -> dict[str, float]:
+    """Poll active nodes for `duration_s` at `hz`; return {node: seconds busy}.
+
+    The experiment consumer: aggregate tier occupancy over a live solve by
+    sampling `active_nodes(snapshot())` on a timer. Each sample a node is seen
+    counts as one `interval` of busy time, so the returned seconds approximate
+    how long each chain node held a tier during the window.
+    """
+    interval = 1.0 / hz
+    counts: Counter[str] = Counter()
+    deadline = time.monotonic() + duration_s
+    while time.monotonic() < deadline:
+        counts.update(active_nodes(snapshot(base_url=base_url)))
+        time.sleep(interval)
+    return {node: n * interval for node, n in counts.items()}

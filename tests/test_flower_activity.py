@@ -95,3 +95,17 @@ def test_snapshot_httpx_error_returns_empty(monkeypatch):
 def test_snapshot_bad_json_returns_empty(monkeypatch):
     monkeypatch.setattr(fa.httpx, "get", lambda url, timeout: _FakeResp(200, raise_on_json=True))
     assert snapshot() == []
+
+
+def test_sample_occupancy_counts_one_interval(monkeypatch):
+    # monotonic: deadline calc (0.0 -> deadline 1.0), enter loop (0.0 < 1.0),
+    # exit loop (99.0 >= 1.0) -> exactly one sampled interval.
+    clock = iter([0.0, 0.0, 99.0])
+    monkeypatch.setattr(fa.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(fa.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        fa,
+        "snapshot",
+        lambda base_url: [ActiveTask("mesh.balanced._gpu_solve", "gpu_solve", "gpu", "u1", "w", 5.0)],
+    )
+    assert fa.sample_occupancy(duration_s=1.0, hz=1.0) == {"gpu_solve": 1.0}
