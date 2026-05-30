@@ -115,10 +115,12 @@ def _balanced_draft(self, env: dict) -> dict:
     if _shortcut(env):
         return env
     balanced = topo_module.get("balanced")
-    if (balanced.skip_draft_above is not None
-            and env["difficulty"] >= balanced.skip_draft_above):
+    if topo_module.should_skip_draft(
+            env["difficulty"], env["query"],
+            balanced.skip_draft_above, CONFIG.skip_draft_min_chars):
         env["trace"].append(
-            f"npu draft skipped (difficulty>={balanced.skip_draft_above})"
+            f"npu draft skipped (difficulty>={balanced.skip_draft_above}, "
+            f"len>={CONFIG.skip_draft_min_chars})"
         )
         return env
     cand = tasks.draft(env["query"])

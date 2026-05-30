@@ -42,3 +42,30 @@ def test_unknown_topology_raises_with_valid_list():
         topologies.get("nope")
     msg = str(e.value)
     assert "nope" in msg and "balanced" in msg and "low_power" in msg
+
+
+class TestShouldSkipDraft:
+    """The length-aware skip-draft decision (BACKLOG #8): skip the cheap NPU
+    draft only for a task that is BOTH hard AND long."""
+
+    THRESH = 0.70
+    MIN = 240
+
+    def test_skips_when_hard_and_long(self):
+        long_q = "x" * 300
+        assert topologies.should_skip_draft(0.85, long_q, self.THRESH, self.MIN) is True
+
+    def test_does_not_skip_a_short_hard_prompt(self):
+        # The fix: an over-rated one-liner gets the NPU shot instead of skipping.
+        short_q = "implement a red-black tree with insert and delete"
+        assert topologies.should_skip_draft(0.85, short_q, self.THRESH, self.MIN) is False
+
+    def test_does_not_skip_below_the_difficulty_threshold(self):
+        assert topologies.should_skip_draft(0.65, "x" * 300, self.THRESH, self.MIN) is False
+
+    def test_never_skips_when_threshold_is_none(self):
+        assert topologies.should_skip_draft(0.99, "x" * 300, None, self.MIN) is False
+
+    def test_boundary_lengths(self):
+        assert topologies.should_skip_draft(0.85, "x" * 240, self.THRESH, self.MIN) is True
+        assert topologies.should_skip_draft(0.85, "x" * 239, self.THRESH, self.MIN) is False

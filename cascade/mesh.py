@@ -157,8 +157,8 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
     # draft was clean or no observation has happened yet.
     prior_degen: tuple[str, ...] = ()
     draft_tier = next((t for t in topo.ladder if t in ("npu", "igpu")), None)
-    skip = (topo.skip_draft_above is not None
-            and route.difficulty >= topo.skip_draft_above)
+    skip = topologies.should_skip_draft(
+        route.difficulty, query, topo.skip_draft_above, CONFIG.skip_draft_min_chars)
     if draft_tier and not skip:
         if draft_tier == "igpu" and ops.igpu_draft is not None:
             draft_op, draft_name = ops.igpu_draft, "igpu"
@@ -192,7 +192,8 @@ def solve(query: str, topology: str | topologies.Topology, ops: Ops) -> Outcome:
             )
             prior, failures, prior_degen = None, (), ()
     elif draft_tier:
-        trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above})")
+        trace.append(f"{draft_tier} draft skipped (difficulty>={topo.skip_draft_above}, "
+                     f"len>={CONFIG.skip_draft_min_chars})")
 
     # 2) GPU phase -- only if this topology includes a gpu tier.
     if "gpu" not in topo.ladder:
