@@ -30,7 +30,8 @@ def run(channel: str = LIVE_CHANNEL) -> None:
     pub = redis.Redis.from_url(app.conf.broker_url)
     state = app.events.State()
     prev: set[str] = set()
-    active_since: dict[str, float] = {}  # node -> activation time, for the min-lit hold
+    active_since: dict[str, float] = {}   # node -> activation time, for the min-lit hold
+    pending_idles: dict[str, float] = {}  # node -> not_before timestamp (non-blocking hold)
 
     def on_event(event: dict) -> None:
         nonlocal prev
@@ -39,7 +40,8 @@ def run(channel: str = LIVE_CHANNEL) -> None:
         # started makes the event fire at execution, not enqueue).
         active = [t.name for t in state.tasks.values() if t.name and t.state == "STARTED"]
         prev = publish_state(
-            pub, channel, LIVE_STATE_KEY, prev, nodes_for(active), active_since, time.time()
+            pub, channel, LIVE_STATE_KEY, prev, nodes_for(active),
+            active_since, time.time(), pending_idles,
         )
 
     with app.connection() as conn:
