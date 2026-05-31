@@ -45,29 +45,68 @@ _TS = re.compile(r"^\d{10}\.\d+$")
 
 
 def _scoreboard() -> str:
-    """Best-effort routing metrics from cascade.rec; never raises."""
+    """Best-effort routing metrics from cascade.rec; never raises.
+
+    Shows all-time totals alongside this session's W/L. A "session" is records
+    after the most recent gap of > 30 minutes between consecutive timestamps.
+    """
     try:
         if not REC.exists():
             return ("Pipeline scoreboard: no routed outcomes recorded yet "
                     "(runs/cascade.rec is empty) -- route the next coding task.")
         text = REC.read_text(encoding="utf-8", errors="replace")
-        total = text.count("%%END")
-        wins = len(re.findall(r"done: WIN", text))
-        losses = len(re.findall(r"done: LOSE", text))
-        last_ts = max((float(m.group()) for ln in text.splitlines()
-                       if (m := _TS.match(ln.strip()))), default=0.0)
+
+        # Parse records: each %%END-delimited block carries a ts line + outcome.
+        records: list[tuple[float, str | None]] = []
+        for block in text.split("%%END"):
+            block_ts: float | None = None
+            for ln in block.splitlines():
+                m = _TS.match(ln.strip())
+                if m:
+                    block_ts = float(m.group())
+            if block_ts is None:
+                continue
+            if "done: WIN" in block:
+                outcome: str | None = "WIN"
+            elif "done: LOSE" in block:
+                outcome = "LOSE"
+            else:
+                outcome = None
+            records.append((block_ts, outcome))
+
+        records.sort()
+        total = len(records)
+        wins_all = sum(1 for _, o in records if o == "WIN")
+        losses_all = sum(1 for _, o in records if o == "LOSE")
+
+        # Session: records after the most recent gap > 1800 s.
+        session_start = 0
+        for i in range(1, len(records)):
+            if records[i][0] - records[i - 1][0] > 1800:
+                session_start = i
+        session = records[session_start:]
+        wins_s = sum(1 for _, o in session if o == "WIN")
+        losses_s = sum(1 for _, o in session if o == "LOSE")
+
+        last_ts = records[-1][0] if records else 0.0
         if last_ts:
             mins = (time.time() - last_ts) / 60.0
-            ago = (f"{mins:.0f} min ago" if mins < 90
-                   else f"{mins / 60:.1f} h ago")
+            ago = f"{mins:.0f} min ago" if mins < 90 else f"{mins / 60:.1f} h ago"
             staleness = (" -- STALE; recent coding likely bypassed the pipeline"
                          if mins > 30 else "")
             last = f"last route {ago}{staleness}"
         else:
             last = "no timestamped route found"
-        verdicts = (f", {wins}W/{losses}L logged"
-                    if (wins or losses) else "")
-        return f"Pipeline scoreboard: {total} routed outcomes{verdicts}; {last}."
+
+        verdicts_all = f", {wins_all}W/{losses_all}L" if (wins_all or losses_all) else ""
+        if wins_s + losses_s > 0:
+            pct = round(wins_s / (wins_s + losses_s) * 100)
+            session_str = f"session: {wins_s}W/{losses_s}L {pct}%"
+        else:
+            session_str = "session: no routes yet"
+
+        return (f"Pipeline scoreboard: {total} routed outcomes{verdicts_all} "
+                f"({session_str}); {last}.")
     except Exception:  # noqa: BLE001 -- metrics must never break prompt submit
         return ""
 
