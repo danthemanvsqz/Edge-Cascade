@@ -14,7 +14,7 @@ module.exports = {
   apps: [
     {
       name: "edge-dashboard",
-      script: path.join(__dirname, "node_modules/.bin/tsx"),
+      script: path.join(__dirname, "../node_modules/tsx/dist/cli.mjs"),
       args: "src/server.ts",
       cwd: __dirname,
       env: {

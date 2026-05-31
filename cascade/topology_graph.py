@@ -124,11 +124,38 @@ LOW_LATENCY_GRAPH = TopologyGraph(
     ),
 )
 
+# ── cli model selection experiment topology ───────────────────────────────────
+
+CLI_MODEL_SELECTION_GRAPH = TopologyGraph(
+    name="cli_model_selection",
+    nodes=(
+        GraphNode("route",      "task router",          "verify", "verify", None),
+        GraphNode("qwen_14b",   "qwen2.5-coder:14b",   "gpu",    "gpu",    None),
+        GraphNode("r1_14b",     "deepseek-r1:14b",      "gpu",    "gpu",    None),
+        GraphNode("coder_6b",   "deepseek-coder:6.7b",  "gpu",    "gpu",    None),
+        GraphNode("qwen_7b",    "qwen2.5-coder:7b",     "gpu",    "gpu",    None),
+        GraphNode("gate",       "struct-gate",           "verify", "verify", None),
+        GraphNode("done",       "_done",                 "verify", "verify", None),
+    ),
+    edges=(
+        GraphEdge("route",    "qwen_14b", "flow"),
+        GraphEdge("route",    "r1_14b",   "alt"),
+        GraphEdge("route",    "coder_6b", "alt"),
+        GraphEdge("route",    "qwen_7b",  "alt"),
+        GraphEdge("qwen_14b", "gate",     "parallel"),
+        GraphEdge("r1_14b",   "gate",     "parallel"),
+        GraphEdge("coder_6b", "gate",     "parallel"),
+        GraphEdge("qwen_7b",  "gate",     "parallel"),
+        GraphEdge("gate",     "done",     "flow"),
+    ),
+)
+
 # Active graph — what the Beat task publishes. Swap for experiment topologies.
 ACTIVE_GRAPH: TopologyGraph = BALANCED_GRAPH
 
 # Registry for lookup by name (used by the Beat task to select by topology name)
 TOPOLOGY_GRAPHS: dict[str, TopologyGraph] = {
-    "balanced":    BALANCED_GRAPH,
-    "low_latency": LOW_LATENCY_GRAPH,
+    "balanced":          BALANCED_GRAPH,
+    "low_latency":       LOW_LATENCY_GRAPH,
+    "cli_model_selection": CLI_MODEL_SELECTION_GRAPH,
 }
