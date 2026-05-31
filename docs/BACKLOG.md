@@ -19,10 +19,10 @@ dropped, the `S4` row is parked + de-risked.
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                       I4 Critical
- S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1 ← NEXT                 — (none)
+ S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1 ✅DONE                  — (none)
                                                          #12 obs-legibility ✅DONE
  S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
-                                       #5 PT-4 verbump   #2 PT-2 (Slice 7: blocked)
+                                       #5 PT-4 verbump   #2 PT-2 ← NEXT (Slice 7: blocked)
                                        #13 nonblock-hold*  *v2 of #12
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal ✅DONE
@@ -35,8 +35,10 @@ No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked*
 #8 difficulty-recal (PR #116), #12 obs-legibility (PR #117: the min-lit hold +
 NPU-gave-up counter), **#9 draft_gate-decompose (PR #119**: split
 `_balanced_draft_gate` → `_verify` + `_resolve_npu`; BACKLOG update missed at
-merge time). #10 ts-shortcut is retired (superseded by #7). **The next pick is
-#1 PT-1** — confirm full GPU offload (I3·S1, highest-impact + safest). **#13
+merge time). #10 ts-shortcut is retired (superseded by #7). ****#1 PT-1 is ✅DONE** (2026-05-31: PASS — all layers on GPU, 10,526 MB VRAM delta;
+3.4× gap is NOT a GPU offload issue). **Next pick is #2 PT-2** (I3·S2: n_ctx/flash_attn
+sweep — Ollama likely wins on smaller dynamic context; our fixed n_ctx=8192 over-allocates
+the KV cache). **#13
 nonblock-hold** is the v2 of #12 (the receiver's min-lit `sleep` blocks the event
 thread; a non-blocking scheduler is the principled fix — Opus review of PR #117).
 
@@ -224,11 +226,15 @@ per call (re-prefills the system prompt every time).
 
 Decomposed levers, in priority order:
 
-### #1 · PT-1 — confirm full GPU offload  (I3 · S1)
-The highest-suspicion, lowest-risk check first. Verify `n_gpu_layers=-1` actually
-offloads **all** qwen14b layers (turn on the load log / count offloaded vs total).
-If layers spill to CPU under VRAM pressure at `n_ctx=8192`, that alone could
-explain most of the 3.4×. Pure diagnostic — no behavior change, fully reversible.
+### ✅ #1 · PT-1 — confirm full GPU offload  (I3 · S1) — **DONE 2026-05-31**
+**Result: PASS.** VRAM delta +10,526 MB = 123% of 8,571 MB GGUF. All layers on GPU.
+Breakdown: 8,571 MB weights + 1,955 MB KV cache + overhead at n_ctx=8192. GPU offload
+is NOT the cause of the 3.4× gap. Also surfaced: `n_ctx_train=32768` vs our `n_ctx=8192`;
+Ollama likely sizes context dynamically to the prompt (much smaller for typical queries),
+so our fixed `n_ctx=8192` over-allocates the KV cache. **PT-2 is the next lever.**
+
+Diagnostic tool: `scripts/pt1_gpu_offload_check.py` (install llama-cpp-python first;
+see pyproject.toml `llama-cpp` extra setup notes and the `--no-build` flag workaround).
 
 ### #2 · PT-2 — context + attention config sweep  (I3 · S2)
 Low-risk, reversible config, each lever measured independently:
