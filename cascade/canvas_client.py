@@ -22,7 +22,7 @@ from pathlib import Path
 from cascade import mesh
 from cascade.config import CONFIG
 from cascade.logfmt import dump_record
-from cascade.topologies_canvas import budget_signature, low_latency_signature  # noqa: F401
+from cascade.topologies_canvas import budget_signature, low_latency_signature
 
 # --- cascade-outcome telemetry lane (the SD-4 dashboard panel) --------------
 # The in-process orchestrator (cascade.orchestrator.write_record) appends one
@@ -114,13 +114,15 @@ def solve_budget_fanout(
     The agent (Tier 3) decides the sub-task list and integrates the results;
     this function only handles the parallel dispatch and collection.
     """
-    t0 = time.perf_counter()
-    handles = [budget_signature(t, dsl).apply_async() for t in sub_tasks]
+    # Stamp dispatch time per sub-task BEFORE any .get() so latency is accurate
+    # (sub-tasks run in parallel; serialised .get() would inflate later ones).
+    dispatched = [(t, budget_signature(t, dsl).apply_async(), time.perf_counter())
+                  for t in sub_tasks]
     outcomes = []
-    for t, handle in zip(sub_tasks, handles, strict=True):
+    for t, handle, t_start in dispatched:
         env = handle.get(timeout=600)
         outcome = _to_outcome(env)
-        _record_outcome(t, outcome, time.perf_counter() - t0)
+        _record_outcome(t, outcome, time.perf_counter() - t_start)
         outcomes.append(outcome)
     return outcomes
 

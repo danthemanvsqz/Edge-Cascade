@@ -40,7 +40,8 @@ _TOPOLOGIES = {
 
 
 def _print_outcome(outcome, topology: str, wall: float) -> None:
-    print(f"\n=== Canvas {topology} ({wall:.2f}s) ===")
+    wall_str = f" ({wall:.2f}s)" if wall > 0 else ""
+    print(f"\n=== Canvas {topology}{wall_str} ===")
     print(f"topology    : {outcome.topology}")
     print(f"final_tier  : {outcome.final_tier}")
     print(f"resolved    : {outcome.resolved}")
@@ -85,10 +86,11 @@ def main() -> None:
     t0 = time.perf_counter()
     if args.topology == "budget_fanout":
         outcomes = solve_budget_fanout(args.query, dsl=args.dsl)
-        wall = time.perf_counter() - t0
+        total_wall = time.perf_counter() - t0
+        print(f"\n=== budget_fanout: {len(outcomes)} sub-tasks ({total_wall:.2f}s total) ===")
         for i, (sub_task, outcome) in enumerate(zip(args.query, outcomes, strict=True)):
             print(f"\n[sub-task {i}: {sub_task[:60]}]")
-            _print_outcome(outcome, "budget_fanout", wall)
+            _print_outcome(outcome, "budget_fanout", wall=0.0)
     else:
         query = " ".join(args.query)
         solve = _TOPOLOGIES[args.topology]
