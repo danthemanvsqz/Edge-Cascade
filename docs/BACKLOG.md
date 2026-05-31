@@ -5,44 +5,42 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> Last groomed: **2026-05-30** (after Phase 2 Slice 6 merged; main `ed7588c`).
-> Updated **2026-05-30 (eve)**: added **★ #6 live cascade-activity tool (OBS-1)**.
-> Updated **2026-05-30 (late)**: **#6 OBS-1 SHIPPED** (PRs #109–#113: the
-> Flower-backed live lane + event-receiver push + the dashboard spinning ring).
-> Added the **self-healing arc #7–#11** from the 2026-05-30 routing-log analysis
-> (24 routes this session; see the section below for the evidence behind each).
-> Updated **2026-05-31**: **#9 draft_gate-decompose SHIPPED** (PR #119, part of
-> the big refactor/canvas commit — split `_balanced_draft_gate` into `_verify` +
-> `_resolve_npu`; BACKLOG.md wasn't updated at merge time). Next pick = **#1 PT-1**.
-> Added **#14 verify_func refactor** (I2·S2, not high impact — DSL interface cleanup).
+> **Last groomed: 2026-05-31** (after session: PRs #120–#131 merged; main `f2aca52`).
+> **Shipped this session:** PT-1 (GPU offload PASS), PT-2 (flash_attn=True, 16% vs Ollama,
+> decision gate MET), Slice 7 (default flip ollama→llama_cpp, #127), dashboard reset button
+> + MCP servers retired (#128), resolve_npu ledger record (#128), #14 verify_func refactor
+> (dsl_from_cases + verify_dsl alias, #130/#131). Also: stale mesh.balanced.* tasks purged
+> from Redis, flow.ts CHAIN_SPECS corrected to mesh.budget.*, llama_worker graceful-fallback
+> on model-load failure.
+> **PT-3 reclassified I3→I2·S3**: was I3 because it blocked Slice 7; that gate passed
+> without it, so it is now a pure optimization (no longer gates anything).
 
 ## Current placement
 
 ```
- Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                       I4 Critical
- S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1 ✅DONE                  — (none)
-                                                         #12 obs-legibility ✅DONE
- S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
-                                       #5 PT-4 verbump   #2 PT-2 ✅DONE (Slice 7: UNBLOCKED ← NEXT)
-                                       #13 nonblock-hold*  *v2 of #12
-                                       #14 verify_func refactor ✅DONE
- S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
-                                                         #8 difficulty-recal ✅DONE
-                                                         #9 draft_gate-decompose ✅DONE
- S4 Severe (park)         ✗ (none)     ⏳ none           ⏳ none                         — (none)
+ Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major     I4 Critical
+ S1 Safe                  ✗ (none)     #11 hook-scope ← NEXT  — (none)   — (none)
+ S2 Low                   ✗ (none)     #13 nonblock-hold       — (none)   — (none)
+                                       #4  gate-helper
+                                       #5  PT-4 verbump
+ S3 Moderate              ✗ (none)     #3  PT-3 (downgraded)   — (none)   — (none)
+ S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none    — (none)
 ```
 
-No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked**
-(not parked) — see below. **Shipped:** #6 OBS-1, #7 ts-verify-gate (PR #115),
-#8 difficulty-recal (PR #116), #12 obs-legibility (PR #117: the min-lit hold +
-NPU-gave-up counter), **#9 draft_gate-decompose (PR #119**: split
-`_balanced_draft_gate` → `_verify` + `_resolve_npu`; BACKLOG update missed at
-merge time). #10 ts-shortcut is retired (superseded by #7). ****#1 PT-1 is ✅DONE** (2026-05-31: PASS — all layers on GPU, 10,526 MB VRAM delta;
-3.4× gap is NOT a GPU offload issue). **Next pick is #2 PT-2** (I3·S2: n_ctx/flash_attn
-sweep — Ollama likely wins on smaller dynamic context; our fixed n_ctx=8192 over-allocates
-the KV cache). **#13
-nonblock-hold** is the v2 of #12 (the receiver's min-lit `sleep` blocks the event
-thread; a non-blocking scheduler is the principled fix — Opus review of PR #117).
+No `S4` park items and no `I1` drops. No `I3` items remain — the full self-healing arc
+(#7–#9), perf-tuning arc (#1–#2 + Slice 7), and major dashboard work are all shipped.
+All remaining picks are I2 (minor). **Next pick: #11 hook-scope** (I2·S1, safest).
+
+**I2·S2 ordering within the band** (tied on impact+severity; use decay risk as tiebreaker):
+- **#13 nonblock-hold** first — a known latent bug (min-lit `sleep` blocks the event
+  thread) flagged in PR #117 Opus review; carries real regression risk if the receiver
+  thread stalls during a busy solve.
+- **#4 gate-helper** second — coverage improvement, no decay.
+- **#5 PT-4 verbump** third — maintenance; check upstream llama-cpp-python for perf gains.
+
+**Shipped (for the record):** #1 PT-1, #2 PT-2, #6 OBS-1, #7 ts-verify-gate (#115),
+#8 difficulty-recal (#116), #9 draft_gate-decompose (#119), #10 ts-shortcut (retired),
+#11 → next, #12 obs-legibility (#117), #14 verify_func (#130).
 
 ---
 
@@ -252,16 +250,14 @@ see pyproject.toml `llama-cpp` extra setup notes and the `--no-build` flag worka
 Ollama (skip-repair caps without 2 full repair rounds). `flash_attn=True` is now the
 production default in `make_llama_worker`. **Slice 7 unblocked.**
 
-### #3 · PT-3 — KV-cache / system-prompt prefix reuse  (I3 · S3)
+### #3 · PT-3 — KV-cache / system-prompt prefix reuse  (I2 · S3, downgraded from I3)
 `_generate` re-prefills the `_SYSTEM` prompt on every call; Ollama's daemon keeps
 the session/KV warm. Reuse the prefix KV across calls in the resident worker
-(prompt caching). Higher severity: touches the call pattern and risks chat-template
-/ correctness drift if prefix caching is mishandled — guarded by the parity gate.
-
-**Decision gate (after PT-1..PT-3):** does steady-state Case B/C wall come within
-±20% of Ollama? **Yes →** unblock Slice 7 (flip default). **Plateaus (e.g. ~1.5×) →**
-explicit choice: accept the gap and flip anyway for the direct-loading benefits, or
-keep Slice 7 parked + Ollama default. Either way record it in the parity findings.
+(prompt caching). **Reclassified I3→I2·S3 on 2026-05-31**: was I3 because it
+blocked Slice 7; the PT-2 gate passed without it (16% vs Ollama, within the bar)
+and Slice 7 shipped. Now a pure perf optimization — useful, but gates nothing.
+Higher severity: touches the call pattern and risks chat-template / correctness
+drift if prefix caching is mishandled — guarded by the parity gate (`parity_batch.py`).
 
 ---
 
@@ -308,12 +304,13 @@ boundary; the refactor touches Python API surface only, not the sandbox itself.
 
 ---
 
-## Unblocked — now actionable
+## ✅ Slice 7 — SHIPPED 2026-05-31 (PR #127)
 
-- **Slice 7 — default flip `ollama → llama_cpp` + Ollama deprecation**  (I3 · S2).
-  A one-line `CONFIG.gpu_backend` default change + deprecation docs. **PT-2 gate
-  PASSED 2026-05-31** (B=37.3s vs Ollama 32.1s = 16% slower, within ±20%).
-  Re-enters the matrix at I3·S2 (same slot as PT-2, next pick after this commit).
+Default flipped `ollama → llama_cpp`. PT-2 gate passed (B=37.3s = 16% slower than
+Ollama, within ±20% bar). `flash_attn=True` now the production default.
+`llama_worker.make_llama_worker` returns an unavailable worker (not a crash) when
+the GGUF can't be loaded — required for CI where Ollama isn't installed.
+Ollama still works via `CASCADE_GPU_BACKEND=ollama`.
 
 ## User-owned (needs the hardware, not agent engineering work)
 
