@@ -202,8 +202,6 @@ def make_llama_worker(model_id: str | None = None) -> GPUWorker:
     if init throws, the caller's `gpu_worker.make_gpu_worker` is expected
     to fall back / surface the error per the standard hand-off contract."""
     model_id = model_id or CONFIG.gpu_model
-    gguf_path = _resolve_ollama_blob(model_id, Path(CONFIG.ollama_models_dir))
-    llama_cpp = _llama()
     # PT-2 tuning knobs -- env-var overrides for the parity sweep.
     # CASCADE_LLAMA_N_CTX:    KV context window (default 8192; PT-2 found 4096 saves
     #                         ~1s but harms quality on long tasks -- keep 8192)
@@ -213,20 +211,31 @@ def make_llama_worker(model_id: str | None = None) -> GPUWorker:
     n_ctx       = int(os.environ.get("CASCADE_LLAMA_N_CTX", "8192"))
     flash_attn  = os.environ.get("CASCADE_LLAMA_FLASH_ATTN", "1").lower() in ("1", "true")
     n_batch     = int(os.environ.get("CASCADE_LLAMA_N_BATCH", "512"))
-    _log.info(
-        "llama_worker: n_ctx=%d flash_attn=%s n_batch=%d gguf=%s",
-        n_ctx, flash_attn, n_batch, gguf_path.name[:16],
-    )
-    llm = llama_cpp.Llama(
-        model_path=str(gguf_path),
-        # Offload as many layers as fit on the GPU. -1 means "all".
-        n_gpu_layers=-1,
-        n_ctx=n_ctx,
-        flash_attn=flash_attn,
-        n_batch=n_batch,
-        # Quiet by default; the @recorded decorator captures latency + tokens.
-        verbose=False,
-    )
+    try:
+        gguf_path = _resolve_ollama_blob(model_id, Path(CONFIG.ollama_models_dir))
+        llama_cpp = _llama()
+        _log.info(
+            "llama_worker: n_ctx=%d flash_attn=%s n_batch=%d gguf=%s",
+            n_ctx, flash_attn, n_batch, gguf_path.name[:16],
+        )
+        llm = llama_cpp.Llama(
+            model_path=str(gguf_path),
+            # Offload as many layers as fit on the GPU. -1 means "all".
+            n_gpu_layers=-1,
+            n_ctx=n_ctx,
+            flash_attn=flash_attn,
+            n_batch=n_batch,
+            # Quiet by default; the @recorded decorator captures latency + tokens.
+            verbose=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - model load/resolve can fail many ways
+        _log.warning("llama_worker: init failed (%s) -- worker unavailable", exc)
+        err_text = f"[llama_cpp unavailable: {exc}]"
+        return GPUWorker(
+            model=model_id,
+            available=lambda: False,
+            generate=lambda **_kw: LlamaResult(err_text, 0.0, 0.0, model_id, False),
+        )
     return GPUWorker(
         model=model_id,
         available=lambda: True,
