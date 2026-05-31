@@ -51,7 +51,7 @@ from cascade import canvas_spike, tasks, ts_verifier
 from cascade import topologies as topo_module
 from cascade.celery_app import app
 from cascade.config import CONFIG
-from cascade.tasks import resolve_npu as _record_resolve_npu
+from cascade.tasks import record_npu_win as _record_npu_win
 
 _log = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ def _budget_resolve_npu(self, env: dict) -> dict:
     if env.get("resolved"):
         # Write an edge-verify.rec particle so NPU wins appear in the
         # dashboard event log (tool=resolve_npu, tier=npu).
-        _record_resolve_npu(tier=env.get("final_tier", "npu"))
+        _record_npu_win(tier=env.get("final_tier", "npu"))
     return env
 
 
