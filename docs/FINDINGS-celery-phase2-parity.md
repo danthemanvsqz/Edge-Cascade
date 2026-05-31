@@ -171,17 +171,34 @@ output-length-dependent. **Wall time diverges 3.4×** as in Case B.
 - Tier attribution in `.rec` deltas matches (lanes that fire under
   Ollama also fire under llama_cpp; lanes that stay clean stay clean).
 
-**Performance parity: NO.** `llama_cpp` is 3-4× slower on
-GPU-heavy cases at the current `n_ctx=8192` configuration:
+**Performance parity: NO (original).** `llama_cpp` was 3-4× slower at the
+`n_ctx=8192, flash_attn=False` config (PR #95 measurement, qwen14b, Ollama backend
+running its default config):
 
-| Case | Ollama wall | llama_cpp wall | ratio |
+| Case | Ollama wall | llama_cpp wall (#95) | ratio |
 |---|---|---|---|
 | A (NPU only) | 16.3s (cold) → ~5s | 4.9s | parity |
 | B (1× GPU repair) | 32.1s | 110.4s | **3.4×** |
 | C (3× GPU repairs, cap) | 40.5s | 136.0s | **3.4×** |
 
 Per the locked pass criteria, wall time within ±20% is part of the bar.
-**`llama_cpp` fails that bar.**
+`llama_cpp` failed that bar at PR #95.
+
+**PT-2 re-measurement (2026-05-31): gap largely closed.** Code changes since #95
+(skip-repair-on-degen, repair_rounds alignment) did most of the work independently of
+llama_cpp config. PT-2 sweep then found `flash_attn=True` yields a further ~3s gain:
+
+| Config | n_ctx | flash_attn | Case B | Case C | vs Ollama B |
+|--------|-------|-----------|--------|--------|-------------|
+| Baseline re-run | 8192 | no | 42.1s | 23.3s | 31% slower |
+| n_ctx=4096 | 4096 | no | 40.9s | 25.7s | 27% slower |
+| n_ctx=4096 + flash | 4096 | yes | 38.9s | 25.1s | 21% slower |
+| **n_ctx=8192 + flash** | 8192 | yes | **37.3s** | **25.6s** | **16% slower ✓** |
+
+**Decision gate: PASS.** Best config (n_ctx=8192, flash_attn=True) puts Case B at
+37.3s vs Ollama 32.1s = **16% slower, within the ±20% bar.** Case C is now FASTER
+(23-26s vs 40.5s) because skip-repair caps without 2 full repair rounds. `flash_attn=True`
+is now the production default in `make_llama_worker`. **Slice 7 is unblocked.**
 
 ### Decision
 

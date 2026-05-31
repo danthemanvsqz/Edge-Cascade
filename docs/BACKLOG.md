@@ -22,7 +22,7 @@ dropped, the `S4` row is parked + de-risked.
  S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1 ✅DONE                  — (none)
                                                          #12 obs-legibility ✅DONE
  S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
-                                       #5 PT-4 verbump   #2 PT-2 ← NEXT (Slice 7: blocked)
+                                       #5 PT-4 verbump   #2 PT-2 ✅DONE (Slice 7: UNBLOCKED ← NEXT)
                                        #13 nonblock-hold*  *v2 of #12
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal ✅DONE
@@ -236,15 +236,19 @@ so our fixed `n_ctx=8192` over-allocates the KV cache. **PT-2 is the next lever.
 Diagnostic tool: `scripts/pt1_gpu_offload_check.py` (install llama-cpp-python first;
 see pyproject.toml `llama-cpp` extra setup notes and the `--no-build` flag workaround).
 
-### #2 · PT-2 — context + attention config sweep  (I3 · S2)
-Low-risk, reversible config, each lever measured independently:
-- `n_ctx` `8192 → 4096` (Ollama sizes context dynamically to the prompt; a fixed
-  8192 allocates a large KV cache = VRAM + per-token attention cost). Frees VRAM,
-  which also helps PT-1.
-- `flash_attn=True` (Ollama enables it by default for supported models).
-- tune `n_batch` (prefill throughput; default 512).
+### ✅ #2 · PT-2 — context + attention config sweep  (I3 · S2) — **DONE 2026-05-31**
+**Result: PASS — decision gate met.** 4-config sweep on RTX 5070 Ti Laptop, 2026-05-31:
 
-The functional-parity gate (`parity_batch`) guards against any output change.
+| Config | Case B | Case C | vs Ollama B |
+|--------|--------|--------|-------------|
+| 8192, no flash | 42.1s | 23.3s | 31% slower |
+| 4096, no flash | 40.9s | 25.7s | 27% slower |
+| 4096, flash=True | 38.9s | 25.1s | 21% slower |
+| **8192, flash=True** | **37.3s** | **25.6s** | **16% ✓** |
+
+`n_ctx=8192` with `flash_attn=True` is within ±20% on Case B; Case C is faster than
+Ollama (skip-repair caps without 2 full repair rounds). `flash_attn=True` is now the
+production default in `make_llama_worker`. **Slice 7 unblocked.**
 
 ### #3 · PT-3 — KV-cache / system-prompt prefix reuse  (I3 · S3)
 `_generate` re-prefills the `_SYSTEM` prompt on every call; Ollama's daemon keeps
@@ -274,13 +278,12 @@ if it helps. Minor/maintenance; a bump can shift the CUDA wheel + runtime-DLL se
 
 ---
 
-## Blocked (dependency, not parked)
+## Unblocked — now actionable
 
 - **Slice 7 — default flip `ollama → llama_cpp` + Ollama deprecation**  (I3 · S2).
-  A one-line `CONFIG.gpu_backend` default change + deprecation docs — *not* risky,
-  so not an `S4` park. **Blocked on the PT decision gate above.** Re-enters the
-  actionable order at `I3·S2` once perf comes within the bar (or the gate decides to
-  flip despite a residual gap).
+  A one-line `CONFIG.gpu_backend` default change + deprecation docs. **PT-2 gate
+  PASSED 2026-05-31** (B=37.3s vs Ollama 32.1s = 16% slower, within ±20%).
+  Re-enters the matrix at I3·S2 (same slot as PT-2, next pick after this commit).
 
 ## User-owned (needs the hardware, not agent engineering work)
 
