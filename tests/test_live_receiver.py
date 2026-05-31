@@ -55,32 +55,60 @@ def test_hold_remaining():
     assert hold_remaining(100.0, 200.0, 0.6) == 0.0  # long active -> no hold
 
 
-def test_publish_state_publishes_deltas_and_sets_seed():
+def test_publish_state_fast_idle_deferred_not_published():
+    """A fast node's idle is deferred into pending_idles, not published immediately."""
     pub = _FakePub()
-    slept: list[float] = []
+    pending: dict[str, float] = {}
     result = publish_state(
         pub, "chan", "key", {"route"}, {"gpu_solve"},
-        active_since={"route": 100.0}, now=100.0, min_lit=0.6, sleep=slept.append,
+        active_since={"route": 100.0}, now=100.0, pending_idles=pending, min_lit=0.6,
     )
-    assert pub.published == [
-        ("chan", json.dumps({"node": "gpu_solve", "state": "active"})),
-        ("chan", json.dumps({"node": "route", "state": "idle"})),
-    ]
-    assert pub.sets == [("key", json.dumps(["gpu_solve"]))]
+    # gpu_solve goes active (published), route idle deferred (not published yet)
+    assert pub.published == [("chan", json.dumps({"node": "gpu_solve", "state": "active"}))]
     assert result == {"gpu_solve"}
-    # route went active at 100.0, idle at now=100.0 -> 0 elapsed -> held min_lit
-    assert slept == [0.6]
+    assert pending == {"route": 100.6}
+    # seed includes both curr and the still-lit deferred node
+    assert pub.sets == [("key", json.dumps(["gpu_solve", "route"]))]
 
 
-def test_publish_state_records_activation_and_skips_hold_for_slow_nodes():
+def test_publish_state_pending_idle_flushed_on_next_call():
+    """Deferred idle is published when now >= not_before on a subsequent call."""
     pub = _FakePub()
-    slept: list[float] = []
+    pending: dict[str, float] = {"route": 100.6}  # seed from previous call
+    publish_state(
+        pub, "chan", "key", {"gpu_solve"}, {"gpu_solve"},
+        active_since={}, now=101.0, pending_idles=pending, min_lit=0.6,
+    )
+    # Route idle flushed (101.0 >= 100.6); no new transitions
+    assert ("chan", json.dumps({"node": "route", "state": "idle"})) in pub.published
+    assert pending == {}
+
+
+def test_publish_state_active_cancels_pending_idle():
+    """A node that goes active again while its idle is pending gets the idle cancelled."""
+    pub = _FakePub()
+    pending: dict[str, float] = {"route": 100.6}
+    publish_state(
+        pub, "chan", "key", set(), {"route"},
+        active_since={}, now=100.1, pending_idles=pending, min_lit=0.6,
+    )
+    # route went active at now=100.1 (before not_before=100.6) -> idle cancelled
+    assert pending == {}
+    assert ("chan", json.dumps({"node": "route", "state": "active"})) in pub.published
+    # no idle published
+    assert not any("idle" in msg for _, msg in pub.published)
+
+
+def test_publish_state_slow_idle_published_immediately():
+    """A slow node (lit > min_lit) gets its idle published immediately, not deferred."""
+    pub = _FakePub()
+    pending: dict[str, float] = {}
     since: dict[str, float] = {"gpu_solve": 100.0}
-    # gpu_solve went idle after 100s active (>> min_lit) -> no hold; a new active
-    # node records its activation time.
     publish_state(
         pub, "chan", "key", {"gpu_solve"}, {"draft"},
-        active_since=since, now=200.0, min_lit=0.6, sleep=slept.append,
+        active_since=since, now=200.0, pending_idles=pending, min_lit=0.6,
     )
-    assert slept == []  # slow node not held
+    assert pending == {}  # no deferral for slow node
     assert since["draft"] == 200.0  # activation recorded
+    assert ("chan", json.dumps({"node": "gpu_solve", "state": "idle"})) in pub.published
+    assert ("chan", json.dumps({"node": "draft", "state": "active"})) in pub.published
