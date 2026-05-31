@@ -30,6 +30,7 @@ from cascade.feedback import CheckFailure
 from cascade.feedback import build_repair_prompt as _build_repair_prompt
 from cascade.gpu_worker import make_gpu_worker
 from cascade.npu_worker import NPUWorker, make_npu_worker
+from cascade.verifier import dsl_from_cases  # noqa: F401 — public re-export
 from mcp_servers._rec import make_recorder, recorded
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -145,6 +146,12 @@ def generate_task(prompt: str, prior_attempt: str | None = None,
 @app.task(name="mesh.verify_functional", queue="verify")
 def verify_functional_task(text: str, dsl: str | None = None) -> dict:
     return verify_functional(text, dsl)
+
+
+# Alias for discoverability — prefer this name in new code.
+# The Celery task name ("mesh.verify_functional") and the underlying function
+# are unchanged so existing workers are unaffected.
+verify_dsl = verify_functional
 
 
 @recorded(_VERIFY_REC)

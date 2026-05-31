@@ -2,8 +2,14 @@
 
 Usage (after `docker compose up -d redis` and a Celery worker running):
     uv run python scripts/mesh_solve_canvas.py "write a python function add(a, b) -> a + b"
-    uv run python scripts/mesh_solve_canvas.py --dsl "<dsl-text>" "<query>"
+    uv run python scripts/mesh_solve_canvas.py --dsl "assert add(1,2)==3" "write add(a,b)"
     uv run python scripts/mesh_solve_canvas.py --topology low_latency "<query>"
+
+Building a DSL string from test cases (preferred over hand-writing assertions):
+    python -c "
+    from cascade.verifier import dsl_from_cases
+    print(dsl_from_cases('add', [((1,2),3),((0,0),0)]))"
+    # -> assert add(1, 2) == 3\\nassert add(0, 0) == 0
 
 The --topology flag picks budget (sequential cascade) or low_latency (the
 Slice-6b chord racing NPU draft vs GPU generate). Time both on the same prompt
@@ -72,9 +78,12 @@ def main() -> None:
     )
     ap.add_argument(
         "--dsl", default=None,
-        help="optional checks.dsl text passed to the functional gate; "
-             "omit for syntax-only behavior (the gate still runs but with "
-             "no functional assertions to enforce).",
+        help="Python assertion string passed to the functional gate. "
+             "Omit for syntax-only gating (default). When provided, the "
+             "generated code is exec'd against these assertions in a sandbox; "
+             "failure triggers a GPU repair round. "
+             "Build from test cases: cascade.verifier.dsl_from_cases(fn, cases). "
+             "Example: --dsl \"assert add(1,2)==3\"",
     )
     ap.add_argument(
         "query", nargs="+",

@@ -28,6 +28,41 @@ def extract_code(text: str) -> str | None:
     return max(blocks, key=len).strip()
 
 
+def dsl_from_cases(fn_name: str, cases: list[tuple]) -> str:
+    """Build a DSL assertion string from structured (args, expected) test cases.
+
+    Each tuple is (args, expected): args is a tuple of positional arguments
+    (or a bare value for single-argument functions), expected is the return
+    value. Produces one ``assert`` line per case, joined by newlines — the
+    result can be passed directly as the ``dsl=`` argument to
+    ``cascade.canvas_client.solve_budget_canvas`` or the ``--dsl`` flag of
+    ``scripts/mesh_solve_canvas.py``.
+
+    ``expected=None`` generates an ``is None`` assertion (identity, not
+    equality) to avoid ``== None`` style warnings.
+
+    Example::
+
+        dsl = dsl_from_cases("add", [
+            ((1, 2), 3),
+            ((0, 0), 0),
+            ((1,), None),   # single-arg, None result
+        ])
+        # "assert add(1, 2) == 3\\nassert add(0, 0) == 0\\nassert add(1,) is None"
+    """
+    lines: list[str] = []
+    for args, expected in cases:
+        if not isinstance(args, tuple):
+            args = (args,)
+        arg_str = ", ".join(map(repr, args))
+        call = f"{fn_name}({arg_str})"
+        if expected is None:
+            lines.append(f"assert {call} is None")
+        else:
+            lines.append(f"assert {call} == {expected!r}")
+    return "\n".join(lines)
+
+
 def verify(text: str) -> Verdict:
     code = extract_code(text)
     if code is None:

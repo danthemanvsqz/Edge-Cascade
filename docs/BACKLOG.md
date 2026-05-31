@@ -25,7 +25,7 @@ dropped, the `S4` row is parked + de-risked.
  S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
                                        #5 PT-4 verbump   #2 PT-2 ✅DONE (Slice 7: UNBLOCKED ← NEXT)
                                        #13 nonblock-hold*  *v2 of #12
-                                       #14 verify_func refactor
+                                       #14 verify_func refactor ✅DONE
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal ✅DONE
                                                          #9 draft_gate-decompose ✅DONE
