@@ -217,16 +217,25 @@ def make_llama_worker(model_id: str | None = None) -> GPUWorker:
         "llama_worker: n_ctx=%d flash_attn=%s n_batch=%d gguf=%s",
         n_ctx, flash_attn, n_batch, gguf_path.name[:16],
     )
-    llm = llama_cpp.Llama(
-        model_path=str(gguf_path),
-        # Offload as many layers as fit on the GPU. -1 means "all".
-        n_gpu_layers=-1,
-        n_ctx=n_ctx,
-        flash_attn=flash_attn,
-        n_batch=n_batch,
-        # Quiet by default; the @recorded decorator captures latency + tokens.
-        verbose=False,
-    )
+    try:
+        llm = llama_cpp.Llama(
+            model_path=str(gguf_path),
+            # Offload as many layers as fit on the GPU. -1 means "all".
+            n_gpu_layers=-1,
+            n_ctx=n_ctx,
+            flash_attn=flash_attn,
+            n_batch=n_batch,
+            # Quiet by default; the @recorded decorator captures latency + tokens.
+            verbose=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - model load can fail for many reasons
+        _log.warning("llama_worker: model load failed (%s) -- worker unavailable", exc)
+        err_text = f"[llama_cpp load failed: {exc}]"
+        return GPUWorker(
+            model=model_id,
+            available=lambda: False,
+            generate=lambda **_kw: LlamaResult(err_text, 0.0, 0.0, model_id, False),
+        )
     return GPUWorker(
         model=model_id,
         available=lambda: True,

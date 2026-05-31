@@ -47,16 +47,17 @@ class Config:
     igpu_device: str = os.environ.get("CASCADE_IGPU_DEVICE", "GPU.0")
     igpu_max_new_tokens: int = 768
 
-    # Tier 2 — local GPU. Phase-2 Slice 1 introduces a SECOND backend:
+    # Tier 2 — local GPU. Phase-2 Slice 1 introduced a SECOND backend:
     # llama-cpp-python loads the SAME GGUF weights Ollama caches, resident
     # in the worker process (no HTTP hop). `gpu_backend` picks which path
     # `cascade.gpu_worker.make_gpu_worker` returns; both produce the same
     # `GPUWorker` shape so callers and tests are unchanged.
     #
-    # Default stays `ollama` until the Slice 2 parity findings prove the
-    # direct path matches. Override via CASCADE_GPU_BACKEND=ollama|llama_cpp.
-    # See docs/DESIGN-celery-phase2.md (the locked decisions section).
-    gpu_backend: str = os.environ.get("CASCADE_GPU_BACKEND", "ollama")
+    # Slice 7 (2026-05-31): default flipped ollama→llama_cpp after PT-1/PT-2
+    # confirmed full GPU offload and ±20% wall-time parity at flash_attn=True.
+    # Override via CASCADE_GPU_BACKEND=ollama to revert.
+    # See docs/FINDINGS-celery-phase2-parity.md (PT-2 decision gate).
+    gpu_backend: str = os.environ.get("CASCADE_GPU_BACKEND", "llama_cpp")
     # GPU VRAM budget for the model.swap arbiter (Phase 2 Slice 3a). Defaults
     # to 12 GB (RTX 5070 Ti); override via CASCADE_VRAM_TOTAL_MB for boxes
     # with more/less. Per-model footprints in cascade/model_swap.py are
