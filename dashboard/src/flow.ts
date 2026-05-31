@@ -57,12 +57,12 @@ export interface NodeSpec {
  * task + worker_ready signal) and rendered by `setTopologyGraph()`. This
  * spec only affects the initial paint before the first Beat message arrives. */
 export const CHAIN_SPECS: readonly NodeSpec[] = [
-  { task: "mesh.balanced._route",       id: "route",             label: "route",             queue: "npu",    tier: "npu"    },
-  { task: "mesh.balanced._draft",        id: "draft",             label: "draft",             queue: "npu",    tier: "npu"    },
-  { task: "mesh.balanced._verify",       id: "verify_syntax",     label: "verify_syntax",     queue: "verify", tier: "verify" },
-  { task: null,                           id: "verify_functional", label: "verify_func",       queue: "verify", tier: "verify" },
-  { task: "mesh.balanced._resolve_npu",  id: "resolve_npu",       label: "resolve_npu",       queue: "verify", tier: "verify" },
-  { task: "mesh.balanced._gpu_solve",    id: "gpu_solve",         label: "gpu_solve",         queue: "gpu",    tier: "gpu"    },
+  { task: "mesh.budget._route",       id: "route",             label: "route",             queue: "npu",    tier: "npu"    },
+  { task: "mesh.budget._draft",        id: "draft",             label: "draft",             queue: "npu",    tier: "npu"    },
+  { task: "mesh.budget._verify",       id: "verify_syntax",     label: "verify_syntax",     queue: "verify", tier: "verify" },
+  { task: null,                         id: "verify_functional", label: "verify_func",       queue: "verify", tier: "verify" },
+  { task: "mesh.budget._resolve_npu",  id: "resolve_npu",       label: "resolve_npu",       queue: "verify", tier: "verify" },
+  { task: "mesh.budget._gpu_solve",    id: "gpu_solve",         label: "gpu_solve",         queue: "gpu",    tier: "gpu"    },
   // repair_prompt is part of the GPU repair arc, not the forward chain.
   // It is not in the top-row sequence here; the Beat-pushed graph positions it
   // correctly above the repair arc. Particles route to gpu_solve as fallback.

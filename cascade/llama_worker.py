@@ -110,7 +110,12 @@ def _preload_cuda_runtime() -> None:  # pragma: no cover - env-dependent
         ("nvidia.cuda_runtime", "cudart64_12.dll"),
         ("nvidia.cublas", "cublas64_12.dll"),
     ):
-        spec = importlib.util.find_spec(pkg)
+        try:
+            spec = importlib.util.find_spec(pkg)
+        except (ModuleNotFoundError, ValueError):
+            # find_spec raises when a parent namespace package exists but the
+            # subpackage doesn't (e.g. `nvidia` namespace present, no cuda_runtime).
+            continue
         if spec is None or not spec.submodule_search_locations:
             continue
         for loc in spec.submodule_search_locations:
