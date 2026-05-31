@@ -1,0 +1,53 @@
+flowchart TD
+    subgraph ENTRY[" "]
+        Q([query]) --> SOLVE["mesh.solve(query, topology)<br/>ONE entry · model-B"]
+        SOLVE --> SEL{"topology selector<br/>→ Canvas signature"}
+    end
+
+    SEL -->|balanced| BAL
+    SEL -.->|low_latency| LL
+    SEL -.->|low_power| LP
+
+    subgraph BAL["balanced = chain( route.s → draft.s → verify.s → maybe_escalate.s )"]
+        direction TB
+        R1["route.s(q)<br/>★ NPU · 1.5B<br/>queue: npu → Intel box"]:::npu
+        R1 --> D1["draft.s()<br/>★ NPU · 1.5B<br/>queue: npu → Intel box"]:::npu
+        D1 --> V1["verify.s()<br/>syntax + functional gate<br/>queue: verify"]:::verify
+        V1 --> M1{"maybe_escalate.s()<br/>gate passed?"}
+        M1 -->|PASS| WON1([verified answer]):::win
+        M1 -->|FAIL| ESC["escalate → GPU phase<br/>(chord count / link_error chain)"]:::gpu
+        ESC --> G1["generate.s()<br/>RTX 5070 Ti · 14b<br/>queue: gpu → RTX box"]:::gpu
+        G1 --> V2["verify.s()<br/>queue: verify"]:::verify
+        V2 --> CAP{"repair rounds<br/>&lt; cap (2)?"}
+        CAP -->|"PASS"| WON2([verified answer]):::win
+        CAP -->|"FAIL, retry"| G1
+        CAP -->|"cap hit"| C1([capped → Tier-3]):::cap
+    end
+
+    subgraph LL["low_latency = chord( group( draft.s , generate.s ) , pick_first_verified.s )"]
+        direction TB
+        LLG{{"group — race in parallel"}}
+        LLG --> LLD["draft.s(q)<br/>★ NPU · 1.5B"]:::npu
+        LLG --> LLGEN["generate.s(q)<br/>RTX · 14b"]:::gpu
+        LLD --> LLCB["pick_first_verified.s()<br/>chord callback"]:::verify
+        LLGEN --> LLCB
+        LLCB --> LLWON([first gate-pass wins]):::win
+    end
+
+    subgraph LP["low_power = chain( route.s → draft.s → verify.s ).on_error( escalate_gpu )"]
+        direction TB
+        LPR["route.s ★NPU"]:::npu --> LPD["draft.s ★NPU"]:::npu --> LPV["verify.s"]:::verify
+        LPV -->|on_error| LPESC([escalate_gpu]):::gpu
+        LPV -->|pass| LPWON([answer]):::win
+    end
+
+    C1 --> T3["Tier-3 — YOU (Claude CLI)<br/>queue: none, in agent loop"]:::t3
+    T3 -.->|budget-gated| T4["cloud_generate.s()<br/>queue: cloud (no worker unless enabled)"]:::t4
+
+    classDef npu fill:#1b4965,stroke:#5fa8d3,color:#fff,stroke-width:2px;
+    classDef gpu fill:#2d6a4f,stroke:#74c69d,color:#fff;
+    classDef verify fill:#5a3e1b,stroke:#e0a458,color:#fff;
+    classDef win fill:#386641,stroke:#a7c957,color:#fff;
+    classDef cap fill:#6a040f,stroke:#e85d75,color:#fff;
+    classDef t3 fill:#3d348b,stroke:#7b6fc9,color:#fff;
+    classDef t4 fill:#5a189a,stroke:#c77dff,color:#fff;

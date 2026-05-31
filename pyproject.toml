@@ -132,9 +132,10 @@ testpaths = ["tests"]
 # opt-in: `uv run pytest -m integration --no-cov tests/test_canvas_balanced_integration.py`.
 # CI invokes both: unit suite first (gate the 100% scoped coverage), then
 # integration suite separately (smoke pass/fail, no coverage gate).
-addopts = "-q --cov --cov-report=term-missing -m 'not integration'"
+addopts = "-q --cov --cov-report=term-missing -m 'not integration and not live'"
 markers = [
     "integration: end-to-end tests that boot an embedded Celery worker against an in-memory broker; opt-in (Windows teardown hang)",
+    "live: behavioral tests that drive the REAL running Celery worker + Redis broker + NPU/GPU/verify hardware (no mocks, no embedded worker); opt-in via `-m live`, auto-skip when no live worker is up",
 ]
 
 [tool.coverage.run]
@@ -164,6 +165,7 @@ omit = [
     "cascade/tasks.py",
     "cascade/canvas_spike.py",
     "cascade/topologies_canvas.py",
+    "cascade/topology_graph.py",
     "cascade/canvas_client.py",
     "mcp_servers/*",
     # scripts/: only edge_summary.py is in-scope. Everything else is

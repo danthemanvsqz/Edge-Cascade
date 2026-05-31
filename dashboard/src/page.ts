@@ -11,7 +11,7 @@ import { h } from "@danthemanvsqz/vinyl";
 import type { VNode } from "@danthemanvsqz/vinyl";
 
 import type { DashContext } from "./app.js";
-import { cascadeFlowRegion, cascadeFlowTopology, cascadeSpinRegion } from "./flow.js";
+import { cascadeFlowRegion, cascadeFlowTopologyRegion, cascadeSpinRegion } from "./flow.js";
 import {
   cascadeHealthRegion,
   degenPanelRegion,
@@ -53,7 +53,7 @@ export function page(ctx: DashContext): VNode {
         // tier-stats) via `cascade-flow`, and the liveness overlay (the spinning
         // ring) via `cascade-spin` on its own signal -- separate regions so the
         // lanes render independently (no cross-lane flicker).
-        cascadeFlowTopology(),
+        cascadeFlowTopologyRegion.mount(ctx),
         cascadeFlowRegion.mount(ctx),
         cascadeSpinRegion.mount(ctx),
       ),

@@ -1,0 +1,134 @@
+"""Canonical topology graph definitions for each Canvas topology.
+
+Each topology defined in cascade.topologies_canvas has a corresponding
+TopologyGraph here — the directed graph the dashboard renders. This is the
+single source of truth for the dashboard layout; the Beat task in celery_app
+publishes whichever is ACTIVE_GRAPH.
+
+Adding a new experiment topology:
+  1. Define its graph here (nodes + edges).
+  2. Set ACTIVE_GRAPH = my_experiment_graph.
+  3. Restart the worker — Beat pushes it on startup + every 30 s.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+EdgeKind = Literal["flow", "alt", "repair", "cap", "parallel"]
+
+
+@dataclass(frozen=True)
+class GraphNode:
+    id: str
+    label: str
+    tier: str   # "npu" | "verify" | "gpu" | "cloud" | "tier3"
+    queue: str
+    task: str | None  # Celery task name; None for sub-ops / synthetic nodes
+
+
+@dataclass(frozen=True)
+class GraphEdge:
+    from_id: str
+    to_id: str
+    kind: EdgeKind
+
+
+@dataclass(frozen=True)
+class TopologyGraph:
+    name: str
+    nodes: tuple[GraphNode, ...]
+    edges: tuple[GraphEdge, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "nodes": [
+                {"id": n.id, "label": n.label, "tier": n.tier,
+                 "queue": n.queue, "task": n.task}
+                for n in self.nodes
+            ],
+            "edges": [
+                {"from": e.from_id, "to": e.to_id, "kind": e.kind}
+                for e in self.edges
+            ],
+        }
+
+
+# ── balanced ─────────────────────────────────────────────────────────────────
+# Sequential cost-ordered cascade.
+#
+# Forward (no DSL): route → draft → verify_syntax → resolve_npu → gpu_solve
+# Forward (DSL):    route → draft → verify_functional → resolve_npu → gpu_solve
+# GPU repair loop:  gpu_solve → repair_prompt → verify_syntax (retry)
+# Cap path:         gpu_solve → tier3 → cloud
+
+_B = "mesh.balanced."
+BALANCED_GRAPH = TopologyGraph(
+    name="balanced",
+    nodes=(
+        GraphNode("route",             "route",         "npu",    "npu",    _B + "_route"),
+        GraphNode("draft",             "draft",         "npu",    "npu",    _B + "_draft"),
+        GraphNode("verify_syntax",     "verify_syntax", "verify", "verify", _B + "_verify"),
+        GraphNode("verify_functional", "verify_func",   "verify", "verify", None),
+        GraphNode("resolve_npu",       "resolve_npu",   "verify", "verify", _B + "_resolve_npu"),
+        GraphNode("gpu_solve",         "gpu_solve",     "gpu",    "gpu",    _B + "_gpu_solve"),
+        GraphNode("repair_prompt",     "repair_prompt", "verify", "verify", None),
+        # _balanced_done always runs last — logs WIN or LOSE regardless of path.
+        # The agent (Tier 3) takes over when done logs capped->tier3.
+        GraphNode("done",              "_done",         "verify", "verify", _B + "_done"),
+        GraphNode("tier3",             "Tier 3 · CLI",  "tier3",  "—",  None),
+        GraphNode("cloud",             "cloud",         "cloud",  "cloud",  None),
+    ),
+    edges=(
+        GraphEdge("route",             "draft",             "flow"),
+        GraphEdge("draft",             "verify_syntax",     "flow"),   # no-DSL path
+        GraphEdge("draft",             "verify_functional", "alt"),    # DSL path
+        GraphEdge("verify_syntax",     "resolve_npu",       "flow"),
+        GraphEdge("verify_functional", "resolve_npu",       "alt"),
+        GraphEdge("resolve_npu",       "gpu_solve",         "flow"),
+        # GPU repair loop: gpu_solve calls verify as its internal gate check,
+        # then on FAIL builds repair_prompt and retries gpu_solve.
+        GraphEdge("gpu_solve",         "verify_syntax",     "repair"),
+        GraphEdge("gpu_solve",         "verify_functional", "repair"),
+        GraphEdge("verify_syntax",     "repair_prompt",     "repair"),
+        GraphEdge("repair_prompt",     "gpu_solve",         "repair"),
+        # Win/lose logger always runs last (after _balanced_cloud no-op).
+        GraphEdge("gpu_solve",         "done",              "flow"),
+        # Cap: agent takes over when done logs capped->tier3.
+        GraphEdge("done",              "tier3",             "cap"),
+        GraphEdge("tier3",             "cloud",             "cap"),
+    ),
+)
+
+# ── low_latency ───────────────────────────────────────────────────────────────
+# NPU draft races GPU generate concurrently (a Celery chord).
+# No repair loop — trades GPU cost for wall-time. Double-miss → tier3 directly.
+
+LOW_LATENCY_GRAPH = TopologyGraph(
+    name="low_latency",
+    nodes=(
+        GraphNode("npu_draft",  "npu_draft",     "npu",    "npu",    "mesh.balanced._draft"),
+        GraphNode("gpu_swap",   "gpu_swap",      "gpu",    "gpu",    "model.swap_task"),
+        GraphNode("gpu_gen",    "gpu_generate",  "gpu",    "gpu",    "mesh.generate_qwen14b"),
+        GraphNode("pick",       "_pick_first",   "verify", "verify", "mesh.low_latency._pick"),
+        GraphNode("tier3",      "Tier 3 · CLI",  "tier3",  "—",      None),
+        GraphNode("cloud",      "cloud",         "cloud",  "cloud",  None),
+    ),
+    edges=(
+        GraphEdge("npu_draft", "pick",    "parallel"),  # racing arm 1
+        GraphEdge("gpu_swap",  "gpu_gen", "parallel"),  # racing arm 2a
+        GraphEdge("gpu_gen",   "pick",    "parallel"),  # racing arm 2b
+        GraphEdge("pick",      "tier3",   "cap"),
+        GraphEdge("tier3",     "cloud",   "cap"),
+    ),
+)
+
+# Active graph — what the Beat task publishes. Swap for experiment topologies.
+ACTIVE_GRAPH: TopologyGraph = BALANCED_GRAPH
+
+# Registry for lookup by name (used by the Beat task to select by topology name)
+TOPOLOGY_GRAPHS: dict[str, TopologyGraph] = {
+    "balanced":    BALANCED_GRAPH,
+    "low_latency": LOW_LATENCY_GRAPH,
+}

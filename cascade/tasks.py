@@ -22,9 +22,12 @@ from functools import cache
 from pathlib import Path
 
 from cascade import model_swap
+from cascade import verifier as _verifier
 from cascade.celery_app import app
 from cascade.cloud_worker import est_cost_usd, make_cloud_worker, reason_note
 from cascade.config import CONFIG
+from cascade.feedback import CheckFailure
+from cascade.feedback import build_repair_prompt as _build_repair_prompt
 from cascade.gpu_worker import make_gpu_worker
 from cascade.npu_worker import NPUWorker, make_npu_worker
 from mcp_servers._rec import make_recorder, recorded
@@ -142,6 +145,33 @@ def generate_task(prompt: str, prior_attempt: str | None = None,
 @app.task(name="mesh.verify_functional", queue="verify")
 def verify_functional_task(text: str, dsl: str | None = None) -> dict:
     return verify_functional(text, dsl)
+
+
+@recorded(_VERIFY_REC)
+def verify_syntax(text: str) -> dict:
+    """Syntax gate (fast AST/compile, never exec). Records edge-verify.rec.
+    Bare-metal counterpart of mcp_servers.verify.verify_syntax; keeps the
+    Canvas path producing the same .rec particles as the MCP server path."""
+    v = _verifier.verify(text)
+    return {"passed": v.passed, "has_code": v.has_code, "reason": v.reason}
+
+
+@recorded(_VERIFY_REC)
+def repair_prompt(
+    task: str, code: str, failures: list[dict],
+    degen_reasons: list[str] | None = None,
+) -> str:
+    """Build the model-legible repair request. Records edge-verify.rec.
+    Bare-metal counterpart of mcp_servers.verify.repair_prompt."""
+    fs = [
+        CheckFailure(expr=f.get("expr", ""), observed=f.get("observed", ""),
+                     requirement=f.get("requirement", ""))
+        for f in failures
+    ]
+    return _build_repair_prompt(
+        task, code, fs,
+        degen_reasons=tuple(degen_reasons) if degen_reasons else (),
+    )
 
 
 @recorded(_NPU_REC)

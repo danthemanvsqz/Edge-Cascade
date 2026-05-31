@@ -50,15 +50,17 @@ function outcome(finalTier: string, tsMs: number, won: boolean): LastOutcome {
 }
 
 describe("cascadeFlowTopology (static Canvas chain)", () => {
-  it("renders an 800x400 SVG with the chain node labels and the chain arcs", () => {
+  it("renders a 1044x400 SVG with the chain node labels and the chain arcs", () => {
     const html = renderToString(cascadeFlowTopology());
-    expect(html).toContain('viewBox="0 0 800 400"');
-    // Every chain node label appears -- the real Celery tasks, not abstract
-    // tier blobs.
+    expect(html).toContain('viewBox="0 0 1044 400"');
+    // Every forward-chain node label appears. repair_prompt is NOT in the
+    // fallback CHAIN_SPECS — it is positioned by the Beat-pushed graph.
     for (const label of [
       "route",
       "draft",
-      "draft_gate",
+      "verify_syntax",
+      "verify_functional",
+      "resolve_npu",
       "gpu_solve",
       "Tier 3 · CLI",
       "cloud",
@@ -73,8 +75,10 @@ describe("cascadeFlowTopology (static Canvas chain)", () => {
     for (const pathId of [
       "entry-route",
       "route-draft",
-      "draft-gate",
-      "gate-gpu",
+      "draft-verify_syntax",
+      "verify_syntax-verify_functional",
+      "verify_functional-resolve_npu",
+      "resolve_npu-gpu_solve",
       "repair-loop",
       "cap-tier3",
       "tier3-cloud",
@@ -101,8 +105,9 @@ describe("nodeForParticle (tier+tool -> chain node)", () => {
   it("maps a non-route NPU tool (e.g. status) to draft", () => {
     expect(nodeForParticle(part("npu", 0, 0, "status"))).toBe("draft");
   });
-  it("maps verify->gate, gpu->gpu_solve, cloud->cloud", () => {
-    expect(nodeForParticle(part("verify", 0))).toBe("gate");
+  it("maps verify-tier particles to node by tool name, fallback to last verify node", () => {
+    // Unknown verify tool falls back to tierToNodeId (last verify node = resolve_npu)
+    expect(nodeForParticle(part("verify", 0))).toBe("resolve_npu");
     expect(nodeForParticle(part("gpu", 0))).toBe("gpu_solve");
     expect(nodeForParticle(part("cloud", 0))).toBe("cloud");
   });
@@ -218,7 +223,7 @@ describe("isFlashing / FLASH_MS", () => {
 
 describe("enteringArcStart (particle motion origin)", () => {
   it("returns a start for each particle node, null for tier3", () => {
-    for (const id of ["route", "draft", "gate", "gpu_solve", "cloud"] as const) {
+    for (const id of ["route", "draft", "verify_syntax", "verify_functional", "resolve_npu", "gpu_solve", "cloud"] as const) {
       expect(enteringArcStart(id)).not.toBeNull();
     }
     expect(enteringArcStart("tier3")).toBeNull();
@@ -276,7 +281,7 @@ describe("cascadeFlowRegion (overlay live region)", () => {
     const html = renderToString(cascadeFlowRegion.render(ctx));
     expect(html).toContain('class="overlay"');
     // One hot ring per node (6); none active at rest.
-    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(6);
+    expect(html.match(/class="node-hot /g)?.length ?? 0).toBe(8);
     expect(html).not.toContain("node-hot--hot");
     // No particles, no flash.
     expect(html.match(/class="particle particle--/g)).toBeNull();
@@ -366,8 +371,8 @@ describe("isNodeActive (live spinning-ring indicator)", () => {
     expect(isNodeActive("gpu_solve", "gpu_solve", new Set(["gpu_solve"]))).toBe(true);
   });
 
-  it("matches by label (live 'draft_gate' lights the node whose id is 'gate')", () => {
-    expect(isNodeActive("gate", "draft_gate", new Set(["draft_gate"]))).toBe(true);
+  it("matches by label (label matching as a general capability)", () => {
+    expect(isNodeActive("verify_syntax", "verify_syntax", new Set(["verify_syntax"]))).toBe(true);
   });
 
   it("is false when neither id nor label is active", () => {
@@ -385,9 +390,9 @@ describe("cascadeSpinRegion (liveness lane, its own region)", () => {
     expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
   });
 
-  it("lights a node by its label too (live 'draft_gate' -> the 'gate' node)", () => {
+  it("lights the verify_syntax node when active node id 'verify_syntax' is set", () => {
     const ctx = makeCtx();
-    ctx.store.setActiveNodes(["draft_gate"]);
+    ctx.store.setActiveNodes(["verify_syntax"]);
     const html = renderToString(cascadeSpinRegion.render(ctx));
     expect((html.match(/node-spin--spinning/g) ?? []).length).toBe(1);
   });

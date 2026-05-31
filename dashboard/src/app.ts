@@ -19,10 +19,13 @@ import type {
 
 import {
   cascadeFlowRegion,
+  cascadeFlowTopologyRegion,
   cascadeSpinRegion,
   hasActiveAnimation,
   HEARTBEAT_MS,
   LIVE,
+  setTopologyGraph,
+  TOPOLOGY,
 } from "./flow.js";
 import { page } from "./page.js";
 import {
@@ -157,6 +160,8 @@ export function createDashboardApp(
       // Liveness lane on its own signal -- ledger TICKs never touch the spin
       // region, so the ring's animation isn't restarted by particle/hot renders.
       hub.subscribe(LIVE, conn, cascadeSpinRegion);
+      // Topology lane: Beat-pushed graph updates re-render only the SVG shell.
+      hub.subscribe(TOPOLOGY, conn, cascadeFlowTopologyRegion);
     },
     onMessage: () => {
       // Phase A page has no forms / actions; ignore any inbound frame.
@@ -175,6 +180,11 @@ export function createDashboardApp(
     store,
     onChange: () => {
       hub.emit(LIVE);
+    },
+    onTopologyChange: (payload: unknown) => {
+      setTopologyGraph(payload);
+      hub.emit(TOPOLOGY);  // re-render static SVG shell
+      hub.emit(TICK);       // sync overlays (hot rings, particles) to new positions
     },
   });
 

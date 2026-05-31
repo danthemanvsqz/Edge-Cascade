@@ -14,36 +14,41 @@ is a one-line swap here, not a change to the orchestrator.
 """
 from __future__ import annotations
 
-from cascade import mesh
-from cascade.feedback import CheckFailure, build_repair_prompt
-from cascade.verifier import verify
+from cascade import mesh, tasks
+from cascade.feedback import CheckFailure
 
 
 def gate(text: str) -> mesh.GateInfo:
-    """Syntax gate as a mesh op: pass/fail + a repair-legible failure."""
-    v = verify(text)
-    if v.passed:
+    """Syntax gate as a mesh op: pass/fail + a repair-legible failure.
+    Delegates to tasks.verify_syntax so both the in-process and Canvas paths
+    produce the same edge-verify.rec records."""
+    result = tasks.verify_syntax(text)
+    if result.get("passed"):
         return mesh.GateInfo(True)
     fail = CheckFailure(
         expr="a syntactically valid Python code block",
-        observed=v.reason,
+        observed=result.get("reason", ""),
         requirement="the answer must contain one fenced Python block that compiles",
     )
-    return mesh.GateInfo(False, (fail,), v.reason)
+    return mesh.GateInfo(False, (fail,), result.get("reason", ""))
 
 
 def repair_prompt(
     query: str, prior: str, failures: tuple, degen_reasons: tuple = (),
 ) -> str:
-    """Build the model-legible repair request (cascade.feedback) from the
-    gate's failures, defaulting to a generic note if none were supplied.
-    `degen_reasons` is the PD-1 v2 warn-prompt channel: text-only degeneration
-    reasons from the prior draft, threaded into the repair prompt so the
-    repair model knows what failure mode to avoid."""
-    fails = list(failures) or [
-        CheckFailure("verification", "the previous answer failed the gate", "")
+    """Build the model-legible repair request. Delegates to tasks.repair_prompt
+    so both the in-process and Canvas paths produce edge-verify.rec records."""
+    fails_list = [
+        {"expr": f.expr, "observed": f.observed, "requirement": f.requirement}
+        for f in (failures or [
+            CheckFailure("verification", "the previous answer failed the gate", "")
+        ])
     ]
-    return build_repair_prompt(query, prior, fails, degen_reasons=degen_reasons)
+    return tasks.repair_prompt(
+        query, prior, fails_list,
+        # tasks.repair_prompt accepts list; converts to tuple internally.
+        degen_reasons=list(degen_reasons) if degen_reasons else None,
+    )
 
 
 def build_ops(npu, gpu, igpu=None, observe_emit=None) -> mesh.Ops:

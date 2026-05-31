@@ -1,28 +1,17 @@
 /**
  * Runtime entry. `node --import tsx src/server.ts` (or `npm run dev`).
  *
- * Mirrors the structure of projects/vinyl/demo/todomvc/server.ts: node:http
- * for the initial paint via `streamShell`; the `upgrade` event hands off to
- * Vinyl's WS server for the live-region push fabric. The tailer is started
- * before listen so the dashboard is already warm by the time a browser hits
- * the page.
+ * In production, run via PM2 (`pm2 start ecosystem.config.cjs`) so the server
+ * auto-starts on Windows boot and recovers from crashes. See
+ * scripts/setup-dashboard-service.ps1 for one-time setup.
  *
  * Env knobs:
- *   PORT             -- TCP port (default 8789; deliberately not 8788 so the
- *                       TodoMVC demo can run alongside)
- *   RUNS_DIR         -- where to tail .rec files from (default ../runs,
- *                       resolved from the dashboard package root so a fresh
- *                       clone "just works" when started from `npm run dev`)
- *   START_FROM_EOF   -- SD-3 session-coupling. When set to a truthy value
- *                       ("1" / "true" / "yes", case-insensitive), the tailer
- *                       snapshots each `runs/*.rec` file's current size on
- *                       the first tick and only emits records APPENDED
- *                       afterwards. `scripts/edge-cli.ps1` sets this when it
- *                       auto-launches the dashboard so each session's panel
- *                       shows only that session's cascade activity, not the
- *                       gitignored history. Default: false (replay-from-zero,
- *                       the standalone `npm start` workflow).
+ *   PORT             -- TCP port (default 8789)
+ *   RUNS_DIR         -- where to tail .rec files from (default ../runs)
+ *   START_FROM_EOF   -- session-coupling flag (see below)
+ *   FLOWER_URL       -- Flower API base URL (default http://127.0.0.1:5555)
  */
+import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
@@ -30,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { streamShell } from "@danthemanvsqz/vinyl";
 
 import { createDashboardApp } from "./app.js";
+import { setTopology } from "./flow.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLE_CSS_PATH = resolve(HERE, "style.css");
@@ -40,40 +30,108 @@ const startFromEof = ["1", "true", "yes"].includes(
   (process.env.START_FROM_EOF ?? "").toLowerCase(),
 );
 
+// ── Access log ────────────────────────────────────────────────────────────────
+// One log file for the whole runs/ directory. Each line is logfmt: ts= event= ...
+// Gaps in timestamps = server was down. Use this to gauge stability.
+const ACCESS_LOG = resolve(runsDir, "dashboard-access.log");
+
+function log(fields: Record<string, string | number>): void {
+  const line = Object.entries({ ts: new Date().toISOString(), ...fields })
+    .map(([k, v]) => {
+      const s = String(v);
+      return s.includes(" ") ? `${k}="${s}"` : `${k}=${s}`;
+    })
+    .join(" ");
+  try { appendFileSync(ACCESS_LOG, line + "\n"); } catch { /* non-fatal */ }
+}
+
+log({ event: "startup", pid: process.pid, port });
+
+// ── App ───────────────────────────────────────────────────────────────────────
 const app = createDashboardApp({ runsDir, startFromEof });
 app.tailer.start();
-// Liveness lane (push): subscribe the Redis node-state channel + seed on start.
-// Best-effort -- a down broker must not take down the dashboard (the ledger lane
-// is independent); the spinning ring just stays dark until the receiver is up.
+
 void app.liveSource.start().catch((err: unknown) => {
   console.warn(`[dashboard] live source not started: ${String(err)}`);
+  log({ event: "live_source_error", error: String(err) });
 });
 
+// ── HTTP server ───────────────────────────────────────────────────────────────
 const server = createServer((req, res) => {
-  if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+  const start = Date.now();
+  const method = req.method ?? "GET";
+  const path   = req.url ?? "/";
+
+  const done = (status: number) => {
+    log({ event: "request", method, path, status, ms: Date.now() - start });
+  };
+
+  if (method === "GET" && (path === "/" || path === "/index.html")) {
+    res.on("finish", () => done(res.statusCode));
     void streamShell(res, app.page());
     return;
   }
-  if (req.method === "GET" && req.url === "/style.css") {
+  if (method === "GET" && path === "/style.css") {
     void readFile(STYLE_CSS_PATH).then(
       (body) => {
         res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
         res.end(body);
+        done(200);
       },
       () => {
         res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
         res.end("style.css missing");
+        done(500);
       },
     );
     return;
   }
   res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
   res.end("not found");
+  done(404);
 });
 
 server.on("upgrade", (req, socket, head) => {
+  log({ event: "ws_connect", path: req.url ?? "/" });
   app.vws.handleUpgrade(req, socket, head);
 });
+
+// Graceful shutdown: drain in-flight requests before PM2 restarts/reloads.
+process.on("SIGTERM", () => {
+  log({ event: "shutdown", signal: "SIGTERM" });
+  server.close(() => process.exit(0));
+});
+
+// Topology: query Flower for registered tasks BEFORE accepting requests so every
+// client sees a consistent static SVG. 3 s timeout keeps startup fast when the
+// worker isn't up yet. Null-safe parse guards against disconnected worker entries.
+const FLOWER = process.env.FLOWER_URL ?? "http://127.0.0.1:5555";
+try {
+  const res = await fetch(`${FLOWER}/api/workers?refresh=true&status=true`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  if (res.ok) {
+    const workers = (await res.json()) as Record<string, unknown>;
+    const tasks = new Set<string>(
+      Object.values(workers)
+        .filter((w): w is { registered_tasks: string[] } =>
+          typeof w === "object" && w !== null &&
+          "registered_tasks" in w &&
+          Array.isArray((w as Record<string, unknown>).registered_tasks),
+        )
+        .flatMap(w => w.registered_tasks),
+    );
+    if (tasks.size > 0) {
+      setTopology(tasks);
+      log({ event: "topology_filtered", registered_tasks: tasks.size });
+    } else {
+      log({ event: "topology_fallback", reason: "flower_no_tasks" });
+    }
+  }
+} catch {
+  // Flower unavailable or timed out -- show full CHAIN_SPECS topology.
+  log({ event: "topology_fallback", reason: "flower_unavailable" });
+}
 
 server.listen(port, () => {
   const mode = startFromEof ? " [session-coupled]" : "";
