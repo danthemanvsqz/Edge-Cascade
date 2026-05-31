@@ -142,6 +142,11 @@ export interface LastOutcome {
 }
 
 export interface Store {
+  /** Clear all accumulated state: particles, counters, health history, degen
+   * log, cascade outcomes, and active nodes. The tailer continues from its
+   * current file position, so only future records are ingested after a reset.
+   * Useful for starting a fresh monitoring session without restarting the server. */
+  reset(): void;
   /** Ingest one record from the tailer. Returns the particle iff the record
    * mapped to a known tier (so the caller knows whether to push it through
    * the flow region). */
@@ -411,7 +416,33 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     return out;
   }
 
+  function reset(): void {
+    queue.length = 0;
+    for (const t of TIERS) {
+      buckets[t].clear();
+      health[t] = { available: true, lastSeenMs: null };
+    }
+    for (const t of DEGEN_TIERS) {
+      degenLog[t as DegenTier].length = 0;
+    }
+    recent = null;
+    cloudCalls = 0;
+    usd = 0;
+    totalParticles = 0;
+    resolvedNpu = 0;
+    resolvedIgpu = 0;
+    resolvedGpu = 0;
+    cappedRuns = 0;
+    draftSkippedRuns = 0;
+    npuGaveUpRuns = 0;
+    totalRuns = 0;
+    lastOutcome = null;
+    outcomeSeq = 0;
+    activeNodeSet.clear();
+  }
+
   return {
+    reset,
     ingest,
     particles: () => queue,
     sparkline,

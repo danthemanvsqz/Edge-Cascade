@@ -71,6 +71,14 @@ const server = createServer((req, res) => {
     void streamShell(res, app.page());
     return;
   }
+  if (method === "POST" && path === "/api/reset") {
+    app.reset();
+    log({ event: "reset", pid: process.pid });
+    res.writeHead(204);
+    res.end();
+    done(204);
+    return;
+  }
   if (method === "GET" && path === "/style.css") {
     void readFile(STYLE_CSS_PATH).then(
       (body) => {

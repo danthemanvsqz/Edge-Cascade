@@ -1,4 +1,10 @@
-"""edge-gpu MCP server -- Tier 2, NVIDIA RTX 5070 Ti via Ollama.
+"""DEPRECATED -- edge-gpu MCP server (retired; inference now via Canvas pipeline).
+
+Removed from .mcp.json 2026-05-31. The Canvas Celery workers (cascade/tasks.py,
+cascade/topologies_canvas.py) replaced the per-tier MCP hand-orchestration.
+Kept for reference; delete when the mcp_servers/ directory is cleaned up.
+
+edge-gpu MCP server -- Tier 2, NVIDIA RTX 5070 Ti via Ollama.
 
 Local reasoning / multi-file logic / repair of a failed Tier-1 draft. Stateless
 HTTP to Ollama (localhost:11434). "Unavailable" is a normal status, NOT an

@@ -148,6 +148,15 @@ def verify_functional_task(text: str, dsl: str | None = None) -> dict:
 
 
 @recorded(_VERIFY_REC)
+def resolve_npu(tier: str = "npu") -> dict:
+    """Ledger record for a successful NPU-tier resolution (gate PASS, run done).
+    Writes edge-verify.rec with tool=resolve_npu so dashboard particles show
+    NPU wins in the event log. Called by _budget_resolve_npu when env["resolved"]
+    flips True."""
+    return {"resolved": True, "tier": tier}
+
+
+@recorded(_VERIFY_REC)
 def verify_syntax(text: str) -> dict:
     """Syntax gate (fast AST/compile, never exec). Records edge-verify.rec.
     Bare-metal counterpart of mcp_servers.verify.verify_syntax; keeps the

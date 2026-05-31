@@ -44,6 +44,12 @@ export function page(ctx: DashContext): VNode {
         h("h1", null, "edge-cascade"),
         cascadeHealthRegion.mount(ctx),
         rateMeterRegion.mount(ctx),
+        h("button", {
+          class: "reset-btn",
+          "hx-post": "/api/reset",
+          "hx-swap": "none",
+          title: "Clear accumulated records and start monitoring fresh",
+        }, "Reset"),
       ),
       h(
         "main",
