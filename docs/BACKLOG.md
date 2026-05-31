@@ -11,31 +11,34 @@ dropped, the `S4` row is parked + de-risked.
 > Flower-backed live lane + event-receiver push + the dashboard spinning ring).
 > Added the **self-healing arc #7–#11** from the 2026-05-30 routing-log analysis
 > (24 routes this session; see the section below for the evidence behind each).
+> Updated **2026-05-31**: **#9 draft_gate-decompose SHIPPED** (PR #119, part of
+> the big refactor/canvas commit — split `_balanced_draft_gate` into `_verify` +
+> `_resolve_npu`; BACKLOG.md wasn't updated at merge time). Next pick = **#1 PT-1**.
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor          I3 Major                       I4 Critical
- S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1                        — (none)
+ S1 Safe                  ✗ (none)     #11 hook-scope    #1 PT-1 ← NEXT                 — (none)
                                                          #12 obs-legibility ✅DONE
  S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
                                        #5 PT-4 verbump   #2 PT-2 (Slice 7: blocked)
                                        #13 nonblock-hold*  *v2 of #12
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal ✅DONE
-                                                         #9 draft_gate-decompose ← NEXT
+                                                         #9 draft_gate-decompose ✅DONE
  S4 Severe (park)         ✗ (none)     ⏳ none           ⏳ none                         — (none)
 ```
 
 No `S4` park items and no `I1` drops right now. Slice 7 is **dependency-blocked**
 (not parked) — see below. **Shipped:** #6 OBS-1, #7 ts-verify-gate (PR #115),
-#8 difficulty-recal (PR #116), and #12 obs-legibility (PR #117: the min-lit
-hold + the NPU-gave-up counter). #10 ts-shortcut is retired (superseded by #7).
-The next pick is **#9 (draft_gate-decompose)** — the user-flagged overload
-(verify+resolve+escalate fused in one node); it makes the spinning ring
-meaningful (one node = one responsibility). **#13 nonblock-hold** is the v2 of
-#12 (the receiver's min-lit `sleep` blocks the event thread; a non-blocking
-scheduler is the principled fix — Opus review of PR #117).
+#8 difficulty-recal (PR #116), #12 obs-legibility (PR #117: the min-lit hold +
+NPU-gave-up counter), **#9 draft_gate-decompose (PR #119**: split
+`_balanced_draft_gate` → `_verify` + `_resolve_npu`; BACKLOG update missed at
+merge time). #10 ts-shortcut is retired (superseded by #7). **The next pick is
+#1 PT-1** — confirm full GPU offload (I3·S1, highest-impact + safest). **#13
+nonblock-hold** is the v2 of #12 (the receiver's min-lit `sleep` blocks the event
+thread; a non-blocking scheduler is the principled fix — Opus review of PR #117).
 
 ---
 
