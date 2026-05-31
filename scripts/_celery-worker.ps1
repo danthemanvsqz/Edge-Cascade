@@ -51,7 +51,8 @@ param(
   [string]   $RedisHost = $env:CASCADE_REDIS_HOST,
   [string]   $RedisPassword = $env:CASCADE_REDIS_PASSWORD,
   [switch]   $PropagateNpuModelDir,
-  [switch]   $SkipSync
+  [switch]   $SkipSync,
+  [switch]   $Watch    # auto-restart worker on cascade/*.py changes (dev mode)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -100,18 +101,35 @@ if (-not $SkipSync) {
 Write-Host "[worker] queues : $($queueList -join ', ')" -ForegroundColor Green
 Write-Host "[worker] broker : redis @ $brokerHost" -ForegroundColor Green
 Write-Host "[worker] node   : $NodeName@<hostname>" -ForegroundColor Green
+if ($Watch) {
+  Write-Host "[worker] WATCH mode: restarts on cascade/*.py changes." -ForegroundColor Yellow
+}
 Write-Host "[worker] Ctrl-C to stop." -ForegroundColor DarkGray
+
+$celeryArgs = @(
+  '-m', 'celery', '-A', 'cascade.celery_app', 'worker',
+  '-Q', ($queueList -join ','),
+  '--pool=solo',
+  '--hostname', "$NodeName@%h",
+  '-l', 'info'
+)
 
 Push-Location $RepoRoot
 try {
-  # Task lifecycle events (for Flower's live-activity capture) are enabled at the
-  # config level -- worker_send_task_events=True in cascade/celery_app.py -- so
-  # every launch path emits them; no per-launch -E needed here.
-  & $VenvPython -m celery -A cascade.celery_app worker `
-      -Q ($queueList -join ',') `
-      --pool=solo `
-      --hostname "$NodeName@%h" `
-      -l info
+  if ($Watch) {
+    # watchmedo auto-restart re-execs the worker when cascade/*.py changes.
+    # Requires watchdog in the dev dependency group (uv sync installs it).
+    & $VenvPython -m watchdog.watchmedo auto-restart `
+        --directory=cascade `
+        --pattern='*.py' `
+        --recursive `
+        -- `
+        $VenvPython @celeryArgs
+  } else {
+    # Task lifecycle events (for Flower's live-activity capture) are enabled at
+    # the config level -- worker_send_task_events=True in cascade/celery_app.py.
+    & $VenvPython @celeryArgs
+  }
 } finally {
   Pop-Location
 }
