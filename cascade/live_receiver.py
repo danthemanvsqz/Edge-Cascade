@@ -15,7 +15,6 @@ substrate (a real broker + worker), not unit-cov'd.
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Iterable
 
 from cascade.flower_activity import NODE_BY_TASK
@@ -84,33 +83,45 @@ def publish_state(
     curr: set[str],
     active_since: dict[str, float],
     now: float,
+    pending_idles: dict[str, float],
     min_lit: float = MIN_LIT_S,
-    sleep=time.sleep,
 ) -> set[str]:
     """Publish the transitions between two snapshots and update the seed key.
 
-    `pub` is an injected redis client (`.publish` + `.set`). Each `node_delta`
-    transition is published to `channel`. An `idle` is HELD (`sleep`) until the
-    node has been lit for `min_lit` (BACKLOG #12: keeps a fast route/draft node
-    visible); a slow node is past that window, so it publishes immediately.
-    `active_since` (caller-owned, mutated here) records each node's activation
-    time and is popped on idle so it never grows. Then the current set is written
-    to `state_key` so a late subscriber can seed. Returns `curr` to roll into
-    `prev`. `sleep` is injectable for tests.
+    `pub` is an injected redis client (`.publish` + `.set`). `active_since` and
+    `pending_idles` are caller-owned dicts mutated here; both must outlive each
+    call (pass the same dict on every call, like `prev`).
 
-    NB: the hold calls `sleep` SYNCHRONOUSLY, so this BLOCKS the caller (the
-    Celery event-receiver thread) for up to `min_lit` per idle. Fine for v1 --
-    holds serialize into a clean sequential light-up -- but a burst of fast
-    transitions delays later `active` publishes too. The v2 iteration is a
-    non-blocking scheduler (a `not_before` per node, flushed on the next event).
+    Non-blocking hold (BACKLOG #13, v2 of #12): fast nodes (route/draft,
+    sub-second) would blink off before the eye catches them. Instead of sleeping
+    the event thread, an `idle` whose min-lit window hasn't expired is deferred:
+    its `not_before` timestamp goes into `pending_idles`. On the NEXT call those
+    overdue idles are flushed first. No thread is ever blocked.
+
+    If a deferred idle's node goes `active` again before flushing, the pending
+    idle is cancelled -- the node is already lit, so the premature idle is moot.
+
+    The seed key (`state_key`) is written with `curr | pending_idles` so a
+    dashboard that connects mid-gap still sees the deferred-still-lit nodes.
     """
+    # Flush deferred idles from previous calls that are now overdue.
+    to_flush = sorted(n for n, nb in pending_idles.items() if now >= nb)
+    for node in to_flush:
+        pub.publish(channel, json.dumps({"node": node, "state": "idle"}))
+        del pending_idles[node]
+
     for node, node_state in node_delta(prev, curr):
         if node_state == "active":
             active_since[node] = now
+            pending_idles.pop(node, None)  # cancel any deferred idle
+            pub.publish(channel, json.dumps({"node": node, "state": "active"}))
         else:
             wait = hold_remaining(active_since.pop(node, now), now, min_lit)
             if wait > 0:
-                sleep(wait)
-        pub.publish(channel, json.dumps({"node": node, "state": node_state}))
-    pub.set(state_key, json.dumps(sorted(curr)))
+                pending_idles[node] = now + wait  # defer; don't block
+            else:
+                pub.publish(channel, json.dumps({"node": node, "state": "idle"}))
+
+    still_lit = curr | set(pending_idles)
+    pub.set(state_key, json.dumps(sorted(still_lit)))
     return curr
