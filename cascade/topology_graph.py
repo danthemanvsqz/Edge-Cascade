@@ -74,19 +74,29 @@ BALANCED_GRAPH = TopologyGraph(
         GraphNode("resolve_npu",       "resolve_npu",   "verify", "verify", _B + "_resolve_npu"),
         GraphNode("gpu_solve",         "gpu_solve",     "gpu",    "gpu",    _B + "_gpu_solve"),
         GraphNode("repair_prompt",     "repair_prompt", "verify", "verify", None),
+        # _balanced_done always runs last — logs WIN or LOSE regardless of path.
+        # The agent (Tier 3) takes over when done logs capped->tier3.
+        GraphNode("done",              "_done",         "verify", "verify", _B + "_done"),
         GraphNode("tier3",             "Tier 3 · CLI",  "tier3",  "—",  None),
         GraphNode("cloud",             "cloud",         "cloud",  "cloud",  None),
     ),
     edges=(
         GraphEdge("route",             "draft",             "flow"),
-        GraphEdge("draft",             "verify_syntax",     "flow"),   # no-DSL
-        GraphEdge("draft",             "verify_functional", "alt"),    # DSL
+        GraphEdge("draft",             "verify_syntax",     "flow"),   # no-DSL path
+        GraphEdge("draft",             "verify_functional", "alt"),    # DSL path
         GraphEdge("verify_syntax",     "resolve_npu",       "flow"),
         GraphEdge("verify_functional", "resolve_npu",       "alt"),
         GraphEdge("resolve_npu",       "gpu_solve",         "flow"),
-        GraphEdge("gpu_solve",         "repair_prompt",     "repair"),
-        GraphEdge("repair_prompt",     "verify_syntax",     "repair"),
-        GraphEdge("gpu_solve",         "tier3",             "cap"),
+        # GPU repair loop: gpu_solve calls verify as its internal gate check,
+        # then on FAIL builds repair_prompt and retries gpu_solve.
+        GraphEdge("gpu_solve",         "verify_syntax",     "repair"),
+        GraphEdge("gpu_solve",         "verify_functional", "repair"),
+        GraphEdge("verify_syntax",     "repair_prompt",     "repair"),
+        GraphEdge("repair_prompt",     "gpu_solve",         "repair"),
+        # Win/lose logger always runs last (after _balanced_cloud no-op).
+        GraphEdge("gpu_solve",         "done",              "flow"),
+        # Cap: agent takes over when done logs capped->tier3.
+        GraphEdge("done",              "tier3",             "cap"),
         GraphEdge("tier3",             "cloud",             "cap"),
     ),
 )

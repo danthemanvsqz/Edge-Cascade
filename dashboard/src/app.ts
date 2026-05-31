@@ -183,7 +183,8 @@ export function createDashboardApp(
     },
     onTopologyChange: (payload: unknown) => {
       setTopologyGraph(payload);
-      hub.emit(TOPOLOGY);
+      hub.emit(TOPOLOGY);  // re-render static SVG shell
+      hub.emit(TICK);       // sync overlays (hot rings, particles) to new positions
     },
   });
 

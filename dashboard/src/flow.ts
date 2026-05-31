@@ -93,6 +93,7 @@ interface BuiltTopology {
   readonly nodes: readonly ChainNode[];
   readonly paths: readonly PathDef[];
   readonly viewW: number;
+  readonly viewH: number;
   /** Node ids that pool .rec particles, in pipeline order (tier3 excluded). */
   readonly particleNodes: readonly string[];
   /** tier → primary particle-pool node id. npu maps to the last npu node (draft). */
@@ -208,7 +209,7 @@ function buildTopology(specs: readonly NodeSpec[]): BuiltTopology {
   }
   if (tier3Node) enteringArcStarts.set(tier3Node.id, null);
 
-  return { nodes, paths, viewW, particleNodes, tierToNodeId, enteringArcStarts };
+  return { nodes, paths, viewW, viewH: VIEW_H, particleNodes, tierToNodeId, enteringArcStarts };
 }
 
 // ── Module-level topology state ───────────────────────────────────────────────
@@ -299,30 +300,30 @@ function buildTopologyFromGraph(g: RawGraphPayload): BuiltTopology {
   const posOf = new Map<string, { x: number; y: number }>();
   const maxRank = mainNodes.length > 0 ? Math.max(...mainNodes.map(n => rankOf.get(n.id) ?? 0)) : 0;
 
-  // Vertical centering offset for multi-row ranks
+  // Stack multi-row ranks downward from ROW_TOP_Y (no centering that goes negative).
+  // Single-row nodes sit at ROW_TOP_Y; two parallel nodes start at ROW_TOP_Y and
+  // grow down. The repair node floats ABOVE this row.
   const ROW_INNER_GAP = 24;
   for (const [rank, nodesAtRank] of byRank) {
-    const count = nodesAtRank.length;
-    const totalH = count * NODE_H + (count - 1) * ROW_INNER_GAP;
-    const startY = ROW_TOP_Y - Math.floor((totalH - NODE_H) / 2);
     nodesAtRank.forEach((n, rowIdx) => {
       posOf.set(n.id, {
         x: 24 + rank * (NODE_W + NODE_GAP),
-        y: startY + rowIdx * (NODE_H + ROW_INNER_GAP),
+        y: ROW_TOP_Y + rowIdx * (NODE_H + ROW_INNER_GAP),
       });
     });
   }
 
   // Step 4: position repair-floating nodes above the repair arc midpoint.
+  // Keep y >= 0 so nodes stay within the SVG viewport.
   const repairEdges = g.edges.filter(e => e.kind === "repair");
+  const REPAIR_Y_OFFSET = NODE_H + 16;  // how far above ROW_TOP_Y to float
   for (const rn of repairNodes) {
-    // Find the GPU-side source and the verify-side target of the repair arc.
     const inEdge  = repairEdges.find(e => e.to === rn.id);
     const outEdge = repairEdges.find(e => e.from === rn.id);
     const srcPos  = inEdge  ? posOf.get(inEdge.from)  : null;
     const dstPos  = outEdge ? posOf.get(outEdge.to)   : null;
     const midX = srcPos && dstPos ? (srcPos.x + dstPos.x) / 2 : 24 + maxRank * (NODE_W + NODE_GAP) / 2;
-    posOf.set(rn.id, { x: midX - NODE_W / 2, y: ROW_TOP_Y - 90 });
+    posOf.set(rn.id, { x: midX - NODE_W / 2, y: Math.max(ROW_TOP_Y - REPAIR_Y_OFFSET, 0) });
   }
 
   // Step 5: position cap nodes.
@@ -359,9 +360,11 @@ function buildTopologyFromGraph(g: RawGraphPayload): BuiltTopology {
   const cx = (n: ChainNode) => n.x + n.w / 2;
   const cy = (n: ChainNode) => n.y + n.h / 2;
 
-  // Step 6: compute viewW and viewH.
+  // Step 6: compute viewW and viewH dynamically from actual node positions.
   const xs = nodes.map(n => n.x + n.w);
+  const ys = nodes.map(n => n.y + n.h);
   const viewW = xs.length > 0 ? Math.max(...xs) + VIEW_MARGIN_R : 400;
+  const viewH_dyn = ys.length > 0 ? Math.max(...ys) + 80 : VIEW_H;
 
   // Step 7: build paths.
   const paths: PathDef[] = [];
@@ -427,7 +430,7 @@ function buildTopologyFromGraph(g: RawGraphPayload): BuiltTopology {
     }
   }
 
-  return { nodes, paths, viewW, particleNodes, tierToNodeId, enteringArcStarts };
+  return { nodes, paths, viewW, viewH: viewH_dyn, particleNodes, tierToNodeId, enteringArcStarts };
 }
 
 /** Called by liveSource.onTopologyChange when the Beat task pushes a new
@@ -602,7 +605,7 @@ export function cascadeFlowTopology(): VNode {
     "svg",
     {
       class: "topology",
-      viewBox: `0 0 ${String(viewW)} ${String(VIEW_H)}`,
+      viewBox: `0 0 ${String(viewW)} ${String(_topo.viewH)}`,
       xmlns: "http://www.w3.org/2000/svg",
       "aria-label": "edge-cascade Canvas chain topology",
     },
@@ -646,7 +649,7 @@ export const cascadeSpinRegion: LiveRegion<DashContext> = liveRegion(
 function spinOverlaySvg(ctx: DashContext): VNode {
   const activeNodes = ctx.store.activeNodes();
   const { nodes, viewW } = _topo;
-  return h("svg", { class: "overlay", viewBox: `0 0 ${String(viewW)} ${String(VIEW_H)}`, xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
+  return h("svg", { class: "overlay", viewBox: `0 0 ${String(viewW)} ${String(_topo.viewH)}`, xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
     h("g", { class: "node-spins" }, ...nodes.map(n => spinRing(n, activeNodes))),
   );
 }
@@ -657,7 +660,7 @@ function overlaySvg(ctx: DashContext): VNode {
   const byNode = bucketByNode(particles);
   const lastOutcome = ctx.store.lastOutcome();
   const { nodes, particleNodes, viewW } = _topo;
-  return h("svg", { class: "overlay", viewBox: `0 0 ${String(viewW)} ${String(VIEW_H)}`, xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
+  return h("svg", { class: "overlay", viewBox: `0 0 ${String(viewW)} ${String(_topo.viewH)}`, xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
     outcomeFlash(lastOutcome, nowMs, viewW),
     h("g", { class: "node-hots" }, ...nodes.map(n => hotRing(n, byNode, lastOutcome, nowMs))),
     h("g", { class: "node-stats" }, ...particleNodes.map(id => nodeStat(byNode.get(id) ?? [], id))),
@@ -714,7 +717,7 @@ function outcomeFlash(lastOutcome: LastOutcome | null, nowMs: number, viewW: num
   if (!isFlashing(lastOutcome, nowMs)) return h("g", { class: "outcome-flash" });
   const tone = lastOutcome!.won ? "win" : "lose";
   return h("g", { class: `outcome-flash outcome-flash--active outcome-flash--${tone}` },
-    h("rect", { class: "outcome-flash-rect", x: "0", y: "0", width: String(viewW), height: String(VIEW_H), "aria-hidden": "true" }),
+    h("rect", { class: "outcome-flash-rect", x: "0", y: "0", width: String(viewW), height: String(_topo.viewH), "aria-hidden": "true" }),
   );
 }
 
@@ -725,7 +728,7 @@ function outcomeBanner(lastOutcome: LastOutcome | null, nowMs: number, viewW: nu
   const word = o.won ? "LOCAL WIN" : "CAPPED";
   const sub  = o.won ? `resolved @ ${o.finalTier}` : "→ Tier 3 takeover";
   return h("g", { class: `outcome-banner outcome-banner--active outcome-banner--${tone}` },
-    h("text", { class: "outcome-banner-word",  x: String(viewW / 2), y: String(VIEW_H / 2 - 6),  "text-anchor": "middle" }, word),
-    h("text", { class: "outcome-banner-sub",   x: String(viewW / 2), y: String(VIEW_H / 2 + 20), "text-anchor": "middle" }, sub),
+    h("text", { class: "outcome-banner-word",  x: String(viewW / 2), y: String(_topo.viewH / 2 - 6),  "text-anchor": "middle" }, word),
+    h("text", { class: "outcome-banner-sub",   x: String(viewW / 2), y: String(_topo.viewH / 2 + 20), "text-anchor": "middle" }, sub),
   );
 }
