@@ -48,7 +48,7 @@ def dsl_from_cases(fn_name: str, cases: list[tuple]) -> str:
             ((0, 0), 0),
             ((1,), None),   # single-arg, None result
         ])
-        # "assert add(1, 2) == 3\\nassert add(0, 0) == 0\\nassert add(1,) is None"
+        # "assert add(1, 2) == 3\\nassert add(0, 0) == 0\\nassert add(1) is None"
     """
     lines: list[str] = []
     for args, expected in cases:
