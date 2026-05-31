@@ -38,9 +38,10 @@ jobs:
 
       # core deps + the default `dev` group (pytest/cov/mock, bandit, ruff)
       # + the `mcp` extra so the mcp_servers import-smoke tests actually run
-      # instead of skipping.
+      # + the `celery` extra so cascade.celery_app (and its redis import) resolve
+      #   in tests that import cascade.wiring / cascade.orchestrator.
       - name: Sync dependencies
-        run: uv sync --extra mcp
+        run: uv sync --extra mcp --extra celery
 
       # Same gate as the pre-commit bandit hook: our code only (deps live in
       # .venv, excluded via [tool.bandit] exclude_dirs). Loose by design -- a
