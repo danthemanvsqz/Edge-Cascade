@@ -198,9 +198,12 @@ Per the locked pass criteria, wall time within ±20% is part of the bar.
   - KV cache reuse across calls in the same worker (Ollama's daemon
     keeps a session warm; our `_generate` makes a fresh
     `create_chat_completion` per call which may re-prefill).
-  - Verify `n_gpu_layers=-1` is actually offloading all layers on
-    qwen14b — the load log shows it found CUDA, but the layer count
-    isn't logged.
+  - ~~Verify `n_gpu_layers=-1` is actually offloading all layers~~ —
+    **PT-1 DONE (2026-05-31): PASS.** VRAM delta +10,526 MB (123% of
+    8,571 MB GGUF); all 28 layers on GPU. Not the cause of the 3.4×.
+    Bonus: `n_ctx_train=32768` surfaced — Ollama likely sizes context
+    dynamically per-prompt (much < 8192 for short queries), so our
+    fixed `n_ctx=8192` over-allocates the KV cache. PT-2 next.
   - llama-cpp-python version (we're on 0.3.23; check upstream for
     perf regressions since the cu124 wheel was cut).
 - File the 117s `gpu_solve_task` timeout as the reason
