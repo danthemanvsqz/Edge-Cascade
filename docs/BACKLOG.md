@@ -14,6 +14,7 @@ dropped, the `S4` row is parked + de-risked.
 > Updated **2026-05-31**: **#9 draft_gate-decompose SHIPPED** (PR #119, part of
 > the big refactor/canvas commit — split `_balanced_draft_gate` into `_verify` +
 > `_resolve_npu`; BACKLOG.md wasn't updated at merge time). Next pick = **#1 PT-1**.
+> Added **#14 verify_func refactor** (I2·S2, not high impact — DSL interface cleanup).
 
 ## Current placement
 
@@ -24,6 +25,7 @@ dropped, the `S4` row is parked + de-risked.
  S2 Low                   ✗ (none)     #4 gate-helper    #7 ts-verify-gate ✅DONE        — (none)
                                        #5 PT-4 verbump   #2 PT-2 ✅DONE (Slice 7: UNBLOCKED ← NEXT)
                                        #13 nonblock-hold*  *v2 of #12
+                                       #14 verify_func refactor
  S3 Moderate              ✗ (none)     —                 #3 PT-3                         — (none)
                                                          #8 difficulty-recal ✅DONE
                                                          #9 draft_gate-decompose ✅DONE
@@ -275,6 +277,34 @@ pure decision into a non-omitted helper so the gate covers it. Minor impact (log
 On `0.3.23`; check upstream for perf changes since the cu124 wheel was cut and bump
 if it helps. Minor/maintenance; a bump can shift the CUDA wheel + runtime-DLL setup
 ([FINDINGS-celery-phase2-parity.md] side-finding), so measure before keeping.
+
+## #14 — verify_func refactor  (I2 · S2)
+
+**The gap:** `verify_functional` / the `dsl=` parameter is a useful concept (run the
+generated code against assertion test-cases, not just check syntax) but almost never
+used in practice because the interface is awkward: callers must hand-craft a raw Python
+assertion string, pass it as an opaque `dsl` kwarg, and there's no helper to build or
+validate that string before it hits the sandboxed subprocess. As a result `verify_func`
+is always 0 in the dashboard — the functional gate exists but is effectively dead code
+for real dev tasks.
+
+**Refactor candidates (any subset):**
+- A `dsl_from_cases(fn_name, cases)` helper that builds the assertion string from
+  structured `(args, expected)` pairs — makes it trivial to attach test cases to a
+  `mesh.solve` call without writing raw Python.
+- Expose `dsl=` more prominently in `mesh_solve_canvas.py --dsl` CLI flag (it exists
+  but is buried; add an example to the help text and the CLAUDE.md routing rule).
+- Rename / alias `verify_functional` → `verify_dsl` in `tasks.py` for discoverability
+  (the current name implies "functional testing" in the abstract sense, not "run the DSL
+  assertions").
+- Structured failure output: currently `failures` is a list of raw dicts; a dataclass
+  or typed dict would let the repair prompt builder surface better error context.
+
+**Why I2:** the functional gate is genuinely useful for experiment harnesses and
+hard-to-gate tasks (parser/interpreter subjects), but it's off the hot path for normal
+dev routing — impact is bounded to experiment quality, not session throughput.
+**Why S2:** the subprocess sandbox (`_funcverify_child`) is already the isolation
+boundary; the refactor touches Python API surface only, not the sandbox itself.
 
 ---
 
