@@ -22,8 +22,10 @@ param(
   [string]   $RedisPassword = $env:CASCADE_REDIS_PASSWORD,
   [string]   $Queues = 'gpu,verify',
   [string[]] $SyncExtras = @('celery'),
-  [switch]   $SkipSync
+  [switch]   $SkipSync,
+  [switch]   $Watch
 )
 & "$PSScriptRoot\_celery-worker.ps1" -Queues $Queues -NodeName 'rtx-gpu' `
     -SyncExtras $SyncExtras `
-    -RedisHost $RedisHost -RedisPassword $RedisPassword -SkipSync:$SkipSync
+    -RedisHost $RedisHost -RedisPassword $RedisPassword `
+    -SkipSync:$SkipSync -Watch:$Watch
