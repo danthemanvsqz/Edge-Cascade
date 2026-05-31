@@ -46,6 +46,7 @@ def repair_prompt(
     ]
     return tasks.repair_prompt(
         query, prior, fails_list,
+        # tasks.repair_prompt accepts list; converts to tuple internally.
         degen_reasons=list(degen_reasons) if degen_reasons else None,
     )
 

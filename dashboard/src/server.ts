@@ -121,7 +121,12 @@ try {
         )
         .flatMap(w => w.registered_tasks),
     );
-    if (tasks.size > 0) setTopology(tasks);
+    if (tasks.size > 0) {
+      setTopology(tasks);
+      log({ event: "topology_filtered", registered_tasks: tasks.size });
+    } else {
+      log({ event: "topology_fallback", reason: "flower_no_tasks" });
+    }
   }
 } catch {
   // Flower unavailable or timed out -- show full CHAIN_SPECS topology.

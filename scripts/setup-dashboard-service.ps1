@@ -45,12 +45,8 @@ try {
 # ── Windows auto-start (Task Scheduler, user scope) ──────────────────────────
 # PM2 on Windows registers a Task Scheduler entry that runs `pm2 resurrect` at
 # logon. This brings up all saved PM2 processes without needing elevation.
-$pm2Bin = (Get-Command pm2).Source
+$pm2Bin   = (Get-Command pm2).Source
 $taskName = "PM2-EdgeCascade-Dashboard"
-$action   = New-ScheduledTaskAction -Execute "node" `
-              -Argument "`"$(pm2 --no-color startup | Select-String 'pm2 resurrect' | ForEach-Object { $_.Line.Trim() })`""
-
-# Simpler fallback: just run `pm2 resurrect` at logon
 $trigger  = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
 $action   = New-ScheduledTaskAction -Execute $pm2Bin -Argument "resurrect"
