@@ -55,7 +55,7 @@ class TopologyGraph:
         }
 
 
-# ── balanced ─────────────────────────────────────────────────────────────────
+# ── budget ───────────────────────────────────────────────────────────────────
 # Sequential cost-ordered cascade.
 #
 # Forward (no DSL): route → draft → verify_syntax → resolve_npu → gpu_solve
@@ -63,9 +63,9 @@ class TopologyGraph:
 # GPU repair loop:  gpu_solve → repair_prompt → verify_syntax (retry)
 # Cap path:         gpu_solve → tier3 → cloud
 
-_B = "mesh.balanced."
-BALANCED_GRAPH = TopologyGraph(
-    name="balanced",
+_B = "mesh.budget."
+BUDGET_GRAPH = TopologyGraph(
+    name="budget",
     nodes=(
         GraphNode("route",             "route",         "npu",    "npu",    _B + "_route"),
         GraphNode("draft",             "draft",         "npu",    "npu",    _B + "_draft"),
@@ -74,7 +74,7 @@ BALANCED_GRAPH = TopologyGraph(
         GraphNode("resolve_npu",       "resolve_npu",   "verify", "verify", _B + "_resolve_npu"),
         GraphNode("gpu_solve",         "gpu_solve",     "gpu",    "gpu",    _B + "_gpu_solve"),
         GraphNode("repair_prompt",     "repair_prompt", "verify", "verify", None),
-        # _balanced_done always runs last — logs WIN or LOSE regardless of path.
+        # _budget_done always runs last — logs WIN or LOSE regardless of path.
         # The agent (Tier 3) takes over when done logs capped->tier3.
         GraphNode("done",              "_done",         "verify", "verify", _B + "_done"),
         GraphNode("tier3",             "Tier 3 · CLI",  "tier3",  "—",  None),
@@ -93,7 +93,7 @@ BALANCED_GRAPH = TopologyGraph(
         GraphEdge("gpu_solve",         "verify_functional", "repair"),
         GraphEdge("verify_syntax",     "repair_prompt",     "repair"),
         GraphEdge("repair_prompt",     "gpu_solve",         "repair"),
-        # Win/lose logger always runs last (after _balanced_cloud no-op).
+        # Win/lose logger always runs last (after _budget_cloud no-op).
         GraphEdge("gpu_solve",         "done",              "flow"),
         # Cap: agent takes over when done logs capped->tier3.
         GraphEdge("done",              "tier3",             "cap"),
@@ -108,7 +108,7 @@ BALANCED_GRAPH = TopologyGraph(
 LOW_LATENCY_GRAPH = TopologyGraph(
     name="low_latency",
     nodes=(
-        GraphNode("npu_draft",  "npu_draft",     "npu",    "npu",    "mesh.balanced._draft"),
+        GraphNode("npu_draft",  "npu_draft",     "npu",    "npu",    "mesh.budget._draft"),
         GraphNode("gpu_swap",   "gpu_swap",      "gpu",    "gpu",    "model.swap_task"),
         GraphNode("gpu_gen",    "gpu_generate",  "gpu",    "gpu",    "mesh.generate_qwen14b"),
         GraphNode("pick",       "_pick_first",   "verify", "verify", "mesh.low_latency._pick"),
@@ -176,13 +176,40 @@ CLI_MODEL_SELECTION_GRAPH = TopologyGraph(
     ),
 )
 
+# ── budget_fanout ─────────────────────────────────────────────────────────────
+# Conceptual topology for agent-driven decompose + parallel budget cascade.
+# Tier 3 (agent) decomposes the prompt, dispatches N budget cascade instances
+# in parallel, then integrates the sub-results. This graph shows the shape on
+# the dashboard; the actual parallel dispatch is `solve_budget_fanout` in
+# canvas_client.py (not a single Celery signature — N independent chains).
+
+BUDGET_FANOUT_GRAPH = TopologyGraph(
+    name="budget_fanout",
+    nodes=(
+        GraphNode("decompose", "decompose",  "tier3",  "—",      None),
+        GraphNode("budget_0",  "budget[0]",  "gpu",    "gpu",    None),
+        GraphNode("budget_1",  "budget[1]",  "gpu",    "gpu",    None),
+        GraphNode("budget_n",  "budget[N]",  "gpu",    "gpu",    None),
+        GraphNode("merge",     "merge",      "tier3",  "—",      None),
+    ),
+    edges=(
+        GraphEdge("decompose", "budget_0", "parallel"),
+        GraphEdge("decompose", "budget_1", "parallel"),
+        GraphEdge("decompose", "budget_n", "parallel"),
+        GraphEdge("budget_0",  "merge",    "parallel"),
+        GraphEdge("budget_1",  "merge",    "parallel"),
+        GraphEdge("budget_n",  "merge",    "parallel"),
+    ),
+)
+
 # Active graph — what the Beat task publishes. Swap for experiment topologies.
-ACTIVE_GRAPH: TopologyGraph = BALANCED_GRAPH
+ACTIVE_GRAPH: TopologyGraph = BUDGET_GRAPH
 
 # Registry for lookup by name (used by the Beat task to select by topology name)
 TOPOLOGY_GRAPHS: dict[str, TopologyGraph] = {
-    "balanced":              BALANCED_GRAPH,
-    "low_latency":           LOW_LATENCY_GRAPH,
-    "git_model_selection":   GIT_MODEL_SELECTION_GRAPH,
-    "cli_model_selection":   CLI_MODEL_SELECTION_GRAPH,
+    "budget":              BUDGET_GRAPH,
+    "budget_fanout":       BUDGET_FANOUT_GRAPH,
+    "low_latency":         LOW_LATENCY_GRAPH,
+    "git_model_selection": GIT_MODEL_SELECTION_GRAPH,
+    "cli_model_selection": CLI_MODEL_SELECTION_GRAPH,
 }

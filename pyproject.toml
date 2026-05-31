@@ -130,7 +130,7 @@ testpaths = ["tests"]
 # via `celery.contrib.testing.worker.start_worker`, which hangs at teardown
 # on Windows (the worker's shutdown is graceful but slow + can outlive
 # pytest's session, blocking the suite for minutes). Integration tests are
-# opt-in: `uv run pytest -m integration --no-cov tests/test_canvas_balanced_integration.py`.
+# opt-in: `uv run pytest -m integration --no-cov tests/test_canvas_budget_integration.py`.
 # CI invokes both: unit suite first (gate the 100% scoped coverage), then
 # integration suite separately (smoke pass/fail, no coverage gate).
 addopts = "-q --cov --cov-report=term-missing -m 'not integration and not live'"

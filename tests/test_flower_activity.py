@@ -17,7 +17,7 @@ from cascade.flower_activity import ActiveTask, active_nodes, parse_active, snap
 def test_parse_active_keeps_started_maps_node():
     tasks = {
         "u1": {
-            "name": "mesh.balanced._gpu_solve",
+            "name": "mesh.budget._gpu_solve",
             "state": "STARTED",
             "started": 100.0,
             "uuid": "u1",
@@ -30,7 +30,7 @@ def test_parse_active_keeps_started_maps_node():
 
 
 def test_parse_active_skips_non_started():
-    tasks = {"u1": {"name": "mesh.balanced._gpu_solve", "state": "SUCCESS", "started": 100.0}}
+    tasks = {"u1": {"name": "mesh.budget._gpu_solve", "state": "SUCCESS", "started": 100.0}}
     assert parse_active(tasks, now=160.0) == []
 
 
@@ -40,13 +40,13 @@ def test_parse_active_skips_unknown_task():
 
 
 def test_parse_active_falsy_started_zero_runtime():
-    tasks = {"u1": {"name": "mesh.balanced._route", "state": "STARTED", "started": 0}}
+    tasks = {"u1": {"name": "mesh.budget._route", "state": "STARTED", "started": 0}}
     (t,) = parse_active(tasks, now=160.0)
     assert t.runtime_s == 0.0  # not `now`
 
 
 def test_parse_active_missing_worker_uuid_defaults():
-    tasks = {"k9": {"name": "mesh.balanced._draft", "state": "STARTED", "started": 100.0}}
+    tasks = {"k9": {"name": "mesh.budget._draft", "state": "STARTED", "started": 100.0}}
     (t,) = parse_active(tasks, now=160.0)
     assert t.worker == ""
     assert t.task_id == "k9"  # falls back to the dict key when uuid absent
@@ -54,8 +54,8 @@ def test_parse_active_missing_worker_uuid_defaults():
 
 def test_active_nodes_returns_node_set():
     snap = [
-        ActiveTask("mesh.balanced._route", "route", "npu", "a", "w", 1.0),
-        ActiveTask("mesh.balanced._gpu_solve", "gpu_solve", "gpu", "b", "w", 2.0),
+        ActiveTask("mesh.budget._route", "route", "npu", "a", "w", 1.0),
+        ActiveTask("mesh.budget._gpu_solve", "gpu_solve", "gpu", "b", "w", 2.0),
     ]
     assert active_nodes(snap) == {"route", "gpu_solve"}
 
@@ -73,7 +73,7 @@ class _FakeResp:
 
 
 def test_snapshot_success(monkeypatch):
-    payload = {"u1": {"name": "mesh.balanced._gpu_solve", "state": "STARTED", "started": 0, "uuid": "u1"}}
+    payload = {"u1": {"name": "mesh.budget._gpu_solve", "state": "STARTED", "started": 0, "uuid": "u1"}}
     monkeypatch.setattr(fa.httpx, "get", lambda url, timeout: _FakeResp(200, payload))
     (t,) = snapshot()
     assert t.node == "gpu_solve"
@@ -112,6 +112,6 @@ def test_sample_occupancy_counts_one_interval(monkeypatch):
     monkeypatch.setattr(
         fa,
         "snapshot",
-        lambda base_url: [ActiveTask("mesh.balanced._gpu_solve", "gpu_solve", "gpu", "u1", "w", 5.0)],
+        lambda base_url: [ActiveTask("mesh.budget._gpu_solve", "gpu_solve", "gpu", "u1", "w", 5.0)],
     )
     assert fa.sample_occupancy(duration_s=1.0, hz=1.0) == {"gpu_solve": 1.0}

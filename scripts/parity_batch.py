@@ -67,7 +67,7 @@ def _rec_sizes() -> dict[str, int]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Dispatch the 3-case balanced-topology parity batch; "
+        description="Dispatch the 3-case budget-topology parity batch; "
                     "write the JSON-encoded results to runs/parity-canvas[-<backend>].json.",
     )
     ap.add_argument(
@@ -82,7 +82,7 @@ def main() -> None:
         # MUST be set before importing cascade -- Config() reads env at init.
         os.environ["CASCADE_GPU_BACKEND"] = args.backend
 
-    from cascade.canvas_client import solve_balanced_canvas
+    from cascade.canvas_client import solve_budget_canvas
     from cascade.config import CONFIG
 
     suffix = f"-{args.backend}" if args.backend else ""
@@ -96,7 +96,7 @@ def main() -> None:
     for case in CASES:
         pre = _rec_sizes()
         t0 = time.perf_counter()
-        outcome = solve_balanced_canvas(case["query"], dsl=case["dsl"])
+        outcome = solve_budget_canvas(case["query"], dsl=case["dsl"])
         wall = time.perf_counter() - t0
         post = _rec_sizes()
         deltas = {k: post[k] - pre[k] for k in pre}

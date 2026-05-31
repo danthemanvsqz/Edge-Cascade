@@ -33,24 +33,46 @@ draft it, and take over only when the pipeline hands back `capped->tier3`.
 CLI (preferred for interactive use):
 
 ```
-uv run python scripts/mesh_solve_canvas.py --topology balanced "<task>"
+uv run python scripts/mesh_solve_canvas.py --topology budget "<task>"
+```
+
+For large multi-part tasks — decompose first, then fan-out:
+
+```
+uv run python scripts/mesh_solve_canvas.py --topology budget_fanout "sub1" "sub2" "sub3"
 ```
 
 Programmatic (inside the repo):
 
 ```python
-from cascade.canvas_client import solve_balanced_canvas, solve_low_latency_canvas
-outcome = solve_balanced_canvas(query, dsl=None)   # mesh.Outcome
+from cascade.canvas_client import solve_budget_canvas, solve_budget_fanout
+outcome = solve_budget_canvas(query, dsl=None)          # single task -> mesh.Outcome
+outcomes = solve_budget_fanout([sub1, sub2], dsl=None)  # parallel -> list[mesh.Outcome]
 ```
 
-- `--topology balanced` (default) — the sequential cost-ordered cascade. Use it
+- `--topology budget` (default) — the sequential cost-ordered cascade. Use it
   for almost everything.
+- `--topology budget_fanout` — agent decomposes the task into sub-tasks, each
+  runs as an independent budget cascade in parallel. You (Tier 3) reason the
+  sub-task list and integrate the results; the pipeline handles each sub-task.
 - `--topology low_latency` — races the NPU draft against the GPU generate (chord).
-  The GPU **always** runs, so it costs more than balanced on easy prompts: a
+  The GPU **always** runs, so it costs more than budget on easy prompts: a
   per-workload choice, **never the default** (quality + $cost rank above tok/s,
   per the metric-priorities rule). Use only when wall-latency genuinely matters.
 - `--dsl "<text>"` — optional functional-gate assertions; omit for syntax-only
   gating.
+
+## When to decompose
+
+If a task has clearly independent sub-problems (e.g. "write functions A, B, C"),
+decompose before routing:
+1. **Reason** the sub-tasks yourself (no local model needed for decomposition)
+2. **Fan-out** if independent: `--topology budget_fanout "sub1" "sub2" "sub3"`
+3. **Iterate** if dependent: sequential `solve_budget_canvas` calls, carry context
+4. **Merge** the sub-results yourself (you integrate, not the pipeline)
+
+Default: route as a single budget call first. Only decompose if the task is
+clearly multi-component and local capacity is the bottleneck.
 
 ## What the pipeline does (informational — you don't drive these)
 

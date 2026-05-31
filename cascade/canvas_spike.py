@@ -28,8 +28,8 @@ byte-identically to the mainline path. NOT wired into `mesh.solve`.
 
 Run (after `docker compose up -d redis` and `uv sync --extra celery`):
     uv run celery -A cascade.celery_app worker -Q gpu,verify -l info
-    uv run python -c "from cascade.canvas_spike import solve_balanced; \
-        print(solve_balanced('write a python function add(a, b) -> a + b'))"
+    uv run python -c "from cascade.canvas_spike import solve_budget; \
+        print(solve_budget('write a python function add(a, b) -> a + b'))"
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
       NPU-unavailable chains): the first execution is a FRESH generate = round
       0, then up to `cap` repairs = rounds 1..cap. cap+1 GPU calls max. Matches
       mesh.solve's prior-is-None branch (fresh generate is uncounted).
-    - `round_base=1` (the balanced chain hands a FAILED npu/igpu draft in as
+    - `round_base=1` (the budget chain hands a FAILED npu/igpu draft in as
       `prior`): the first execution already REPAIRS that draft, so it is round
       1 and the run is bounded to `cap` GPU calls. Matches mesh.solve's
       `range(1, cap+1)` loop, where the first GPU call on a prior is round 1.
@@ -139,7 +139,7 @@ def gpu_solve_task(self, query: str, dsl: str | None = None,
     )
 
 
-def solve_balanced(query: str, dsl: str | None = None) -> dict:
+def solve_budget(query: str, dsl: str | None = None) -> dict:
     """Client-side entry (the agent's ONE blocking call). Dispatches the
     retrying task and blocks on its single result. kwargs-only dispatch keeps
     the retry path collision-free. The task returns a dict on every terminal

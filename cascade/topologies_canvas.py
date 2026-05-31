@@ -7,18 +7,18 @@ instead of the in-process `mesh.solve` orchestrator (charter inv. 3:
 composition over named topologies; charter inv. 5: `.rec` stays at the op
 boundary, the executor below is what changed).
 
-Phase 1 ships ONE signature: `balanced`. Phase 2 adds `low_latency` (a
+Phase 1 ships ONE signature: `budget`. Phase 2 adds `low_latency` (a
 `chord` racing NPU draft vs GPU generate) and `low_power` (no GPU at all).
 
-CHAIN SHAPE (balanced):
+CHAIN SHAPE (budget):
 
     chain(
-      _balanced_route.s(env)       # NPU route -> env["difficulty"]
-      _balanced_draft.s()          # NPU draft if not skip_draft_above
-      _balanced_verify.s()         # gate the draft -> env["_gate_passed"] + trace
-      _balanced_resolve_npu.s()    # PASS -> resolve @ npu; FAIL -> carry failures forward
-      _balanced_gpu_solve.s()      # self.replace() into spike's bounded repair loop
-      _balanced_cloud.s()          # paid escalation on cap (no-op if cloud disabled)
+      _budget_route.s(env)       # NPU route -> env["difficulty"]
+      _budget_draft.s()          # NPU draft if not skip_draft_above
+      _budget_verify.s()         # gate the draft -> env["_gate_passed"] + trace
+      _budget_resolve_npu.s()    # PASS -> resolve @ npu; FAIL -> carry failures forward
+      _budget_gpu_solve.s()      # self.replace() into spike's bounded repair loop
+      _budget_cloud.s()          # paid escalation on cap (no-op if cloud disabled)
     )
 
 Each step takes and returns the SAME envelope dict (D1 in
@@ -34,7 +34,7 @@ docs/FINDINGS-canvas-repair-retry-spike.md). The chain merely hands off to
 the proven retrying task via `self.replace()`.
 
 GPU-SOLVE HANDOFF (the one Slice 3-specific risk this de-risks): the chain
-step `_balanced_gpu_solve` calls `self.replace(chain(gpu_solve_task,
+step `_budget_gpu_solve` calls `self.replace(chain(gpu_solve_task,
 _merge_gpu))` so the spike's retrying task runs in this slot, then its
 terminal dict ({answer, final_tier, rounds, ...}) is folded back into the
 envelope before the next outer step sees it. Probe-verified in eager mode
@@ -90,8 +90,8 @@ def _shortcut(env: dict) -> bool:
     return bool(env.get("resolved") or env.get("capped"))
 
 
-@app.task(name="mesh.balanced._route", queue="npu", bind=True)
-def _balanced_route(self, env: dict) -> dict:
+@app.task(name="mesh.budget._route", queue="npu", bind=True)
+def _budget_route(self, env: dict) -> dict:
     """Step 1: NPU route. Fills env["difficulty"] + appends a trace line.
     Calling the recorded `tasks.route` directly (not via the Celery wrapper)
     keeps the .rec write at this op boundary (charter inv. 5) without a
@@ -107,19 +107,19 @@ def _balanced_route(self, env: dict) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._draft", queue="npu", bind=True)
-def _balanced_draft(self, env: dict) -> dict:
+@app.task(name="mesh.budget._draft", queue="npu", bind=True)
+def _budget_draft(self, env: dict) -> dict:
     """Step 2: NPU draft (skipped above the route-difficulty threshold per
-    the balanced topology's `skip_draft_above`). Fills env["prior"] with the
+    the budget topology's `skip_draft_above`). Fills env["prior"] with the
     candidate text for the gate step to consume."""
     if _shortcut(env):
         return env
-    balanced = topo_module.get("balanced")
+    budget = topo_module.get("budget")
     if topo_module.should_skip_draft(
             env["difficulty"], env["query"],
-            balanced.skip_draft_above, CONFIG.skip_draft_min_chars):
+            budget.skip_draft_above, CONFIG.skip_draft_min_chars):
         env["trace"].append(
-            f"npu draft skipped (difficulty>={balanced.skip_draft_above}, "
+            f"npu draft skipped (difficulty>={budget.skip_draft_above}, "
             f"len>={CONFIG.skip_draft_min_chars})"
         )
         return env
@@ -138,7 +138,7 @@ def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
     `dsl=None` => SYNTAX gate (cascade.verifier.verify) -- the same gate
     the in-process pipe path uses (cascade.wiring.gate). This is the
     parity contract: a Canvas run without a DSL behaves like
-    `mesh.solve(query, "balanced", ops)` on the same prompt.
+    `mesh.solve(query, "budget", ops)` on the same prompt.
 
     `dsl` supplied => FUNCTIONAL gate (tasks.verify_functional -> the
     `_funcverify_child` subprocess sandbox) which exec's the candidate
@@ -183,8 +183,8 @@ def _verify_step(env: dict, gate_fn=_gate) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._verify", queue="verify", bind=True)
-def _balanced_verify(self, env: dict) -> dict:
+@app.task(name="mesh.budget._verify", queue="verify", bind=True)
+def _budget_verify(self, env: dict) -> dict:
     """Step 3: gate the NPU draft via the injectable _verify_step helper."""
     return _verify_step(env)
 
@@ -200,25 +200,25 @@ def _resolve_step(env: dict) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._resolve_npu", queue="verify", bind=True)
-def _balanced_resolve_npu(self, env: dict) -> dict:
+@app.task(name="mesh.budget._resolve_npu", queue="verify", bind=True)
+def _budget_resolve_npu(self, env: dict) -> dict:
     """Step 4: finalise an NPU win (gate PASS) or carry failures to GPU."""
     if _shortcut(env):
         return env
     return _resolve_step(env)
 
 
-@app.task(name="mesh.balanced._gpu_solve", queue="gpu", bind=True)
-def _balanced_gpu_solve(self, env: dict):
+@app.task(name="mesh.budget._gpu_solve", queue="gpu", bind=True)
+def _budget_gpu_solve(self, env: dict):
     """Step 4: the headline -- hand off to the spike's bounded GPU repair
     loop. Uses `self.replace(chain(gpu_solve_task, _merge_gpu_into_env))`:
 
     - `gpu_solve_task` runs with its `max_retries=CONFIG.repair_cap` cap (the
       structural cap the spike proved holds eager + broker).
     - `_merge_gpu_into_env` folds gpu_solve_task's terminal dict back into
-      the envelope so the next outer step (`_balanced_cloud`) sees the
+      the envelope so the next outer step (`_budget_cloud`) sees the
       envelope shape, not the gpu_solve_task shape.
-    - The OUTER chain continues to `_balanced_cloud` after the merge,
+    - The OUTER chain continues to `_budget_cloud` after the merge,
       because `self.replace` inserts the replacement IN PLACE.
 
     The cap cannot be breached by this composition because the cap is a
@@ -253,7 +253,7 @@ def _balanced_gpu_solve(self, env: dict):
     )
 
 
-@app.task(name="mesh.balanced._merge_gpu", queue="gpu", bind=True)
+@app.task(name="mesh.budget._merge_gpu", queue="gpu", bind=True)
 def _merge_gpu_into_env(self, gpu_result: dict, env: dict) -> dict:
     """Fold gpu_solve_task's terminal dict ({answer, final_tier, rounds, ...})
     into the envelope. `env` is captured by signature at chain-build time;
@@ -280,8 +280,8 @@ def _merge_gpu_into_env(self, gpu_result: dict, env: dict) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._cloud", queue="gpu", bind=True)
-def _balanced_cloud(self, env: dict) -> dict:
+@app.task(name="mesh.budget._cloud", queue="gpu", bind=True)
+def _budget_cloud(self, env: dict) -> dict:
     """Step 5: paid escalation if capped AND CONFIG.enable_cloud. When cloud
     is disabled, `capped=True` rides forward to the client and gets surfaced
     as the `capped->tier3` Outcome -- same hand-off as today's cascade when
@@ -316,8 +316,8 @@ def _balanced_cloud(self, env: dict) -> dict:
     return env
 
 
-@app.task(name="mesh.balanced._done", queue="verify", bind=True)
-def _balanced_done(self, env: dict) -> dict:
+@app.task(name="mesh.budget._done", queue="verify", bind=True)
+def _budget_done(self, env: dict) -> dict:
     """Step 6 (end of pipe): classify the finished run as a local WIN or a
     LOSS and emit a win/lose log line. A win is the local mesh (NPU/iGPU/GPU)
     resolving on its own; a capped->tier3 hand-off or a paid cloud escalation
@@ -337,29 +337,29 @@ def _balanced_done(self, env: dict) -> dict:
     return env
 
 
-def balanced_signature(query: str, dsl: str | None = None):
-    """Build the Canvas signature for the `balanced` topology. The client
+def budget_signature(query: str, dsl: str | None = None):
+    """Build the Canvas signature for the `budget` topology. The client
     dispatches this with `.apply_async()` and blocks on `.get()` for the
-    final envelope (see `cascade.canvas_client.solve_balanced_canvas`)."""
-    env = _new_envelope(query, dsl, topology="balanced")
+    final envelope (see `cascade.canvas_client.solve_budget_canvas`)."""
+    env = _new_envelope(query, dsl, topology="budget")
     return chain(
-        _balanced_route.s(env),
-        _balanced_draft.s(),
-        _balanced_verify.s(),
-        _balanced_resolve_npu.s(),
-        _balanced_gpu_solve.s(),
-        _balanced_cloud.s(),
-        _balanced_done.s(),
+        _budget_route.s(env),
+        _budget_draft.s(),
+        _budget_verify.s(),
+        _budget_resolve_npu.s(),
+        _budget_gpu_solve.s(),
+        _budget_cloud.s(),
+        _budget_done.s(),
     )
 
 
 # ---------------------------------------------------------------------------
 # low_latency -- Slice 6b. The headline composition Phase 2 was building
-# toward (subsumes the old P2c "speculative GPU"). Instead of the balanced
+# toward (subsumes the old P2c "speculative GPU"). Instead of the budget
 # chain's SEQUENTIAL route -> draft -> gate -> swap -> generate, race the NPU
 # draft and the GPU generate CONCURRENTLY (a chord's group) and take the first
 # candidate that verifies. The latency win lands when the NPU draft usually
-# FAILS the gate (the 2026-05-20 finding for hard tasks): balanced pays npu +
+# FAILS the gate (the 2026-05-20 finding for hard tasks): budget pays npu +
 # gpu back-to-back, low_latency overlaps them.
 
 
@@ -377,7 +377,7 @@ def _pick_first_verified(self, results: list[dict], env: dict) -> dict:
     PREFERENCE order that verifies", NOT "first to FINISH" -- there is no
     early-kill of the slower arm. The win is concurrency of the two arms, not
     cancellation. And low_latency is the FAST speculative path: it deliberately
-    does NOT enter the bounded GPU repair loop (that is `balanced`'s job) -- a
+    does NOT enter the bounded GPU repair loop (that is `budget`'s job) -- a
     double-miss hands straight to Tier-3. Trades GPU cost (the generate always
     runs) for latency; a per-workload topology choice, never a default."""
     # `env` was captured by signature at dispatch time; the group arms return
@@ -416,7 +416,7 @@ def low_latency_signature(query: str, dsl: str | None = None):
     against the GPU generate, callback picks the first verified candidate.
 
     The GPU arm prepends `model.swap("qwen14b")` so the production coder is
-    resident before generate (same guarantee as `balanced`'s gpu_solve handoff);
+    resident before generate (same guarantee as `budget`'s gpu_solve handoff);
     `.si()` keeps generate immutable so the swap's return dict isn't injected as
     its prompt. No route step -- low_latency speculates rather than routing
     (charter: topology IS the routing decision). Dispatched via

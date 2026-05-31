@@ -37,12 +37,12 @@ class Topology:
 
 # The table.
 TOPOLOGIES: dict[str, Topology] = {
-    # balanced reproduces the original cascade: NPU draft for routine work, but
+    # budget reproduces the original cascade: NPU draft for routine work, but
     # SKIP the draft once the router flags a task hard (>= the GPU-escalation
     # threshold). The 2026-05-20 review found the 1.5B draft never won on hard
     # tasks (final_tier npu:0), so drafting there was pure latency -- go to GPU.
-    "balanced": Topology(
-        "balanced", ("npu", "gpu"),
+    "budget": Topology(
+        "budget", ("npu", "gpu"),
         skip_draft_above=CONFIG.escalate_to_gpu_difficulty,
     ),
     # low_power: NPU-only, never spins the GPU (repair_cap 0) -- any gate fail
@@ -58,7 +58,7 @@ TOPOLOGIES: dict[str, Topology] = {
     "igpu_assist": Topology("igpu_assist", ("igpu", "gpu")),
 }
 
-DEFAULT_TOPOLOGY = "balanced"
+DEFAULT_TOPOLOGY = "budget"
 
 
 def get(name: str) -> Topology:

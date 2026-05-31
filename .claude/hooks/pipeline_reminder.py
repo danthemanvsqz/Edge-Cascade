@@ -31,7 +31,11 @@ RULE = (
     "pipeline FIRST (NPU-first -> draft -> gate -> bounded GPU repair -> "
     "win/lose logger LAST). Do not hand-write from-scratch code that skips it.\n"
     "Route with one call:\n"
-    "  uv run python scripts/mesh_solve_canvas.py --topology balanced \"<task>\"\n"
+    "  uv run python scripts/mesh_solve_canvas.py --topology budget \"<task>\"\n"
+    "For large multi-part tasks, decompose FIRST (you reason the sub-tasks), "
+    "then fan-out:\n"
+    "  uv run python scripts/mesh_solve_canvas.py --topology budget_fanout "
+    "\"sub1\" \"sub2\" \"sub3\"\n"
     "On `capped->tier3` you (Tier 3) take over; surgical edits to existing code "
     "are the only by-hand exception. See /edge-cascade + CLAUDE.md."
 )
