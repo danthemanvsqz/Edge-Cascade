@@ -63,7 +63,7 @@ def _scoreboard() -> str:
             for ln in block.splitlines():
                 m = _TS.match(ln.strip())
                 if m:
-                    block_ts = float(ln.strip())
+                    block_ts = float(m.group())
             if block_ts is None:
                 continue
             if "done: WIN" in block:
