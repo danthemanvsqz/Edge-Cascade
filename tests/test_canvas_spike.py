@@ -69,7 +69,7 @@ def _patch(mocker, *, verify_seq, gen_text=None):
 
 def test_pass_first_try(eager, mocker):
     gen, verify = _patch(mocker, verify_seq=[True])
-    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    out = canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "gpu"
     assert out["rounds"] == 0
     assert gen.call_count == 1
@@ -78,7 +78,7 @@ def test_pass_first_try(eager, mocker):
 
 def test_pass_after_one_repair(eager, mocker):
     gen, verify = _patch(mocker, verify_seq=[False, True])
-    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    out = canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "gpu"
     assert out["rounds"] == 1          # one retry happened -> self.request.retries
     assert gen.call_count == 2         # fresh + 1 repair
@@ -88,7 +88,7 @@ def test_pass_after_one_repair(eager, mocker):
 def test_always_fail_holds_the_cap(eager, mocker):
     # Gate fails on every attempt, more times than the loop can consume.
     gen, verify = _patch(mocker, verify_seq=[False] * (CAP + 5))
-    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    out = canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["rounds"] == CAP
     # THE INVARIANT: 1 fresh generate + CAP repairs, and NOT ONE MORE.
@@ -102,7 +102,7 @@ def test_gpu_unavailable_caps_immediately(eager, mocker):
         return_value={"available": False, "text": "[gpu unavailable]"},
     )
     verify = mocker.patch("cascade.tasks.verify_functional")
-    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    out = canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["reason"] == "gpu unavailable"
     assert gen.call_count == 1
@@ -112,7 +112,7 @@ def test_gpu_unavailable_caps_immediately(eager, mocker):
 def test_get_exhaustion_is_capped(mocker):
     """Defensive guard: the eager pre-check normally stops the loop before
     Celery's own exhaustion fires, so `.get()` returns a dict. But if the BROKER
-    path ever lets `MaxRetriesExceededError` escape `.get()`, solve_balanced must
+    path ever lets `MaxRetriesExceededError` escape `.get()`, solve_budget must
     still return a cap signal, not raise. (This is the eager-vs-broker seam the
     rest of the suite can't reach -- it's why the guard exists and is tested.)"""
     from celery.exceptions import MaxRetriesExceededError
@@ -121,7 +121,7 @@ def test_get_exhaustion_is_capped(mocker):
     fake.get.side_effect = MaxRetriesExceededError("exhausted")
     mocker.patch.object(canvas_spike.gpu_solve_task, "apply_async",
                         return_value=fake)
-    out = canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    out = canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     assert out["final_tier"] == "capped->tier3"
     assert out["rounds"] == CAP
 
@@ -137,7 +137,7 @@ def test_dsl_none_uses_syntax_gate_not_verify_functional(eager, mocker):
     # NOT be called on the dsl=None path.
     mocker.patch("cascade.tasks.generate", side_effect=lambda *a, **k: _gen())
     verify_func = mocker.patch("cascade.tasks.verify_functional")
-    out = canvas_spike.solve_balanced("write add(a, b)")  # dsl=None
+    out = canvas_spike.solve_budget("write add(a, b)")  # dsl=None
     assert out["final_tier"] == "gpu"
     assert out["rounds"] == 0
     verify_func.assert_not_called()
@@ -155,7 +155,7 @@ def test_dsl_none_caps_when_syntax_fails(eager, mocker):
         },
     )
     verify_func = mocker.patch("cascade.tasks.verify_functional")
-    out = canvas_spike.solve_balanced("x")  # dsl=None
+    out = canvas_spike.solve_budget("x")  # dsl=None
     assert out["final_tier"] == "capped->tier3"
     assert out["rounds"] == CAP
     verify_func.assert_not_called()
@@ -164,7 +164,7 @@ def test_dsl_none_caps_when_syntax_fails(eager, mocker):
 def _run_gpu_solve(*, query="write add(a, b)", dsl="DSL", prior=None,
                    round_base=0):
     """Dispatch gpu_solve_task directly (eager) so round_base can be exercised --
-    solve_balanced never passes a prior/round_base (it's the standalone entry)."""
+    solve_budget never passes a prior/round_base (it's the standalone entry)."""
     return canvas_spike.gpu_solve_task.apply_async(
         kwargs={"query": query, "dsl": dsl, "prior": prior,
                 "round_base": round_base}).get()
@@ -206,7 +206,7 @@ def test_repair_threads_prior_draft_forward(eager, mocker):
         side_effect=[{"passed": False, "failures": ({"expr": "x"},)}
                      for _ in range(CAP + 1)],
     )
-    canvas_spike.solve_balanced("write add(a, b)", dsl="DSL")
+    canvas_spike.solve_budget("write add(a, b)", dsl="DSL")
     # First call: no prior. Each subsequent call repairs ON the previous draft.
     assert gen.call_args_list[0].kwargs.get("prior_attempt") is None
     for i in range(1, CAP + 1):

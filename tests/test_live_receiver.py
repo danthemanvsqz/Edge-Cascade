@@ -13,7 +13,7 @@ from cascade.live_receiver import hold_remaining, node_delta, nodes_for, publish
 
 
 def test_nodes_for_maps_known_skips_unknown():
-    names = ["mesh.balanced._gpu_solve", "mesh.balanced._route", "flower.x", "celery.chord"]
+    names = ["mesh.budget._gpu_solve", "mesh.budget._route", "flower.x", "celery.chord"]
     assert nodes_for(names) == {"gpu_solve", "route"}
 
 

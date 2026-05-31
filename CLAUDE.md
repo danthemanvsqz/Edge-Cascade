@@ -49,13 +49,15 @@ off when the locals are exhausted; Tier 4 is the budget-gated backstop.
 ### OPERATIONAL RULES (pipeline-first, max savings)
 
 - **Route every coding task through the pipeline.** One call:
-  `uv run python scripts/mesh_solve_canvas.py --topology balanced "<task>"`
-  (or `cascade.canvas_client.solve_balanced_canvas(query, dsl=None)` in-repo).
-  `balanced` (sequential cost-ordered cascade) is the default for almost
+  `uv run python scripts/mesh_solve_canvas.py --topology budget "<task>"`
+  (or `cascade.canvas_client.solve_budget_canvas(query, dsl=None)` in-repo).
+  `budget` (sequential cost-ordered cascade) is the default for almost
   everything; `low_latency` (NPU-vs-GPU chord) always runs the GPU, so it costs
-  more and is a per-workload choice, never the default. The pipeline does
-  route → NPU/iGPU draft → deterministic gate → bounded GPU repair → win/lose
-  logger; you do not perform those steps yourself.
+  more and is a per-workload choice, never the default. For large multi-part
+  tasks, decompose first (you reason the sub-tasks), then fan-out:
+  `uv run python scripts/mesh_solve_canvas.py --topology budget_fanout "sub1" "sub2"`
+  The pipeline does route → NPU/iGPU draft → deterministic gate → bounded GPU
+  repair → win/lose logger; you do not perform those steps yourself.
 - **Don't auto-skip to Tier 3 on the score.** The NPU difficulty signal is
   advisory and over-rates short / well-scoped input — from-scratch code still
   gets a local draft pass. Going straight to Tier 3 is for `capped` results or

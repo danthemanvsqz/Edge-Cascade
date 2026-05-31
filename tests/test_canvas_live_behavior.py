@@ -4,7 +4,7 @@ These tests drive the *real* running mesh -- a real Redis broker + a Celery
 worker on `npu,gpu,verify` + real NPU/GPU/verify hardware. No mocks, no
 embedded `memory://` worker (that is `test_canvas_balanced_integration.py`'s
 job), no eager mode (that is `test_canvas_balanced.py`'s job). Every test
-routes a genuine task through `solve_balanced_canvas` and asserts on the
+routes a genuine task through `solve_budget_canvas` and asserts on the
 *behavior* the mesh is contractually obliged to deliver -- never on trace
 strings or any other implementation detail. The `mesh.Outcome` and the
 win/lose `.rec` log ARE the contract; the trace is mechanism and is
@@ -44,7 +44,7 @@ _REQUIRED_QUEUES = {"npu", "gpu", "verify"}
 @pytest.fixture(scope="module", autouse=True)
 def _require_live_worker():
     """Skip the whole module unless a live worker is consuming every queue the
-    balanced chain dispatches to. Mirrors e2e_local.py's skip contract: a box
+    budget chain dispatches to. Mirrors e2e_local.py's skip contract: a box
     without the running substrate is never failed, only skipped.
 
     `inspect.active_queues()` maps worker-name -> [queue-dicts]; we flatten to
@@ -88,7 +88,7 @@ def test_easy_wellformed_task_resolves_at_a_local_tier_without_spend():
     WHEN the live mesh solves it,
     THEN it resolves at a LOCAL tier (npu or gpu) -- never capped, never the
     paid cloud tier."""
-    oc = canvas_client.solve_balanced_canvas(
+    oc = canvas_client.solve_budget_canvas(
         "write a python function add(a, b) that returns their sum"
     )
     assert isinstance(oc, mesh.Outcome)
@@ -110,7 +110,7 @@ def test_ungateable_task_caps_bounded_and_never_spends_cloud():
     THEN it terminates by handing off to Tier-3 within the bounded repair cap
     -- it does not loop past the cap, hang, or silently escalate off-box to the
     paid cloud tier."""
-    oc = canvas_client.solve_balanced_canvas(
+    oc = canvas_client.solve_budget_canvas(
         "Reply with exactly one plain English sentence and absolutely no code, "
         "code fences, or programming syntax of any kind: explain why the sky "
         "appears blue."
@@ -153,7 +153,7 @@ def test_skip_draft_route_stays_bounded_and_never_spends():
         "per-tenant configuration hot-reloaded without dropping in-flight "
         "requests. Explain every concurrency trade-off you make."
     )
-    oc = canvas_client.solve_balanced_canvas(long_hard)
+    oc = canvas_client.solve_budget_canvas(long_hard)
     assert isinstance(oc, mesh.Outcome)
     assert oc.resolved ^ oc.capped, (
         f"a skip-draft route returned an indecisive Outcome "
@@ -193,7 +193,7 @@ def test_concurrent_routes_keep_the_winloss_log_parseable_and_isolated():
     }
     with cf.ThreadPoolExecutor(max_workers=len(prompts)) as ex:
         futures = {
-            ex.submit(canvas_client.solve_balanced_canvas, q): name
+            ex.submit(canvas_client.solve_budget_canvas, q): name
             for name, q in prompts.items()
         }
         outcomes = {
@@ -241,7 +241,7 @@ def test_single_route_appends_exactly_one_winloss_record():
     run silently dropped off the dashboard metric) and never two (the
     self.replace() GPU handoff double-logged)."""
     before = len(_records())
-    oc = canvas_client.solve_balanced_canvas(
+    oc = canvas_client.solve_budget_canvas(
         "write a python function inc(n) that returns n + 1"
     )
     after = len(_records())
@@ -264,7 +264,7 @@ def test_empty_query_terminates_with_a_decisive_outcome():
     THEN it returns a valid Outcome that is cleanly resolved XOR capped within
     the client timeout -- it does not hang (the .get timeout would raise) or
     raise on degenerate input."""
-    oc = canvas_client.solve_balanced_canvas("")
+    oc = canvas_client.solve_budget_canvas("")
     assert isinstance(oc, mesh.Outcome)
     assert oc.resolved ^ oc.capped, (
         f"an empty query produced an indecisive Outcome (resolved={oc.resolved}, "

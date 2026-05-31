@@ -25,13 +25,13 @@ FLOWER_URL = "http://127.0.0.1:5555"
 # `mesh.<topology>._<node>` in cascade/topologies_canvas.py; this is the only
 # coupling to the chain's shape and the one place to extend for new nodes.
 NODE_BY_TASK: dict[str, tuple[str, str]] = {
-    "mesh.balanced._route": ("route", "npu"),
-    "mesh.balanced._draft": ("draft", "npu"),
-    "mesh.balanced._verify": ("verify_syntax", "verify"),
-    "mesh.balanced._resolve_npu": ("resolve_npu", "verify"),
-    "mesh.balanced._gpu_solve": ("gpu_solve", "gpu"),
-    "mesh.balanced._merge_gpu": ("merge_gpu", "gpu"),
-    "mesh.balanced._done": ("done", "verify"),
+    "mesh.budget._route": ("route", "npu"),
+    "mesh.budget._draft": ("draft", "npu"),
+    "mesh.budget._verify": ("verify_syntax", "verify"),
+    "mesh.budget._resolve_npu": ("resolve_npu", "verify"),
+    "mesh.budget._gpu_solve": ("gpu_solve", "gpu"),
+    "mesh.budget._merge_gpu": ("merge_gpu", "gpu"),
+    "mesh.budget._done": ("done", "verify"),
     "mesh.low_latency._pick": ("pick", "verify"),
 }
 

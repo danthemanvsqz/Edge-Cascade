@@ -1,4 +1,4 @@
-"""Integration tests for the balanced Canvas chain -- Phase 2 Slice 4.
+"""Integration tests for the budget Canvas chain -- Phase 2 Slice 4.
 
 These tests drive the FULL Celery dispatch path: real worker (embedded),
 in-memory broker (`memory://`), `.apply_async().get()` round-trip. The
@@ -15,16 +15,16 @@ pre-#91 code:
    registered on the embedded worker. Pre-#91 bug: `celery_app.include`
    listed only `cascade.tasks`, missing `cascade.canvas_spike` and
    `cascade.topologies_canvas`, so a chain dispatch yielded
-   `celery.exceptions.NotRegistered: 'mesh.balanced._route'`. Eager mode
+   `celery.exceptions.NotRegistered: 'mesh.budget._route'`. Eager mode
    skips the broker so unit tests passed.
 2. **Gate divergence regression** -- a no-DSL run on a parseable NPU
    draft must NOT cap to Tier-3. Pre-#91 bug: the chain used the
    functional gate which returns `passed:false` when `dsl=None`, so
    every no-DSL run capped. Fixed by syntax-fallback in
-   `_balanced_draft_gate`.
+   `_budget_draft_gate`.
 3. **Cloud-queue deadlock regression** -- the chain must complete
    (resolve OR cap) within a timeout when no worker subscribes to
-   `cloud`. Pre-#91 bug: `_balanced_cloud.queue="cloud"` accidentally
+   `cloud`. Pre-#91 bug: `_budget_cloud.queue="cloud"` accidentally
    routed the chain's terminal step to the unconsumed cloud queue, so
    `.get()` blocked forever. Fixed by moving the chain step to `gpu`
    queue (the cloud_generate TASK stays on `cloud` for the spend
@@ -90,27 +90,27 @@ def test_pr91_regression_all_chain_tasks_registered_on_worker(
     so the chain-step tasks from `cascade.topologies_canvas` and the
     spike's `cascade.canvas_spike.gpu_solve_task` weren't loaded at the
     worker. First chain dispatch yielded
-    `NotRegistered: 'mesh.balanced._route'`. The unit tests passed in
+    `NotRegistered: 'mesh.budget._route'`. The unit tests passed in
     eager mode (which skips the broker + uses the client's task
     registry).
 
     Fixed in #91 by extending `celery_app.include` to all three
     modules. Pinned here at the broker layer: the embedded worker
-    must know about every task the balanced chain dispatches."""
+    must know about every task the budget chain dispatches."""
     registered = set(celery_integration_worker.app.tasks.keys())
     # Chain steps (cascade.topologies_canvas) -- these are the ones the
     # pre-#91 bug missed. _draft_gate was decomposed into _verify + _resolve_npu
     # by BACKLOG #9. _done is the win/lose logger; its absence would silently
     # drop all telemetry, so it belongs in this pin.
     expected_chain_steps = {
-        "mesh.balanced._route",
-        "mesh.balanced._draft",
-        "mesh.balanced._verify",
-        "mesh.balanced._resolve_npu",
-        "mesh.balanced._gpu_solve",
-        "mesh.balanced._merge_gpu",
-        "mesh.balanced._cloud",
-        "mesh.balanced._done",
+        "mesh.budget._route",
+        "mesh.budget._draft",
+        "mesh.budget._verify",
+        "mesh.budget._resolve_npu",
+        "mesh.budget._gpu_solve",
+        "mesh.budget._merge_gpu",
+        "mesh.budget._cloud",
+        "mesh.budget._done",
     }
     missing = expected_chain_steps - registered
     assert not missing, (
@@ -133,7 +133,7 @@ def test_pr91_regression_no_dsl_uses_syntax_gate_not_functional(
     the functional gate (`verify_functional` returns `passed:false`
     when `dsl=None`), so EVERY no-DSL run escalated to GPU then capped.
 
-    Fixed in #91 by syntax-fallback in `_balanced_draft_gate`: when
+    Fixed in #91 by syntax-fallback in `_budget_draft_gate`: when
     `dsl=None`, use `cascade.verifier.verify` (parseable-Python check)
     instead. The mocked NPU draft above is a parseable block, so the
     chain MUST resolve at NPU with no GPU calls.
@@ -141,7 +141,7 @@ def test_pr91_regression_no_dsl_uses_syntax_gate_not_functional(
     Pinned here via the embedded worker: under broker dispatch, the
     chain runs the actual gate logic (not a unit-test mock). If
     syntax-fallback ever regresses, this test caps."""
-    outcome = canvas_client.solve_balanced_canvas(
+    outcome = canvas_client.solve_budget_canvas(
         "anything -- the parseable mocked draft above is what matters",
     )
     assert isinstance(outcome, mesh.Outcome)
@@ -157,7 +157,7 @@ def test_pr91_regression_no_dsl_uses_syntax_gate_not_functional(
 def test_pr91_regression_no_cloud_worker_chain_completes(
     celery_integration_worker, mocker,
 ):
-    """Pre-#91 bug: `_balanced_cloud.queue="cloud"` routed the chain's
+    """Pre-#91 bug: `_budget_cloud.queue="cloud"` routed the chain's
     terminal step to the cloud queue. The integration worker fixture
     deliberately does NOT subscribe to `cloud` (the Slice-2 spend
     invariant). With the pre-#91 wiring, the chain's `.get()` blocked
@@ -171,7 +171,7 @@ def test_pr91_regression_no_cloud_worker_chain_completes(
 
     The `cloud_generate_task` (the actual paid-API task) STILL routes to
     `cloud` queue and would deadlock if dispatched -- but the chain's
-    `_balanced_cloud` step (the envelope manipulator) only inlines a
+    `_budget_cloud` step (the envelope manipulator) only inlines a
     direct call when `CONFIG.enable_cloud=True`. We pin the cloud-
     disabled path here; cloud-enabled is its own slice (see Slice 7
     when it un-parks)."""
@@ -192,12 +192,12 @@ def test_pr91_regression_no_cloud_worker_chain_completes(
     # Cloud disabled at CONFIG layer (already the test-environment
     # default, but pin it explicitly so a future config drift doesn't
     # quietly break the test). Use `spec=` so an unintended attr access
-    # in _balanced_cloud (e.g., CONFIG.cloud_max_tokens) would FAIL
+    # in _budget_cloud (e.g., CONFIG.cloud_max_tokens) would FAIL
     # loud instead of returning a truthy Mock that silently masks a bug.
     from cascade.config import CONFIG
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(spec=CONFIG, enable_cloud=False))
-    outcome = canvas_client.solve_balanced_canvas("trigger cap path")
+    outcome = canvas_client.solve_budget_canvas("trigger cap path")
     assert isinstance(outcome, mesh.Outcome)
     assert outcome.capped is True, (
         f"chain didn't cap -- final_tier={outcome.final_tier!r}; "
@@ -212,19 +212,19 @@ def test_pr91_regression_no_cloud_worker_chain_completes(
 # ---------------------------------------------------------------------------
 
 
-def test_balanced_chain_resolves_at_npu_under_broker_dispatch(
+def test_budget_chain_resolves_at_npu_under_broker_dispatch(
     celery_integration_worker,
 ):
     """End-to-end smoke: parseable NPU draft + no DSL -> resolved at NPU
     via syntax gate. Same outcome as the eager-mode unit test, but
     routes through the embedded worker so any broker-level regression
     (serialization, queue routing, registration) surfaces here."""
-    outcome = canvas_client.solve_balanced_canvas("hello")
+    outcome = canvas_client.solve_budget_canvas("hello")
     assert outcome.final_tier == "npu"
     assert outcome.resolved is True
 
 
-def test_balanced_chain_escalates_to_gpu_under_broker_dispatch(
+def test_budget_chain_escalates_to_gpu_under_broker_dispatch(
     celery_integration_worker, mocker,
 ):
     """NPU draft FAILS syntax gate (non-parseable); GPU first attempt
@@ -236,12 +236,12 @@ def test_balanced_chain_escalates_to_gpu_under_broker_dispatch(
         return_value={"available": True, "text": "not parseable",
                       "latency_s": 0.01, "device": "NPU"},
     )
-    outcome = canvas_client.solve_balanced_canvas("trigger gpu")
+    outcome = canvas_client.solve_budget_canvas("trigger gpu")
     assert outcome.final_tier == "gpu"
     assert outcome.resolved is True
 
 
-def test_balanced_chain_holds_cap_under_broker_dispatch(
+def test_budget_chain_holds_cap_under_broker_dispatch(
     celery_integration_worker, mocker,
 ):
     """Cap invariant on a live broker: the NPU draft fails the syntax gate,
@@ -266,7 +266,7 @@ def test_balanced_chain_holds_cap_under_broker_dispatch(
     )
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(spec=CONFIG, enable_cloud=False))
-    outcome = canvas_client.solve_balanced_canvas("impossible")
+    outcome = canvas_client.solve_budget_canvas("impossible")
     assert outcome.capped is True
     assert outcome.repair_rounds == CONFIG.repair_cap
 
@@ -335,7 +335,7 @@ def test_npu_resolve_trace_contains_gate_pass(celery_integration_worker):
     """The _verify step MUST append 'npu gate PASS' when the mocked draft
     (parseable Python) passes the syntax gate. The _resolve_npu step sets
     final_tier='npu'. Pins the trace contract across the #9 decompose."""
-    outcome = canvas_client.solve_balanced_canvas("resolve at npu")
+    outcome = canvas_client.solve_budget_canvas("resolve at npu")
     assert outcome.final_tier == "npu"
     assert outcome.resolved is True
     assert "npu gate PASS" in outcome.trace
@@ -350,7 +350,7 @@ def test_gpu_escalate_trace_contains_gate_fail(celery_integration_worker, mocker
         return_value={"available": True, "text": "not parseable",
                       "latency_s": 0.01, "device": "NPU"},
     )
-    outcome = canvas_client.solve_balanced_canvas("trigger gpu escalate")
+    outcome = canvas_client.solve_budget_canvas("trigger gpu escalate")
     assert outcome.final_tier == "gpu"
     assert outcome.resolved is True
     assert "npu gate FAIL" in outcome.trace
@@ -373,7 +373,7 @@ def test_cap_path_trace_contains_gate_fail(celery_integration_worker, mocker):
     )
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(spec=CONFIG, enable_cloud=False))
-    outcome = canvas_client.solve_balanced_canvas("cap path")
+    outcome = canvas_client.solve_budget_canvas("cap path")
     assert outcome.capped is True
     assert outcome.final_tier == "capped->tier3"
     assert "npu gate FAIL" in outcome.trace

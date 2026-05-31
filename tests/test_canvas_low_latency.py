@@ -110,7 +110,7 @@ def test_low_latency_gpu_wins_when_npu_fails(eager, mocker):
 
 def test_low_latency_caps_when_both_miss(eager, mocker):
     """Both raced candidates fail the gate => capped->tier3. low_latency does
-    NOT fall into the bounded repair loop (that's balanced) -- a double miss
+    NOT fall into the bounded repair loop (that's budget) -- a double miss
     hands straight to Tier-3."""
     _draft(mocker, text="```python\nbad\n```")
     _generate(mocker, text="```python\nalso bad\n```")
@@ -136,13 +136,13 @@ def test_low_latency_uses_gpu_when_npu_unavailable(eager, mocker):
 
 
 # ---------------------------------------------------------------------------
-# dsl=None syntax-gate fallback (parity with the pipe / balanced path).
+# dsl=None syntax-gate fallback (parity with the pipe / budget path).
 # ---------------------------------------------------------------------------
 
 
 def test_low_latency_dsl_none_uses_syntax_gate(eager, mocker):
     """dsl=None => the SYNTAX gate (cascade.verifier.verify), not
-    verify_functional -- same parity contract the balanced path got in Slice 4.
+    verify_functional -- same parity contract the budget path got in Slice 4.
     A parseable NPU draft wins without verify_functional being called."""
     _draft(mocker, text="```python\ndef f():\n    return 1\n```")
     _generate(mocker)
@@ -193,7 +193,7 @@ def test_low_latency_emits_cascade_outcome_record(eager, mocker, tmp_path):
 
 
 def test_low_latency_returns_mesh_outcome_shape(eager, mocker):
-    """The client returns the SAME mesh.Outcome dataclass as balanced/pipe, so
+    """The client returns the SAME mesh.Outcome dataclass as budget/pipe, so
     a caller swaps topologies by entry point, not by reshaping output."""
     _draft(mocker, text="```python\nok\n```")
     _generate(mocker)

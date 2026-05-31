@@ -1,4 +1,4 @@
-"""Eager-mode tests for the balanced Canvas chain (Slice 3) -- the residue
+"""Eager-mode tests for the budget Canvas chain (Slice 3) -- the residue
 that no other layer covers.
 
 `cascade.topologies_canvas`, `cascade.canvas_client`, and `cascade.tasks` are
@@ -9,7 +9,7 @@ pruned as no-payoff duplicates -- they are proven more robustly elsewhere with
 fewer or no mocks:
   * test_canvas_spike      -- OWNS the cap invariant (mocks only the two seams
                               the retry loop calls; asserts call counts).
-  * test_canvas_balanced_integration -- resolve/escalate/cap over a REAL broker
+  * test_canvas_budget_integration -- resolve/escalate/cap over a REAL broker
                               (embedded worker), mocking only the model boundary.
   * test_canvas_live_behavior        -- the same behaviors on the LIVE mesh,
                               NO mocks at all.
@@ -109,8 +109,8 @@ def _cloud(mocker, *, available=True, text="```python\ncloud answer\n```"):
 
 
 # ---------------------------------------------------------------------------
-# Cloud escalation -- the ONE balanced-chain path no other layer covers
-# (test_canvas_balanced_integration has no cloud worker; the live suite runs
+# Cloud escalation -- the ONE budget-chain path no other layer covers
+# (test_canvas_budget_integration has no cloud worker; the live suite runs
 # cloud-disabled). The npu-resolve / gpu-escalate / cap parity cases that used
 # to live here were pruned as no-payoff duplicates: this module is in
 # [tool.coverage.run] omit (zero coverage), test_canvas_spike OWNS the cap with
@@ -119,7 +119,7 @@ def _cloud(mocker, *, available=True, text="```python\ncloud answer\n```"):
 # ---------------------------------------------------------------------------
 
 
-def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
+def test_budget_chain_escalates_to_cloud_when_enabled(eager, mocker):
     """Case 4: NPU + GPU all fail; cloud enabled + available => final_tier='cloud'."""
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(spec=CONFIG, enable_cloud=True))
@@ -128,7 +128,7 @@ def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
     _verify(mocker, [False] + [False] * (CAP + 1))
     _generate(mocker)
     _cloud(mocker, available=True, text="```python\ncloud fix\n```")
-    outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
+    outcome = canvas_client.solve_budget_canvas("hard task", dsl="DSL")
     assert outcome.final_tier == "cloud"
     assert outcome.resolved is True
     assert outcome.capped is False
@@ -140,13 +140,13 @@ def test_balanced_chain_escalates_to_cloud_when_enabled(eager, mocker):
 # ---------------------------------------------------------------------------
 
 
-def test_balanced_chain_trace_records_each_step(eager, mocker):
+def test_budget_chain_trace_records_each_step(eager, mocker):
     """Trace lines confirm every chain step ran in order (route -> draft ->
     gate -> gpu -> [cloud]). Resolved-shortcut steps don't append."""
     _route(mocker)
     _draft(mocker)
     _verify(mocker, [True])
-    outcome = canvas_client.solve_balanced_canvas("test", dsl="DSL")
+    outcome = canvas_client.solve_budget_canvas("test", dsl="DSL")
     joined = " | ".join(outcome.trace)
     assert "route difficulty=" in joined
     assert "npu draft ->" in joined
@@ -156,23 +156,23 @@ def test_balanced_chain_trace_records_each_step(eager, mocker):
     assert "cloud" not in joined
 
 
-def test_balanced_done_logs_win_on_local_resolution(eager, mocker, caplog):
-    """End-of-pipe `_balanced_done` classifies an NPU/GPU resolution as a WIN:
+def test_budget_done_logs_win_on_local_resolution(eager, mocker, caplog):
+    """End-of-pipe `_budget_done` classifies an NPU/GPU resolution as a WIN:
     a `done: WIN` trace entry + an INFO win log line. The marker returns env
     unchanged, so the outcome itself is identical to the no-done chain."""
     _route(mocker)
     _draft(mocker, text="```python\nrev\n```")
     _verify(mocker, [True])
     with caplog.at_level(logging.INFO, logger="cascade.topologies_canvas"):
-        outcome = canvas_client.solve_balanced_canvas("reverse", dsl="DSL")
+        outcome = canvas_client.solve_budget_canvas("reverse", dsl="DSL")
     assert outcome.final_tier == "npu"
     assert outcome.resolved is True
     assert outcome.trace[-1] == "done: WIN (local @ npu)"
     assert any("cascade WIN" in r.message for r in caplog.records)
 
 
-def test_balanced_done_logs_lose_on_capped(eager, mocker, caplog):
-    """A capped->tier3 run is a LOSS for the local pipe: `_balanced_done`
+def test_budget_done_logs_lose_on_capped(eager, mocker, caplog):
+    """A capped->tier3 run is a LOSS for the local pipe: `_budget_done`
     emits a `done: LOSE` trace entry + an INFO lose log line."""
     mocker.patch("cascade.topologies_canvas.CONFIG",
                  mocker.Mock(enable_cloud=False))
@@ -181,14 +181,14 @@ def test_balanced_done_logs_lose_on_capped(eager, mocker, caplog):
     _verify(mocker, [False] + [False] * (CAP + 1))
     _generate(mocker)
     with caplog.at_level(logging.INFO, logger="cascade.topologies_canvas"):
-        outcome = canvas_client.solve_balanced_canvas("hard task", dsl="DSL")
+        outcome = canvas_client.solve_budget_canvas("hard task", dsl="DSL")
     assert outcome.final_tier == "capped->tier3"
     assert outcome.capped is True
     assert outcome.trace[-1] == "done: LOSE (-> capped->tier3)"
     assert any("cascade LOSE" in r.message for r in caplog.records)
 
 
-def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
+def test_budget_chain_skips_draft_above_difficulty_threshold(eager, mocker):
     """When the router scores difficulty >= `skip_draft_above` AND the prompt
     clears the length gate (BACKLOG #8), the NPU draft is skipped entirely (the
     2026-05-20 finding: 1.5B drafts never win on hard tasks). The chain
@@ -196,14 +196,14 @@ def test_balanced_chain_skips_draft_above_difficulty_threshold(eager, mocker):
     is no longer skipped -- the router over-rates short input."""
     from cascade import topologies as topo_module
     from cascade.config import CONFIG
-    balanced = topo_module.get("balanced")
-    assert balanced.skip_draft_above is not None  # contract pin
-    _route(mocker, difficulty=balanced.skip_draft_above + 0.01)
+    budget = topo_module.get("budget")
+    assert budget.skip_draft_above is not None  # contract pin
+    _route(mocker, difficulty=budget.skip_draft_above + 0.01)
     draft = mocker.patch("cascade.tasks.draft")
     _verify(mocker, [True])
     _generate(mocker, text="```python\ngpu fresh\n```")
     long_hard = "implement a hard task " * (CONFIG.skip_draft_min_chars // 20)
-    outcome = canvas_client.solve_balanced_canvas(long_hard, dsl="DSL")
+    outcome = canvas_client.solve_budget_canvas(long_hard, dsl="DSL")
     draft.assert_not_called()
     assert outcome.final_tier == "gpu"
     assert outcome.answer == "```python\ngpu fresh\n```"
@@ -216,7 +216,7 @@ def test_qwen14b_is_registered_at_import(eager):
     differentiate the swap-happens path from swap-noops.
 
     Tests don't assume initial residency state -- prior tests in this
-    file may have driven a balanced chain that already loaded qwen14b
+    file may have driven a budget chain that already loaded qwen14b
     via the swap step. The registry presence is the load-bearing
     contract; residency depends on which tests ran already."""
     from cascade import model_swap
@@ -225,11 +225,11 @@ def test_qwen14b_is_registered_at_import(eager):
     assert footprint > 0
 
 
-def test_balanced_chain_dispatches_swap_before_gpu_solve(eager, mocker):
-    """The chain step `_balanced_gpu_solve` MUST prepend
+def test_budget_chain_dispatches_swap_before_gpu_solve(eager, mocker):
+    """The chain step `_budget_gpu_solve` MUST prepend
     `model.swap_task("qwen14b")` so the arbiter loads the model before
     gpu_solve_task runs. Pinned by spying on `model_swap.swap` and
-    driving a full balanced chain that escalates to GPU.
+    driving a full budget chain that escalates to GPU.
 
     Without this guarantee Slice 3c's multi-model swap wouldn't fire on
     a GPU escalation."""
@@ -239,7 +239,7 @@ def test_balanced_chain_dispatches_swap_before_gpu_solve(eager, mocker):
     _draft(mocker, text="```python\nbad draft\n```")
     _verify(mocker, [False, True])  # NPU fail -> GPU first attempt pass
     _generate(mocker, text="```python\ngpu fix\n```")
-    canvas_client.solve_balanced_canvas("write a fn", dsl="DSL")
+    canvas_client.solve_budget_canvas("write a fn", dsl="DSL")
     # The swap was called for qwen14b at least once during the chain.
     swap_calls = [c for c in spy.call_args_list if c.args == ("qwen14b",)]
     assert len(swap_calls) >= 1
@@ -349,16 +349,16 @@ def test_qwen7b_task_routes_to_gpu_queue():
 
 def test_canvas_client_returns_mesh_outcome_shape(eager, mocker):
     """The client's Outcome is the SAME `mesh.Outcome` dataclass `mesh.solve`
-    returns -- callers can swap `cascade.canvas_client.solve_balanced_canvas`
-    in for `mesh.solve(query, "balanced", ops)` without changing consumption
+    returns -- callers can swap `cascade.canvas_client.solve_budget_canvas`
+    in for `mesh.solve(query, "budget", ops)` without changing consumption
     code. Pinned because Slice 4's findings doc claims this shape parity."""
     _route(mocker)
     _draft(mocker)
     _verify(mocker, [True])
-    outcome = canvas_client.solve_balanced_canvas("x", dsl="DSL")
+    outcome = canvas_client.solve_budget_canvas("x", dsl="DSL")
     assert isinstance(outcome, mesh.Outcome)
     # All Outcome fields populated.
-    assert outcome.topology == "balanced"
+    assert outcome.topology == "budget"
     assert outcome.difficulty == 0.42
     assert isinstance(outcome.trace, tuple)
     assert len(outcome.trace) > 0

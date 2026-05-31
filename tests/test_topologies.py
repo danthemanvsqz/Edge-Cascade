@@ -7,12 +7,12 @@ from cascade import topologies
 from cascade.config import CONFIG
 
 
-def test_balanced_is_the_default_cascade():
-    t = topologies.get("balanced")
+def test_budget_is_the_default_cascade():
+    t = topologies.get("budget")
     assert t.ladder == ("npu", "gpu")
     # repair_cap defaults to the single-source constant (charter inv. 4).
     assert t.repair_cap == CONFIG.repair_cap
-    # balanced skips the wasted NPU draft on hard tasks (S2, npu:0 finding).
+    # budget skips the wasted NPU draft on hard tasks (S2, npu:0 finding).
     assert t.skip_draft_above == CONFIG.escalate_to_gpu_difficulty
 
 
@@ -41,7 +41,7 @@ def test_unknown_topology_raises_with_valid_list():
     with pytest.raises(KeyError) as e:
         topologies.get("nope")
     msg = str(e.value)
-    assert "nope" in msg and "balanced" in msg and "low_power" in msg
+    assert "nope" in msg and "budget" in msg and "low_power" in msg
 
 
 class TestShouldSkipDraft:

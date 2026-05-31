@@ -5,7 +5,7 @@ Usage (after `docker compose up -d redis` and a Celery worker running):
     uv run python scripts/mesh_solve_canvas.py --dsl "<dsl-text>" "<query>"
     uv run python scripts/mesh_solve_canvas.py --topology low_latency "<query>"
 
-The --topology flag picks balanced (sequential cascade) or low_latency (the
+The --topology flag picks budget (sequential cascade) or low_latency (the
 Slice-6b chord racing NPU draft vs GPU generate). Time both on the same prompt
 to fill docs/FINDINGS-canvas-phase2-low-latency.md's wall-time table.
 
@@ -27,38 +27,21 @@ from __future__ import annotations
 import argparse
 import time
 
-from cascade.canvas_client import solve_balanced_canvas, solve_low_latency_canvas
+from cascade.canvas_client import (
+    solve_budget_canvas,
+    solve_budget_fanout,
+    solve_low_latency_canvas,
+)
 
 _TOPOLOGIES = {
-    "balanced": solve_balanced_canvas,
+    "budget": solve_budget_canvas,
     "low_latency": solve_low_latency_canvas,
 }
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Dispatch a Canvas signature; print the Outcome.",
-    )
-    ap.add_argument(
-        "--topology", choices=sorted(_TOPOLOGIES), default="balanced",
-        help="which Canvas topology to dispatch (default: balanced).",
-    )
-    ap.add_argument(
-        "--dsl", default=None,
-        help="optional checks.dsl text passed to the functional gate; "
-             "omit for syntax-only behavior (the gate still runs but with "
-             "no functional assertions to enforce).",
-    )
-    ap.add_argument("query", nargs="+", help="the prompt to solve")
-    args = ap.parse_args()
-
-    query = " ".join(args.query)
-    solve = _TOPOLOGIES[args.topology]
-    t0 = time.perf_counter()
-    outcome = solve(query, dsl=args.dsl)
-    wall = time.perf_counter() - t0
-
-    print(f"\n=== Canvas {args.topology} ({wall:.2f}s) ===")
+def _print_outcome(outcome, topology: str, wall: float) -> None:
+    wall_str = f" ({wall:.2f}s)" if wall > 0 else ""
+    print(f"\n=== Canvas {topology}{wall_str} ===")
     print(f"topology    : {outcome.topology}")
     print(f"final_tier  : {outcome.final_tier}")
     print(f"resolved    : {outcome.resolved}")
@@ -74,6 +57,46 @@ def main() -> None:
         print(outcome.answer)
     else:
         print("=== locals exhausted (capped -> Tier 3 takes over) ===")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Dispatch a Canvas signature; print the Outcome.",
+    )
+    ap.add_argument(
+        "--topology",
+        choices=sorted([*_TOPOLOGIES, "budget_fanout"]),
+        default="budget",
+        help="which Canvas topology to dispatch (default: budget). "
+             "budget_fanout accepts multiple query args as parallel sub-tasks.",
+    )
+    ap.add_argument(
+        "--dsl", default=None,
+        help="optional checks.dsl text passed to the functional gate; "
+             "omit for syntax-only behavior (the gate still runs but with "
+             "no functional assertions to enforce).",
+    )
+    ap.add_argument(
+        "query", nargs="+",
+        help="the prompt(s) to solve; budget_fanout treats each arg as a "
+             "separate sub-task dispatched in parallel.",
+    )
+    args = ap.parse_args()
+
+    t0 = time.perf_counter()
+    if args.topology == "budget_fanout":
+        outcomes = solve_budget_fanout(args.query, dsl=args.dsl)
+        total_wall = time.perf_counter() - t0
+        print(f"\n=== budget_fanout: {len(outcomes)} sub-tasks ({total_wall:.2f}s total) ===")
+        for i, (sub_task, outcome) in enumerate(zip(args.query, outcomes, strict=True)):
+            print(f"\n[sub-task {i}: {sub_task[:60]}]")
+            _print_outcome(outcome, "budget_fanout", wall=0.0)
+    else:
+        query = " ".join(args.query)
+        solve = _TOPOLOGIES[args.topology]
+        outcome = solve(query, dsl=args.dsl)
+        wall = time.perf_counter() - t0
+        _print_outcome(outcome, args.topology, wall)
 
 
 if __name__ == "__main__":

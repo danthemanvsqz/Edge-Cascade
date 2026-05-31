@@ -1,6 +1,6 @@
 """Client-side entry for the Canvas substrate -- model B, one blocking call.
 
-The agent (or `scripts/mesh_solve_canvas.py`) calls `solve_balanced_canvas`,
+The agent (or `scripts/mesh_solve_canvas.py`) calls `solve_budget_canvas`,
 which dispatches the Canvas signature, blocks ONCE on the final envelope, and
 adapts it to a `mesh.Outcome` so callers swap from `mesh.solve` without
 changing their consumption code (charter inv. 3: the topology table is a
@@ -22,7 +22,7 @@ from pathlib import Path
 from cascade import mesh
 from cascade.config import CONFIG
 from cascade.logfmt import dump_record
-from cascade.topologies_canvas import balanced_signature, low_latency_signature
+from cascade.topologies_canvas import budget_signature, low_latency_signature
 
 # --- cascade-outcome telemetry lane (the SD-4 dashboard panel) --------------
 # The in-process orchestrator (cascade.orchestrator.write_record) appends one
@@ -83,28 +83,54 @@ def _to_outcome(env: dict) -> mesh.Outcome:
     )
 
 
-def solve_balanced_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
-    """Dispatch the `balanced` Canvas signature, block on its final envelope,
-    and adapt to `mesh.Outcome`. Mirrors `cascade.canvas_spike.solve_balanced`
-    in shape but covers the FULL balanced topology (route + draft + gate +
+def solve_budget_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
+    """Dispatch the `budget` Canvas signature, block on its final envelope,
+    and adapt to `mesh.Outcome`. Mirrors `cascade.canvas_spike.solve_budget`
+    in shape but covers the FULL budget topology (route + draft + gate +
     GPU repair loop + cloud), not just the GPU phase.
 
-    Returns the same `mesh.Outcome` dataclass `mesh.solve(query, "balanced",
+    Returns the same `mesh.Outcome` dataclass `mesh.solve(query, "budget",
     ops)` returns, so existing callers (`cascade.orchestrator.run_pipeline`'s
     `outcome.resolved` / `outcome.capped` consumers) swap with no shape
     change.
     """
     t0 = time.perf_counter()
-    env = balanced_signature(query, dsl).apply_async().get(timeout=600)
+    env = budget_signature(query, dsl).apply_async().get(timeout=600)
     outcome = _to_outcome(env)
     _record_outcome(query, outcome, time.perf_counter() - t0)
     return outcome
 
 
+def solve_budget_fanout(
+    sub_tasks: list[str], dsl: str | None = None
+) -> list[mesh.Outcome]:
+    """Dispatch sub-tasks in parallel through the budget cascade; collect all.
+
+    Each sub-task is an independent budget cascade chain dispatched via
+    `.apply_async()` before any `.get()` is called, so all run concurrently.
+    Results are collected in submission order. Each sub-outcome is recorded to
+    `runs/cascade.rec` so the dashboard counts them individually.
+
+    The agent (Tier 3) decides the sub-task list and integrates the results;
+    this function only handles the parallel dispatch and collection.
+    """
+    # Stamp dispatch time per sub-task BEFORE any .get() so latency is accurate
+    # (sub-tasks run in parallel; serialised .get() would inflate later ones).
+    dispatched = [(t, budget_signature(t, dsl).apply_async(), time.perf_counter())
+                  for t in sub_tasks]
+    outcomes = []
+    for t, handle, t_start in dispatched:
+        env = handle.get(timeout=600)
+        outcome = _to_outcome(env)
+        _record_outcome(t, outcome, time.perf_counter() - t_start)
+        outcomes.append(outcome)
+    return outcomes
+
+
 def solve_low_latency_canvas(query: str, dsl: str | None = None) -> mesh.Outcome:
     """Dispatch the `low_latency` Canvas signature (NPU draft raced against the
     GPU generate via a chord) and adapt the callback's envelope to
-    `mesh.Outcome` -- same return shape as `solve_balanced_canvas`, so a caller
+    `mesh.Outcome` -- same return shape as `solve_budget_canvas`, so a caller
     swaps topologies by choosing the entry point, not by reshaping output.
 
     Speculative: both tiers always run (trades GPU cost for latency); resolves

@@ -96,17 +96,17 @@ def make_ops(*, difficulty=0.5, category="standard", draft_text="DRAFT",
                igpu_draft=igpu_draft), counts
 
 
-def test_balanced_npu_draft_passes_gate():
+def test_budget_npu_draft_passes_gate():
     ops, c = make_ops(gate_seq=[True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "npu" and out.resolved and not out.capped
     assert out.repair_rounds == 0
     assert c["draft"] == 1 and c["generate"] == 0 and c["repair_prompt"] == 0
 
 
-def test_balanced_escalates_and_gpu_repair_passes():
+def test_budget_escalates_and_gpu_repair_passes():
     ops, c = make_ops(gate_seq=[False, True])  # npu fails, gpu repair #1 passes
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.resolved
     assert out.repair_rounds == 1
     assert c["generate"] == 1 and c["repair_prompt"] == 1
@@ -115,8 +115,8 @@ def test_balanced_escalates_and_gpu_repair_passes():
 def test_cap_is_never_exceeded():
     # Gate always fails. cap is 2 -> exactly 2 GPU repair calls, then Tier-3.
     ops, c = make_ops(gate_seq=[])
-    out = mesh.solve("q", "balanced", ops)
-    cap = topologies.get("balanced").repair_cap
+    out = mesh.solve("q", "budget", ops)
+    cap = topologies.get("budget").repair_cap
     assert out.final_tier == "capped->tier3"
     assert out.capped and not out.resolved and out.answer is None
     assert out.repair_rounds == cap
@@ -192,16 +192,16 @@ def test_draft_not_skipped_below_threshold():
 
 def test_gpu_unavailable_midway_through_repair_caps():
     ops, c = make_ops(gate_seq=[False], gen_available=False)
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "capped->tier3"
     assert c["generate"] == 1  # first repair call hit an unreachable GPU
 
 
-def test_balanced_skips_npu_draft_on_hard_route():
-    # difficulty >= balanced.skip_draft_above (0.70) AND long enough (BACKLOG #8)
+def test_budget_skips_npu_draft_on_hard_route():
+    # difficulty >= budget.skip_draft_above (0.70) AND long enough (BACKLOG #8)
     # -> no NPU draft, GPU first.
     ops, c = make_ops(difficulty=0.75, gate_seq=[True])
-    out = mesh.solve("x" * (CONFIG.skip_draft_min_chars + 1), "balanced", ops)
+    out = mesh.solve("x" * (CONFIG.skip_draft_min_chars + 1), "budget", ops)
     assert out.final_tier == "gpu" and c["draft"] == 0 and c["generate"] == 1
 
 
@@ -240,8 +240,8 @@ def test_unknown_topology_name_raises():
 
 def test_outcome_carries_route_and_topology_fields():
     ops, _c = make_ops(difficulty=0.42, category="standard", gate_seq=[True])
-    out = mesh.solve("q", "balanced", ops)
-    assert out.difficulty == 0.42 and out.topology == "balanced"
+    out = mesh.solve("q", "budget", ops)
+    assert out.difficulty == 0.42 and out.topology == "budget"
     assert out.trace[0].startswith("route difficulty=0.42")
 
 
@@ -253,7 +253,7 @@ def test_passive_observer_emits_degen_trace_per_candidate():
     clean key ("npu"/"igpu"/"gpu") so downstream parsers can split by the
     bracket contents; repair-round info travels in the line just above."""
     ops, _c = make_ops(gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     degen_lines = [line for line in out.trace if line.startswith("degen[")]
     assert len(degen_lines) == 2
     assert any(line.startswith("degen[npu]:") for line in degen_lines)
@@ -281,7 +281,7 @@ def test_passive_observer_uses_tier_status_when_provided():
         igpu_draft=ops.igpu_draft,
         tier_status=lambda: {"npu": True, "gpu": False},
     )
-    out = mesh.solve("q", "balanced", ops_with_status)
+    out = mesh.solve("q", "budget", ops_with_status)
     degen_lines = [line for line in out.trace if line.startswith("degen[")]
     assert degen_lines
     assert all("tier:gpu unavailable" in line for line in degen_lines)
@@ -293,7 +293,7 @@ def test_passive_observer_does_not_change_outcome():
     Each solve gets its own ops bundle because make_ops's gate_seq is
     stateful (consumed on each gate call)."""
     ops_no, _ = make_ops(gate_seq=[True])
-    out_no = mesh.solve("q", "balanced", ops_no)
+    out_no = mesh.solve("q", "budget", ops_no)
     ops_yes_base, _ = make_ops(gate_seq=[True])
     ops_yes = mesh.Ops(
         route=ops_yes_base.route, draft=ops_yes_base.draft,
@@ -301,7 +301,7 @@ def test_passive_observer_does_not_change_outcome():
         repair_prompt=ops_yes_base.repair_prompt,
         tier_status=lambda: {"npu": False},        # tier down doesn't escalate
     )
-    out_yes = mesh.solve("q", "balanced", ops_yes)
+    out_yes = mesh.solve("q", "budget", ops_yes)
     assert out_no.final_tier == out_yes.final_tier
     assert out_no.resolved == out_yes.resolved
     assert out_no.answer == out_yes.answer
@@ -322,7 +322,7 @@ def test_observe_emit_receives_tier_and_result_per_observation():
         gate=ops_base.gate, repair_prompt=ops_base.repair_prompt,
         observe_emit=lambda tier, result: sink.append((tier, result)),
     )
-    mesh.solve("q", "balanced", ops)
+    mesh.solve("q", "budget", ops)
     tiers = [t for t, _ in sink]
     assert tiers == ["npu", "gpu"]
     assert all(isinstance(r, DegenerationResult) for _, r in sink)
@@ -332,7 +332,7 @@ def test_observe_emit_none_is_a_silent_no_op():
     """The hook is OPTIONAL; tests and the in-process orchestrator may pass
     None and the cascade still runs to completion."""
     ops, _ = make_ops(gate_seq=[True])
-    out = mesh.solve("q", "balanced", ops)  # observe_emit defaults to None
+    out = mesh.solve("q", "budget", ops)  # observe_emit defaults to None
     assert out.resolved and out.final_tier == "npu"
 
 
@@ -359,7 +359,7 @@ def test_warn_prompt_threads_text_reasons_into_repair(monkeypatch):
     (PD-1 v2 warn-prompt lever)."""
     _enable_warn_prompt(monkeypatch)
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     # Degen reasons were captured and threaded -- "looping:" or "narrowing:"
     # depending on which v2 metric tripped; tier reasons must NOT appear.
@@ -374,7 +374,7 @@ def test_warn_prompt_threads_empty_when_prior_was_clean():
     """If the prior draft was clean (no text metric tripped), prior_degen is
     `()` and the repair prompt is byte-identical to today's behaviour."""
     ops, c = make_ops(draft_text="def f(): return 1", gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     assert c["_last_degen"] == ()
     # No warn-prompt trace line emitted when there are no reasons to thread.
@@ -393,7 +393,7 @@ def test_warn_prompt_filters_tier_only_reasons(monkeypatch):
         igpu_draft=ops_base.igpu_draft,
         tier_status=lambda: {"npu": True, "gpu": False},
     )
-    mesh.solve("q", "balanced", ops)
+    mesh.solve("q", "budget", ops)
     assert c["_last_degen"] == ()
 
 
@@ -408,7 +408,7 @@ def test_warn_prompt_default_off_does_not_thread_even_when_degraded(monkeypatch)
     # skip-repair so the GPU phase reaches the repair callsite this test pins.
     _disable_skip_repair(monkeypatch)
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     assert c["_last_degen"] == ()
     assert not any(line.startswith("warn-prompt") for line in out.trace)
@@ -426,7 +426,7 @@ def test_skip_repair_discards_poisoned_prior_and_does_fresh_gpu_generate(monkeyp
     _enable_skip_repair_on_degen(monkeypatch)
     # gate_seq: [draft FAIL, fresh GPU generate PASS] -- no repair call needed.
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.resolved
     # Zero repair rounds: GPU did a fresh generate (line 189 branch), not a
     # repair on the poisoned NPU prior.
@@ -444,7 +444,7 @@ def test_skip_repair_falls_back_to_repair_loop_if_fresh_gpu_also_fails(monkeypat
     _enable_skip_repair_on_degen(monkeypatch)
     # gate_seq: [draft FAIL, fresh gen FAIL, repair#1 PASS]
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     # The repair_prompt was called ONCE -- and on the GPU's own fresh output,
     # NOT on the discarded NPU prior. The 4th arg (degen reasons) is empty
@@ -460,7 +460,7 @@ def test_skip_repair_does_not_fire_on_clean_draft(monkeypatch):
     behaviour: GPU repair on the (clean) NPU prior."""
     _enable_skip_repair_on_degen(monkeypatch)
     ops, c = make_ops(draft_text="def f(): return 1", gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     # Repair runs on the clean NPU prior (lever did NOT fire) -> generate is
     # the repair call, not a fresh generate.
@@ -483,7 +483,7 @@ def test_skip_repair_default_on_discards_poisoned_prior(monkeypatch):
     # tests use, since the module-level CONFIG was frozen at import (before
     # this monkeypatch). Rebuild from defaults to pick up env state.
     monkeypatch.setattr(mesh, "CONFIG", type(mesh.CONFIG)())
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.resolved
     assert out.repair_rounds == 0  # fresh generate, not repair on poison
     assert c["draft"] == 1 and c["generate"] == 1 and c["repair_prompt"] == 0
@@ -497,7 +497,7 @@ def test_skip_repair_env_opt_out_restores_pre_lever_behaviour(monkeypatch):
     monkeypatch.setenv("CASCADE_SKIP_REPAIR_ON_DEGEN", "0")
     monkeypatch.setattr(mesh, "CONFIG", type(mesh.CONFIG)())
     ops, c = make_ops(draft_text=_LOOPING_DRAFT, gate_seq=[False, True])
-    out = mesh.solve("q", "balanced", ops)
+    out = mesh.solve("q", "budget", ops)
     assert out.final_tier == "gpu" and out.repair_rounds == 1
     assert c["generate"] == 1 and c["repair_prompt"] == 1
     assert not any(line.startswith("skip-repair:") for line in out.trace)
