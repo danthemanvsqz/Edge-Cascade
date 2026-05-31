@@ -62,6 +62,10 @@ export interface DashboardApp {
   readonly liveSource: LiveSource;
   /** Render the initial HTTP shell. */
   page(): VNode;
+  /** Clear all in-memory state and push a TICK so all connected clients
+   * re-render to the empty state. The tailer continues from its current
+   * file position; only new records are ingested after a reset. */
+  reset(): void;
 }
 
 export interface CreateDashboardOptions {
@@ -194,5 +198,9 @@ export function createDashboardApp(
     tailer,
     liveSource,
     page: () => page(ctx),
+    reset(): void {
+      ctx.store.reset();
+      hub.emit(TICK);
+    },
   };
 }

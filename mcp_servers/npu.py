@@ -1,4 +1,7 @@
-"""edge-npu MCP server -- Tier 1, Intel NPU "AI Boost" / Xe iGPU / CPU.
+"""DEPRECATED -- edge-npu MCP server (retired; inference now via Canvas pipeline).
+Removed from .mcp.json 2026-05-31. See mcp_servers/gpu.py for details.
+
+edge-npu MCP server -- Tier 1, Intel NPU "AI Boost" / Xe iGPU / CPU.
 
 OpenVINO GenAI, qwen2.5-coder-1.5B channel-wise symmetric INT4. Two roles:
 the cheap up-front difficulty `route`, and a fast `draft` for trivial code.

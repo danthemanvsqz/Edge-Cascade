@@ -148,6 +148,16 @@ def verify_functional_task(text: str, dsl: str | None = None) -> dict:
 
 
 @recorded(_VERIFY_REC)
+def record_npu_win(tier: str = "npu") -> dict:
+    """Ledger record for a successful NPU-tier resolution (gate PASS, run done).
+    Writes edge-verify.rec with tool=record_npu_win so dashboard particles show
+    NPU wins in the event log. Called by _budget_resolve_npu when env["resolved"]
+    flips True. Named distinctly from the Celery task _budget_resolve_npu to
+    avoid ambiguity when grepping."""
+    return {"resolved": True, "tier": tier}
+
+
+@recorded(_VERIFY_REC)
 def verify_syntax(text: str) -> dict:
     """Syntax gate (fast AST/compile, never exec). Records edge-verify.rec.
     Bare-metal counterpart of mcp_servers.verify.verify_syntax; keeps the

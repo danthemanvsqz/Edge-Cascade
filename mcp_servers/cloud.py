@@ -1,4 +1,7 @@
-"""edge-cloud MCP server -- Tier 4, the paid Opus backstop (credit-guarded).
+"""DEPRECATED -- edge-cloud MCP server (retired; inference now via Canvas pipeline).
+Removed from .mcp.json 2026-05-31. See mcp_servers/gpu.py for details.
+
+edge-cloud MCP server -- Tier 4, the paid Opus backstop (credit-guarded).
 
 The only server that crosses the machine boundary and the only one that costs
 money. Used when the agent is absent/throttled, or to break a deadlock with a

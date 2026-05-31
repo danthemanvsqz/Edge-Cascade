@@ -1,4 +1,7 @@
-"""edge-verify MCP server -- the deterministic gate (Intel CPU, NO model).
+"""DEPRECATED -- edge-verify MCP server (retired; inference now via Canvas pipeline).
+Removed from .mcp.json 2026-05-31. See mcp_servers/gpu.py for details.
+
+edge-verify MCP server -- the deterministic gate (Intel CPU, NO model).
 
 Pillar 3 of the architecture made concrete: a non-LLM, 100%-reproducible gate
 every local answer must pass before the agent trusts it. Breaks the

@@ -674,3 +674,74 @@ describe("createStore — live active nodes (the spinning-ring lane)", () => {
     expect(snap).toEqual(new Set(["route"]));
   });
 });
+
+describe("createStore — reset()", () => {
+  it("clears all particles", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "route", ts: "1779801311.5" }));
+    expect(store.particles()).toHaveLength(1);
+    store.reset();
+    expect(store.particles()).toHaveLength(0);
+  });
+
+  it("resets totalCount to zero", () => {
+    const store = createStore();
+    store.ingest("edge-gpu", rec(0, { tool: "generate", ts: "100" }));
+    store.reset();
+    expect(store.totalCount()).toBe(0);
+  });
+
+  it("resets cascade outcomes to zero", () => {
+    const store = createStore();
+    store.ingest("cascade", { _seq: "0", final_tier: "gpu", ts: "100" });
+    store.reset();
+    const o = store.cascadeOutcomes();
+    expect(o.total).toBe(0);
+    expect(o.resolvedGpu).toBe(0);
+  });
+
+  it("resets lastOutcome to null", () => {
+    const store = createStore();
+    store.ingest("cascade", { _seq: "0", final_tier: "gpu", ts: "100" });
+    expect(store.lastOutcome()).not.toBeNull();
+    store.reset();
+    expect(store.lastOutcome()).toBeNull();
+  });
+
+  it("resets health lastSeenMs to null", () => {
+    const store = createStore();
+    store.ingest("edge-gpu", rec(0, { tool: "status", ts: "100", result: JSON.stringify({ available: false }) }));
+    expect(store.health().tiers.gpu.lastSeenMs).not.toBeNull();
+    store.reset();
+    expect(store.health().tiers.gpu.lastSeenMs).toBeNull();
+    expect(store.health().tiers.gpu.available).toBe(true);
+  });
+
+  it("resets spend to clean zero", () => {
+    const store = createStore();
+    store.ingest("edge-cloud", rec(0, {
+      tool: "generate",
+      ts: "100",
+      result: JSON.stringify({ est_cost_usd: 0.5 }),
+    }));
+    expect(store.spend().usd).toBeGreaterThan(0);
+    store.reset();
+    expect(store.spend()).toEqual({ cloudCalls: 0, usd: 0, clean: true });
+  });
+
+  it("clears active nodes", () => {
+    const store = createStore();
+    store.applyNodeDelta("route", true);
+    store.reset();
+    expect(store.activeNodes()).toEqual(new Set());
+  });
+
+  it("subsequent ingest after reset produces a visible particle", () => {
+    const store = createStore();
+    store.ingest("edge-npu", rec(0, { tool: "route", ts: "100" }));
+    store.reset();
+    store.ingest("edge-gpu", rec(1, { tool: "generate", ts: "200" }));
+    expect(store.particles()).toHaveLength(1);
+    expect(store.particles()[0]?.tool).toBe("generate");
+  });
+});

@@ -54,6 +54,17 @@ body.dashboard {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
+.reset-btn {
+  background: transparent;
+  border: 1px solid var(--grid);
+  color: var(--type);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.reset-btn:hover { opacity: 1; border-color: var(--fail); color: var(--fail); }
 
 .stage {
   grid-area: stage;
