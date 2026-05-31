@@ -23,6 +23,8 @@ its digest to `<models_dir>/blobs/sha256-<digest>`. One source of truth
 from __future__ import annotations
 
 import json
+import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -30,6 +32,8 @@ from functools import partial
 from pathlib import Path
 
 from .config import CONFIG
+
+_log = logging.getLogger(__name__)
 
 _SYSTEM = (
     "You are an expert coding assistant. Produce correct, complete, runnable "
@@ -200,12 +204,26 @@ def make_llama_worker(model_id: str | None = None) -> GPUWorker:
     model_id = model_id or CONFIG.gpu_model
     gguf_path = _resolve_ollama_blob(model_id, Path(CONFIG.ollama_models_dir))
     llama_cpp = _llama()
+    # PT-2 tuning knobs -- env-var overrides for the parity sweep.
+    # CASCADE_LLAMA_N_CTX:    KV context window (default 8192; PT-2 found 4096 saves
+    #                         ~1s but harms quality on long tasks -- keep 8192)
+    # CASCADE_LLAMA_FLASH_ATTN: flash attention (default True; Ollama enables by default;
+    #                           PT-2 confirmed ~3s gain on Case B, within ±20% bar)
+    # CASCADE_LLAMA_N_BATCH:  prefill batch size (default 512)
+    n_ctx       = int(os.environ.get("CASCADE_LLAMA_N_CTX", "8192"))
+    flash_attn  = os.environ.get("CASCADE_LLAMA_FLASH_ATTN", "1").lower() in ("1", "true")
+    n_batch     = int(os.environ.get("CASCADE_LLAMA_N_BATCH", "512"))
+    _log.info(
+        "llama_worker: n_ctx=%d flash_attn=%s n_batch=%d gguf=%s",
+        n_ctx, flash_attn, n_batch, gguf_path.name[:16],
+    )
     llm = llama_cpp.Llama(
         model_path=str(gguf_path),
         # Offload as many layers as fit on the GPU. -1 means "all".
         n_gpu_layers=-1,
-        # Match Ollama's default context window for qwen2.5-coder.
-        n_ctx=8192,
+        n_ctx=n_ctx,
+        flash_attn=flash_attn,
+        n_batch=n_batch,
         # Quiet by default; the @recorded decorator captures latency + tokens.
         verbose=False,
     )
