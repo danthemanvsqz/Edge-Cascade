@@ -188,6 +188,8 @@ omit = [
     "scripts/snapshot_evidence.py",
     "scripts/skip_repair_validation.py",
     "scripts/warn_prompt_validation_v2.py",
+    "scripts/git_model_bench.py",
+    "scripts/cli_model_bench.py",
 ]
 
 [tool.coverage.report]
