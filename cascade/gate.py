@@ -31,6 +31,10 @@ _LANG_MAP: dict[str, str] = {
 # Matches the opening fence; captures the optional language tag (empty = bare).
 _FENCE_TAG = re.compile(r"```(\w*)\s*\n", re.IGNORECASE)
 
+# Languages tried when no fence tag is present (ambiguous text).
+# Update this list when a new verifier is registered (VR-3 adds javascript).
+_AMBIGUOUS_CANDIDATES: list[str] = ["python", "typescript", "javascript"]
+
 
 def register(lang: str, fn: LanguageVerifier) -> None:
     """Register a verifier for a canonical language name."""
@@ -69,12 +73,12 @@ def gate(text: str, dsl: str | None) -> tuple[bool, list]:
     5. Happy path → call the registered verifier.
     """
     if dsl:
-        import cascade.tasks  # lazy: avoids circular import at module level
+        import cascade.tasks  # lazy — must stay here; top-level import creates a cycle
         v = cascade.tasks.verify_functional(text, dsl)
         return bool(v.get("passed")), list(v.get("failures", ()))
     lang = detect_language(text)
     if lang == "ambiguous":
-        return gate_any(text, ["python", "typescript", "javascript"])
+        return gate_any(text, _AMBIGUOUS_CANDIDATES)
     if lang.startswith("unknown-"):
         return False, [
             {
@@ -147,7 +151,7 @@ def gate_any(text: str, langs: list[str]) -> tuple[bool, list]:
                     "requirement": f"fenced {lang} block that parses",
                 }
             )
-    return False, all_failures
+    return False, sorted(all_failures, key=lambda f: f["language"])
 
 
 # ---------------------------------------------------------------------------

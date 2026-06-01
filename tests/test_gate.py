@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from cascade.gate import (
+    _AMBIGUOUS_CANDIDATES,
     _LANG_MAP,
     _REGISTRY,
     detect_language,
@@ -190,9 +191,7 @@ def test_gate_ambiguous_calls_gate_any(mocker):
     mock = mocker.patch("cascade.gate.gate_any", return_value=(True, []))
     passed, _ = gate(NO_FENCE, dsl=None)
     assert passed is True
-    mock.assert_called_once_with(
-        NO_FENCE, ["python", "typescript", "javascript"]
-    )
+    mock.assert_called_once_with(NO_FENCE, _AMBIGUOUS_CANDIDATES)
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +259,9 @@ def test_gate_any_fails_with_combined_list_when_all_fail(temp_lang):
     passed, failures = gate_any("anything", ["_lang_a", "_lang_b"])
     assert passed is False
     assert len(failures) == 2
-    langs = {f["language"] for f in failures}
-    assert langs == {"_lang_a", "_lang_b"}
+    # Failures are sorted by language for determinism (thread completion order varies).
+    langs = [f["language"] for f in failures]
+    assert langs == sorted(langs)
 
 
 def test_gate_any_failure_dicts_have_language_key(temp_lang):
