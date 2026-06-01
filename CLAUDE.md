@@ -48,14 +48,21 @@ off when the locals are exhausted; Tier 4 is the budget-gated backstop.
 
 ### OPERATIONAL RULES (pipeline-first, max savings)
 
-- **Route every coding task through the pipeline.** One call:
-  `uv run python scripts/mesh_solve_canvas.py --topology budget "<task>"`
+- **Decompose first, then route.** Before routing ANY non-trivial prompt, check
+  whether it contains clearly independent sub-tasks. If yes: reason the sub-task
+  list yourself (Tier 3 — no model needed for decomposition), then choose:
+  - **Fan-out** (independent sub-tasks): `--topology budget_fanout "sub1" "sub2" "sub3"`
+  - **Sequential** (dependent sub-tasks): separate `budget` calls, carry context
+  - **Hybrid**: fan-out the independent parts, iterate over the dependent ones
+  Merge the results yourself. Default to a single `budget` call only when the
+  task is genuinely atomic.
+- **Route every coding task AND git/CLI command generation through the pipeline.**
+  One call: `uv run python scripts/mesh_solve_canvas.py --topology budget "<task>"`
   (or `cascade.canvas_client.solve_budget_canvas(query, dsl=None)` in-repo).
-  `budget` (sequential cost-ordered cascade) is the default for almost
-  everything; `low_latency` (NPU-vs-GPU chord) always runs the GPU, so it costs
-  more and is a per-workload choice, never the default. For large multi-part
-  tasks, decompose first (you reason the sub-tasks), then fan-out:
-  `uv run python scripts/mesh_solve_canvas.py --topology budget_fanout "sub1" "sub2"`
+  `budget` is the default for almost everything. Gate note: git/shell commands
+  fail the Python syntax gate and cap → Tier 3 executes the result. That is
+  correct behaviour — the pipeline is still consulted and logged (97% GPU accuracy
+  on git tasks confirmed in `docs/FINDINGS-git-model-selection.md`).
   The pipeline does route → NPU/iGPU draft → deterministic gate → bounded GPU
   repair → win/lose logger; you do not perform those steps yourself.
 - **Don't auto-skip to Tier 3 on the score.** The NPU difficulty signal is
@@ -83,5 +90,7 @@ off when the locals are exhausted; Tier 4 is the budget-gated backstop.
   down, say so and offer to launch it — do not silently hand-write the code.
   `python cli.py --topology <name> "<task>"` is the in-process pipe equivalent
   if the broker is unavailable.
-- Non-coding / conversational turns: handle directly (Tier 3). Do not route them
-  through the pipeline.
+- **What NOT to route:** pure conversational replies, analysis/explanation with
+  no output artifact, and yes/no decisions. Everything that produces an artifact
+  (code, a command, a script, a config edit, a commit message) goes through the
+  pipeline first.
