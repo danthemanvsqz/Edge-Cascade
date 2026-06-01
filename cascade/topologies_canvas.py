@@ -51,6 +51,7 @@ from cascade import canvas_spike, tasks, ts_verifier
 from cascade import topologies as topo_module
 from cascade.celery_app import app
 from cascade.config import CONFIG
+from cascade.low_latency_pick import _pick_decision
 from cascade.tasks import record_npu_win as _record_npu_win
 
 _log = logging.getLogger(__name__)
@@ -390,31 +391,7 @@ def _pick_first_verified(self, results: list[dict], env: dict) -> dict:
     # their OWN dicts (`results`) and never mutate the envelope, so reading the
     # frozen `env` here is correct. (If an arm were ever changed to mutate
     # envelope state, that mutation would be silently dropped -- keep arms pure.)
-    draft_res = results[0] if len(results) > 0 else {}
-    gpu_res = results[1] if len(results) > 1 else {}
-    for tier, res in (("npu", draft_res), ("gpu", gpu_res)):
-        # A non-dict / unavailable / empty-text arm is never gated -- skip it.
-        # The isinstance guard must cover the .get below too (a non-dict result
-        # would otherwise raise AttributeError, not hand off cleanly).
-        text = res.get("text", "") if isinstance(res, dict) else ""
-        if not (isinstance(res, dict) and res.get("available", True) and text):
-            env["trace"].append(f"low_latency: {tier} race candidate unavailable")
-            continue
-        passed, _ = _gate(text, env["dsl"])
-        env["trace"].append(
-            f"low_latency: {tier} race candidate gate "
-            f"{'PASS' if passed else 'FAIL'}"
-        )
-        if passed:
-            env["answer"] = text
-            env["final_tier"] = tier
-            env["resolved"] = True
-            return env
-    env["capped"] = True
-    env["trace"].append(
-        "low_latency: neither raced candidate verified -> capped->tier3"
-    )
-    return env
+    return _pick_decision(results, env, gate_fn=_gate)
 
 
 def low_latency_signature(query: str, dsl: str | None = None):
