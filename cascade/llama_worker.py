@@ -127,6 +127,18 @@ def _preload_cuda_runtime() -> None:  # pragma: no cover - env-dependent
             if dll_path.exists():
                 ctypes.CDLL(str(dll_path))
                 break
+    # 0.3.24 split llama.dll into sibling DLLs (ggml.dll, ggml-cuda.dll, etc.)
+    # in the same llama_cpp/lib/ dir. Add it to the DLL search path so Windows
+    # finds the siblings when loading llama.dll. find_spec locates the package
+    # without importing it (safe to call before the import that uses this).
+    try:
+        spec = importlib.util.find_spec("llama_cpp")
+    except (ModuleNotFoundError, ValueError):
+        spec = None
+    if spec and spec.origin:
+        lib_dir = Path(spec.origin).parent / "lib"
+        if lib_dir.is_dir():
+            os.add_dll_directory(str(lib_dir))
 
 
 def _llama():

@@ -5,33 +5,34 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-01** (after session: PRs #133–#134 merged; main `6517ea4`).
-> **Shipped this session:** #11 hook-scope (session-scope W/L in pipeline scoreboard, #133),
-> #13 nonblock-hold (non-blocking min-lit hold in live-receiver, #134).
+> **Last groomed: 2026-06-01** (after session: PRs #133–#135 merged; main `0d4f4c1`).
+> **Shipped this session:** #11 hook-scope (#133), #13 nonblock-hold (#134),
+> #4 gate-helper — `_pick_decision` extracted to covered module (#135).
+> **#5 PT-4 verdict: HOLD** — 0.3.24 (latest) crashes on Intel Arrow Lake H
+> (Core Ultra 9 275HX) with STATUS_ILLEGAL_INSTRUCTION; the cu124 Windows wheel
+> uses AVX-512 instructions that Arrow Lake removed. Stay on 0.3.23. Re-check
+> when upstream ships a non-AVX-512 build or the hardware changes.
+> `_preload_cuda_runtime` enhanced (forward-compat: adds `llama_cpp/lib/` to DLL
+> search path for split-lib wheels).
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major     I4 Critical
  S1 Safe                  ✗ (none)     — (none)               — (none)   — (none)
- S2 Low                   ✗ (none)     #4  gate-helper ← NEXT  — (none)   — (none)
-                                       #5  PT-4 verbump
- S3 Moderate              ✗ (none)     #3  PT-3 (downgraded)   — (none)   — (none)
+ S2 Low                   ✗ (none)     — (none)               — (none)   — (none)
+ S3 Moderate              ✗ (none)     #3  PT-3 ← NEXT        — (none)   — (none)
  S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none    — (none)
 ```
 
-No `S4` park items and no `I1` drops. No `I3` items remain — the full self-healing arc
-(#7–#9), perf-tuning arc (#1–#2 + Slice 7), and major dashboard work are all shipped.
-All remaining picks are I2 (minor). **Next pick: #4 gate-helper** (I2·S2).
+No `S4` park items and no `I1` drops. Only one item remains: **#3 PT-3** (KV-cache
+prefix reuse, I2·S3). All I2·S1 and I2·S2 items are closed.
+**Next pick: #3 PT-3** (I2·S3, the final item).
 
-**I2·S2 ordering within the band** (tied on impact+severity; use decay risk as tiebreaker):
-- **#4 gate-helper** first — coverage improvement, no decay.
-- **#5 PT-4 verbump** second — maintenance; check upstream llama-cpp-python for perf gains.
-
-**Shipped (for the record):** #1 PT-1, #2 PT-2, #6 OBS-1, #7 ts-verify-gate (#115),
-#8 difficulty-recal (#116), #9 draft_gate-decompose (#119), #10 ts-shortcut (retired),
-#11 hook-scope (#133), #12 obs-legibility (#117), #13 nonblock-hold (#134),
-#14 verify_func (#130).
+**Shipped (for the record):** #1 PT-1, #2 PT-2, #4 gate-helper (#135), #5 PT-4 (HOLD/no-AVX512),
+#6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116), #9 draft_gate-decompose (#119),
+#10 ts-shortcut (retired), #11 hook-scope (#133), #12 obs-legibility (#117),
+#13 nonblock-hold (#134), #14 verify_func (#130).
 
 ---
 
