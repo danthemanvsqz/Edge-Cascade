@@ -69,6 +69,13 @@ def test_verify_js_fails_on_syntax_error(mocker):
     assert "SyntaxError" in v.reason
 
 
+def test_verify_js_fails_with_empty_stderr(mocker):
+    mocker.patch.object(js_verifier.subprocess, "run", _fake_run(1, ""))
+    v = verify_js(JS_BLOCK)
+    assert v.passed is False
+    assert v.reason == "syntax error"
+
+
 def test_verify_js_fails_soft_when_node_unavailable(mocker):
     def boom(*a, **k):
         raise OSError("node not found")

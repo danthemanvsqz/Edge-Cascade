@@ -17,7 +17,7 @@ _GIT_FENCE = re.compile(r"```(?:git)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _BASH_FENCE = re.compile(
     r"```(?:bash|sh|shell)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
 )
-_GIT_CMD = re.compile(r"^git\s+\S+", re.MULTILINE)
+_GIT_CMD = re.compile(r"^git\s+\S+")
 
 
 def extract_git(text: str) -> str | None:

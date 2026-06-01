@@ -164,5 +164,6 @@ from cascade.verifier import verify as _py_verify  # noqa: E402
 register("python", _py_verify)
 register("typescript", _ts_verify)
 
+# register() (above) must be defined before these imports; they call it.
 import cascade.js_verifier  # noqa: F401, E402 — registers javascript (VR-3)
 import cascade.shell_verifier  # noqa: F401, E402 — registers git + bash (VR-2)

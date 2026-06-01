@@ -143,6 +143,13 @@ def test_verify_shell_fails_on_syntax_error(mocker):
     assert "syntax error" in v.reason
 
 
+def test_verify_shell_fails_with_empty_stderr(mocker):
+    mocker.patch.object(shell_verifier.subprocess, "run", _fake_run(1, ""))
+    v = verify_shell(BASH_BLOCK)
+    assert v.passed is False
+    assert v.reason == "syntax error: syntax error"
+
+
 def test_verify_shell_fails_soft_when_bash_unavailable(mocker):
     def boom(*a, **k):
         raise OSError("bash not found")
