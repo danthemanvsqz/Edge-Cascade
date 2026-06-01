@@ -21,12 +21,19 @@ act on the one result it hands back. Do **not** hand-orchestrate `edge-npu` /
 `edge-gpu` / `edge-verify` / `edge-cloud` MCP tools step by step — that path is
 retired.
 
-## The rule (non-negotiable)
+## The rules (non-negotiable)
 
-**Every line of code goes through the pipeline first.** The pipeline runs
-everything **NPU-first** and the **win/lose logger last**. You do not write
-from-scratch code by hand and skip the cascade — route the task, let the locals
-draft it, and take over only when the pipeline hands back `capped->tier3`.
+**Every artifact goes through the pipeline first.** This means: code, git/CLI
+commands, scripts, configs, commit messages — anything that produces a concrete
+output. Route it, let the locals draft it, take over only when the pipeline
+hands back `capped->tier3`. Pure conversational replies and analysis-only turns
+are the only exception.
+
+**Decompose before routing.** For any non-atomic prompt, identify independent
+sub-tasks first (Tier 3 reasoning, no model needed), then route each:
+- Fan-out independent sub-tasks: `--topology budget_fanout "sub1" "sub2" "sub3"`
+- Iterate dependent sub-tasks: sequential `budget` calls with carried context
+- Hybrid: fan-out the independent parts, iterate the dependent ones
 
 ## How to route (one call)
 
@@ -62,17 +69,29 @@ outcomes = solve_budget_fanout([sub1, sub2], dsl=None)  # parallel -> list[mesh.
 - `--dsl "<text>"` — optional functional-gate assertions; omit for syntax-only
   gating.
 
-## When to decompose
+## Decomposition (mandatory pre-routing step)
 
-If a task has clearly independent sub-problems (e.g. "write functions A, B, C"),
-decompose before routing:
-1. **Reason** the sub-tasks yourself (no local model needed for decomposition)
+Before routing ANY non-trivial prompt, check: does it contain clearly independent
+or sequential sub-tasks?
+
+1. **Reason** the sub-task list yourself (Tier 3 — no model call needed)
 2. **Fan-out** if independent: `--topology budget_fanout "sub1" "sub2" "sub3"`
 3. **Iterate** if dependent: sequential `solve_budget_canvas` calls, carry context
-4. **Merge** the sub-results yourself (you integrate, not the pipeline)
+4. **Hybrid**: fan-out the independent parts first, then iterate the dependent tail
+5. **Merge** the sub-results yourself (you integrate, not the pipeline)
 
-Default: route as a single budget call first. Only decompose if the task is
-clearly multi-component and local capacity is the bottleneck.
+Only use a single `budget` call when the task is genuinely atomic.
+
+## Git and CLI command generation
+
+Route NL→git/shell tasks through the pipeline exactly like code tasks:
+```
+uv run python scripts/mesh_solve_canvas.py --topology budget "git command to <action>"
+```
+**Gate note:** raw git/shell output fails the Python syntax gate → capped→tier3.
+That is correct — the pipeline is consulted and logged; Tier 3 executes the
+capped result. qwen2.5-coder:14b (GPU tier) scores 97% on git tasks Tier B
+(see `docs/FINDINGS-git-model-selection.md`).
 
 ## What the pipeline does (informational — you don't drive these)
 
@@ -100,8 +119,12 @@ without an explicit opt-in.
 
 ## Rules
 
-- **Pipeline-first, always.** No hand-written from-scratch code that skips the
-  cascade; no hand-driving the per-tier MCP tools. One `solve_*_canvas` call.
+- **Pipeline-first, always.** Code, git/CLI commands, scripts, configs, commit
+  messages — any artifact goes through the pipeline. No hand-written from-scratch
+  code or commands that skip the cascade; no hand-driving the per-tier MCP tools.
+  One `solve_*_canvas` call.
+- **Decompose before routing.** Check for independent/dependent sub-tasks first.
+  Fan-out the independent ones, iterate the dependent ones, hybrid if mixed.
 - **Don't auto-skip to Tier 3 on the score.** The NPU difficulty signal is
   advisory and over-rates short / well-scoped tasks — from-scratch code still
   gets a local draft pass. Going straight to Tier 3 is for `capped` results or
@@ -116,5 +139,5 @@ without an explicit opt-in.
   "<task>"` is the equivalent in-process pipe path if the broker is unavailable.)
 - **Cloud is paid + opt-in.** Tier 4 never runs on the default queues; it is the
   budget-gated last resort, not a convenience.
-- Non-coding / conversational turns: handle directly as Tier 3 — don't route
-  them through the pipeline.
+- **What NOT to route:** pure conversational replies, analysis/explanation with
+  no output artifact, yes/no decisions.
