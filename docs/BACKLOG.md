@@ -5,29 +5,29 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-01** (after session: PRs #133–#135 merged; main `0d4f4c1`).
+> **Last groomed: 2026-06-01** (after session: PRs #133–#136 merged; main `0f16722`).
 > **Shipped this session:** #11 hook-scope (#133), #13 nonblock-hold (#134),
-> #4 gate-helper — `_pick_decision` extracted to covered module (#135).
-> **#5 PT-4 verdict: HOLD** — 0.3.24 (latest) crashes on Intel Arrow Lake H
-> (Core Ultra 9 275HX) with STATUS_ILLEGAL_INSTRUCTION; the cu124 Windows wheel
-> uses AVX-512 instructions that Arrow Lake removed. Stay on 0.3.23. Re-check
-> when upstream ships a non-AVX-512 build or the hardware changes.
-> `_preload_cuda_runtime` enhanced (forward-compat: adds `llama_cpp/lib/` to DLL
-> search path for split-lib wheels).
+> #4 gate-helper (#135), #5 PT-4 HOLD/AVX-512 (#136).
+> **#3 PT-3 verdict: CLOSE/INEFFECTIVE** — measured 2026-06-01. `LlamaRAMCache`
+> serializes/deserializes the full KV state (~GB) on every call; for 14b @ n_ctx=8192
+> the serialization cost dominates: Case B 75.95s (was 37.3s, 2× regression).
+> The ~80-token system-prompt prefix is not worth the round-trip. Approach not viable
+> with `create_chat_completion` + `LlamaRAMCache`. Future: stateful llama_cpp API
+> (manage `n_past` directly) if the use pattern changes to multi-turn within a task.
 
 ## Current placement
 
 ```
- Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major     I4 Critical
- S1 Safe                  ✗ (none)     — (none)               — (none)   — (none)
- S2 Low                   ✗ (none)     — (none)               — (none)   — (none)
- S3 Moderate              ✗ (none)     #3  PT-3 ← NEXT        — (none)   — (none)
- S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none    — (none)
+ Severity ↓ \ Impact →   I1 Trivial   I2 Minor   I3 Major   I4 Critical
+ S1 Safe                  ✗ (none)     ✗ (none)   — (none)   — (none)
+ S2 Low                   ✗ (none)     ✗ (none)   — (none)   — (none)
+ S3 Moderate              ✗ (none)     ✗ (none)   — (none)   — (none)
+ S4 Severe (park)         ✗ (none)     ⏳  none    ⏳ none    — (none)
 ```
 
-No `S4` park items and no `I1` drops. Only one item remains: **#3 PT-3** (KV-cache
-prefix reuse, I2·S3). All I2·S1 and I2·S2 items are closed.
-**Next pick: #3 PT-3** (I2·S3, the final item).
+**BACKLOG EMPTY.** All items are closed (shipped, HOLD, or CLOSE/measured). No S4
+parks, no I1 drops. The perf-tuning arc is complete: PT-1 PASS, PT-2 PASS (gate met),
+PT-3 CLOSE (LlamaRAMCache regression), PT-4 HOLD (AVX-512). Slice 7 shipped.
 
 **Shipped (for the record):** #1 PT-1, #2 PT-2, #4 gate-helper (#135), #5 PT-4 (HOLD/no-AVX512),
 #6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116), #9 draft_gate-decompose (#119),
