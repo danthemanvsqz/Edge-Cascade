@@ -5,34 +5,94 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-01** (after session: PRs #133–#136 merged; main `0f16722`).
-> **Shipped this session:** #11 hook-scope (#133), #13 nonblock-hold (#134),
-> #4 gate-helper (#135), #5 PT-4 HOLD/AVX-512 (#136).
-> **#3 PT-3 verdict: CLOSE/INEFFECTIVE** — measured 2026-06-01. `LlamaRAMCache`
-> serializes/deserializes the full KV state (~GB) on every call; for 14b @ n_ctx=8192
-> the serialization cost dominates: Case B 75.95s (was 37.3s, 2× regression).
-> The ~80-token system-prompt prefix is not worth the round-trip. Approach not viable
-> with `create_chat_completion` + `LlamaRAMCache`. Future: stateful llama_cpp API
-> (manage `n_past` directly) if the use pattern changes to multi-turn within a task.
+> **Last groomed: 2026-06-01** (VR arc added; PRs #133–#138 merged; main post-#138).
+> **Previous session shipped:** #11 hook-scope (#133), #13 nonblock-hold (#134),
+> #4 gate-helper (#135), #5 PT-4 HOLD/AVX-512 (#136), #3 PT-3 CLOSE/LlamaRAMCache.
+> **New arc: Verifier Registry (VR-1–VR-5)** — grounded in log analysis (19 min/97
+> routes wasted on caps; git commands mandatory artifacts since PR #138 but always cap;
+> dispatch in coverage.omit with no unit tests). Design: `docs/DESIGN-verifier-registry.md`.
 
 ## Current placement
 
 ```
- Severity ↓ \ Impact →   I1 Trivial   I2 Minor   I3 Major   I4 Critical
- S1 Safe                  ✗ (none)     ✗ (none)   — (none)   — (none)
- S2 Low                   ✗ (none)     ✗ (none)   — (none)   — (none)
- S3 Moderate              ✗ (none)     ✗ (none)   — (none)   — (none)
- S4 Severe (park)         ✗ (none)     ⏳  none    ⏳ none    — (none)
+ Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major         I4 Critical
+ S1 Safe                  ✗ (none)     ✗ (none)               — (none)        — (none)
+ S2 Low                   ✗ (none)     #VR-3 JS ← (after VR-1) #VR-1 Gate ← NEXT   — (none)
+                                       #VR-5 RP                #VR-2 Shell
+ S3 Moderate              ✗ (none)     — (none)               #VR-4 Wire      — (none)
+ S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none         — (none)
 ```
 
-**BACKLOG EMPTY.** All items are closed (shipped, HOLD, or CLOSE/measured). No S4
-parks, no I1 drops. The perf-tuning arc is complete: PT-1 PASS, PT-2 PASS (gate met),
-PT-3 CLOSE (LlamaRAMCache regression), PT-4 HOLD (AVX-512). Slice 7 shipped.
+**Next pick: #VR-1 gate registry** (I3·S2). Then fan-out #VR-2 ‖ #VR-3 once VR-1 is
+in main. Then #VR-4 (wiring, I3·S3). Then #VR-5 (optional polish).
 
-**Shipped (for the record):** #1 PT-1, #2 PT-2, #4 gate-helper (#135), #5 PT-4 (HOLD/no-AVX512),
-#6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116), #9 draft_gate-decompose (#119),
-#10 ts-shortcut (retired), #11 hook-scope (#133), #12 obs-legibility (#117),
-#13 nonblock-hold (#134), #14 verify_func (#130).
+**Shipped (for the record):** #1 PT-1, #2 PT-2, #3 PT-3 CLOSE, #4 gate-helper (#135),
+#5 PT-4 HOLD, #6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116),
+#9 draft_gate-decompose (#119), #10 ts-shortcut (retired), #11 hook-scope (#133),
+#12 obs-legibility (#117), #13 nonblock-hold (#134), #14 verify_func (#130).
+
+---
+
+## Verifier Registry arc (VR-1–VR-5)
+
+Design doc: [DESIGN-verifier-registry.md](DESIGN-verifier-registry.md)
+
+**Root cause:** 23/97 routed outcomes capped (24%) wasting 19 min of GPU wall time.
+Log analysis (2026-06-01): NPU gate pass rate only 47%; git commands guaranteed LOSE
+since the Python AST gate rejects them; `_gate` dispatch lives in `coverage.omit` so
+regressions in language dispatch are invisible to the 100% gate.
+
+### ✅ VR-1 · language registry `cascade/gate.py`  (I3 · S2) ← NEXT
+
+**What:** New covered module `cascade/gate.py`: `LanguageVerifier` protocol,
+`_REGISTRY`, `_LANG_MAP`, `register()`, `detect_language()`, `gate()`, `gate_any()`.
+Self-registers Python and TypeScript at import. Comprehensive unit tests in
+`tests/test_gate.py`. **No wiring yet** (topologies_canvas.py still calls its own
+`_gate`); this slice is purely additive.
+
+**Why I3:** Foundation for the entire arc; moves dispatch from coverage.omit into the
+100% gate. **Why S2:** Additive new module; does not change any production call site.
+
+### VR-2 · shell/git verifier  (I3 · S2)
+
+**What:** `cascade/shell_verifier.py` — `verify_git()` (structural: fence extract +
+`git <verb>` regex) and `verify_shell()` (`bash -n` stdin, fail-soft if bash absent).
+Registered in `gate.py`. Tests in `tests/test_shell_verifier.py`.
+
+**Why I3:** Directly fixes the git-always-caps problem. Every git route is currently a
+guaranteed LOSE; after VR-2+VR-4 it becomes a WIN. **Why S2:** Structural regex + one
+`bash -n` subprocess, same fail-soft pattern as `ts_verifier.py`.
+
+### VR-4 · wire call sites  (I3 · S3)  — depends on VR-1+VR-2
+
+**What:** Replace `_gate` body in `cascade/topologies_canvas.py` with a 1-line
+delegation to `cascade.gate.gate()`. Replace `tasks.verify_syntax(text)` in
+`cascade/wiring.py` with `cascade.gate.gate(text, dsl=None)`.
+
+**Why I3:** Makes VR-1/VR-2/VR-3 real on production routes.
+**Why S3:** Touches the hot-path Canvas gate step AND the in-process pipe gate.
+Guard with parity check (`scripts/parity_batch.py --backend llama_cpp`, Case B ≤ 37.3s
+±20%) and live git route test before merging.
+
+### VR-3 · JS verifier  (I2 · S2)  — can fanout with VR-2
+
+**What:** `cascade/js_verifier.py` — `verify_js()` via
+`node --check --input-type=commonjs` stdin (no new npm deps; same node as ts_verifier).
+Registered in `gate.py`. Tests in `tests/test_js_verifier.py`.
+
+**Why I2:** New capability, no JS routes in current `cascade.rec`; lower immediate
+impact than git. **Why S2:** Same subprocess pattern as ts_verifier, fail-soft on
+node unavailable.
+
+### VR-5 · repair prompt `language` field  (I2 · S2)  — optional, after VR-4
+
+**What:** Surface the `language` key from the richer failure dicts in
+`cascade/feedback.py:build_repair_prompt()`. The repair instruction can then say
+"your **git** command doesn't start with `git <verb>`" rather than "your code has
+a syntax error."
+
+**Why I2:** Improves GPU repair-round success rate on non-Python artifacts.
+**Why S2:** Additive read of an existing dict key; `CheckFailure` dataclass unchanged.
 
 ---
 
