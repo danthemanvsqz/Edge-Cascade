@@ -5,23 +5,16 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-05-31** (after session: PRs #120–#131 merged; main `f2aca52`).
-> **Shipped this session:** PT-1 (GPU offload PASS), PT-2 (flash_attn=True, 16% vs Ollama,
-> decision gate MET), Slice 7 (default flip ollama→llama_cpp, #127), dashboard reset button
-> + MCP servers retired (#128), resolve_npu ledger record (#128), #14 verify_func refactor
-> (dsl_from_cases + verify_dsl alias, #130/#131). Also: stale mesh.balanced.* tasks purged
-> from Redis, flow.ts CHAIN_SPECS corrected to mesh.budget.*, llama_worker graceful-fallback
-> on model-load failure.
-> **PT-3 reclassified I3→I2·S3**: was I3 because it blocked Slice 7; that gate passed
-> without it, so it is now a pure optimization (no longer gates anything).
+> **Last groomed: 2026-06-01** (after session: PRs #133–#134 merged; main `6517ea4`).
+> **Shipped this session:** #11 hook-scope (session-scope W/L in pipeline scoreboard, #133),
+> #13 nonblock-hold (non-blocking min-lit hold in live-receiver, #134).
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major     I4 Critical
- S1 Safe                  ✗ (none)     #11 hook-scope ← NEXT  — (none)   — (none)
- S2 Low                   ✗ (none)     #13 nonblock-hold       — (none)   — (none)
-                                       #4  gate-helper
+ S1 Safe                  ✗ (none)     — (none)               — (none)   — (none)
+ S2 Low                   ✗ (none)     #4  gate-helper ← NEXT  — (none)   — (none)
                                        #5  PT-4 verbump
  S3 Moderate              ✗ (none)     #3  PT-3 (downgraded)   — (none)   — (none)
  S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none    — (none)
@@ -29,18 +22,16 @@ dropped, the `S4` row is parked + de-risked.
 
 No `S4` park items and no `I1` drops. No `I3` items remain — the full self-healing arc
 (#7–#9), perf-tuning arc (#1–#2 + Slice 7), and major dashboard work are all shipped.
-All remaining picks are I2 (minor). **Next pick: #11 hook-scope** (I2·S1, safest).
+All remaining picks are I2 (minor). **Next pick: #4 gate-helper** (I2·S2).
 
 **I2·S2 ordering within the band** (tied on impact+severity; use decay risk as tiebreaker):
-- **#13 nonblock-hold** first — a known latent bug (min-lit `sleep` blocks the event
-  thread) flagged in PR #117 Opus review; carries real regression risk if the receiver
-  thread stalls during a busy solve.
-- **#4 gate-helper** second — coverage improvement, no decay.
-- **#5 PT-4 verbump** third — maintenance; check upstream llama-cpp-python for perf gains.
+- **#4 gate-helper** first — coverage improvement, no decay.
+- **#5 PT-4 verbump** second — maintenance; check upstream llama-cpp-python for perf gains.
 
 **Shipped (for the record):** #1 PT-1, #2 PT-2, #6 OBS-1, #7 ts-verify-gate (#115),
 #8 difficulty-recal (#116), #9 draft_gate-decompose (#119), #10 ts-shortcut (retired),
-#11 → next, #12 obs-legibility (#117), #14 verify_func (#130).
+#11 hook-scope (#133), #12 obs-legibility (#117), #13 nonblock-hold (#134),
+#14 verify_func (#130).
 
 ---
 
