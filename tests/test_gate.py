@@ -151,23 +151,19 @@ def test_gate_bare_fence_uses_python_gate():
 
 
 # ---------------------------------------------------------------------------
-# gate() — git/bash: in _LANG_MAP but not registered
+# gate() — language in _LANG_MAP but not registered (future-language stub)
 # ---------------------------------------------------------------------------
 
-def test_gate_git_not_registered_returns_no_verifier():
-    assert "git" in _LANG_MAP.values()
-    assert "git" not in _REGISTRY
-    passed, failures = gate(GIT_BLOCK, dsl=None)
-    assert passed is False
-    assert failures[0]["expr"] == "no-verifier"
-    assert failures[0]["language"] == "git"
-
-
-def test_gate_bash_not_registered_returns_no_verifier():
-    assert "bash" not in _REGISTRY
-    passed, failures = gate(BASH_BLOCK, dsl=None)
-    assert passed is False
-    assert failures[0]["expr"] == "no-verifier"
+def test_gate_no_verifier_path():
+    # Simulate a language that has a _LANG_MAP entry but no verifier yet.
+    _LANG_MAP["_testlang_stub"] = "_testlang_stub"
+    try:
+        passed, failures = gate("```_testlang_stub\nsome code\n```", dsl=None)
+        assert passed is False
+        assert failures[0]["expr"] == "no-verifier"
+        assert failures[0]["language"] == "_testlang_stub"
+    finally:
+        _LANG_MAP.pop("_testlang_stub", None)
 
 
 # ---------------------------------------------------------------------------
@@ -294,16 +290,18 @@ def test_typescript_pre_registered():
     assert "typescript" in _REGISTRY
 
 
-def test_git_not_pre_registered():
-    assert "git" not in _REGISTRY
+def test_git_pre_registered():
+    # Registered via cascade.shell_verifier import at gate.py bottom (VR-2).
+    assert "git" in _REGISTRY
 
 
-def test_bash_not_pre_registered():
-    assert "bash" not in _REGISTRY
+def test_bash_pre_registered():
+    assert "bash" in _REGISTRY
 
 
-def test_javascript_not_pre_registered():
-    assert "javascript" not in _REGISTRY
+def test_javascript_pre_registered():
+    # Registered via cascade.js_verifier import at gate.py bottom (VR-3).
+    assert "javascript" in _REGISTRY
 
 
 # ---------------------------------------------------------------------------
