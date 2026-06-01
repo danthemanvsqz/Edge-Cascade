@@ -61,7 +61,8 @@ def gate(text: str, dsl: str | None) -> tuple[bool, list]:
     dicts safe to carry across the Celery broker envelope.
 
     Dispatch order:
-    1. DSL present → functional gate (cascade.tasks.verify_functional).
+    1. DSL present → functional gate (cascade.tasks.verify_functional),
+       language-agnostic (the functional gate is Python-DSL only).
     2. Language == "ambiguous" (no fence) → gate_any over common languages.
     3. Language starts with "unknown-" → explicit failure.
     4. Language mapped but not registered → explicit failure.

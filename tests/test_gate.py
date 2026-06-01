@@ -223,6 +223,25 @@ def test_gate_dsl_fail_propagates_failures(mocker):
     assert len(failures) == 1
 
 
+def test_gate_dsl_ignores_language_tag(mocker):
+    # DSL branch is language-agnostic — routes to verify_functional regardless.
+    mock = mocker.patch(
+        "cascade.tasks.verify_functional",
+        return_value={"passed": True, "failures": []},
+    )
+    passed, _ = gate(TS_BLOCK, dsl="assert f(1) == 2")
+    assert passed is True
+    mock.assert_called_once()
+
+
+def test_gate_dsl_malformed_response_safe(mocker):
+    # verify_functional returns a dict missing 'passed'/'failures' — must not raise.
+    mocker.patch("cascade.tasks.verify_functional", return_value={})
+    passed, failures = gate(PY_BLOCK, dsl="assert f(1) == 2")
+    assert passed is False
+    assert failures == []
+
+
 # ---------------------------------------------------------------------------
 # gate_any()
 # ---------------------------------------------------------------------------
