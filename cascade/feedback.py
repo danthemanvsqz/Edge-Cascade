@@ -24,7 +24,7 @@ You are repairing code that failed automated validation. Fix it.
 {task}
 
 # YOUR PREVIOUS CODE
-```python
+```{lang}
 {code}
 ```
 
@@ -33,21 +33,57 @@ You are repairing code that failed automated validation. Fix it.
 {failures}
 {degen}
 # OUTPUT CONTRACT
-Return the complete corrected program as exactly ONE Python code block:
-```python
-# full corrected code here
-```
+{contract}
 Rules:
 - Every FAILED CHECK must pass.
 - Do not break behaviour that already worked.
 - No prose, no explanation, no extra code blocks. The code block only.\
 """
 
+_CONTRACT_BY_LANG: dict[str, str] = {
+    "python": (
+        "Return the complete corrected program as exactly ONE Python code block:\n"
+        "```python\n# full corrected code here\n```"
+    ),
+    "typescript": (
+        "Return the complete corrected program as exactly ONE TypeScript code block:\n"
+        "```typescript\n// full corrected code here\n```"
+    ),
+    "javascript": (
+        "Return the complete corrected program as exactly ONE JavaScript code block:\n"
+        "```javascript\n// full corrected code here\n```"
+    ),
+    "git": (
+        "Return the corrected git command as exactly ONE git code block:\n"
+        "```git\ngit <verb> ...\n```"
+    ),
+    "bash": (
+        "Return the corrected shell command as exactly ONE bash code block:\n"
+        "```bash\n# corrected command here\n```"
+    ),
+}
+_CONTRACT_DEFAULT = _CONTRACT_BY_LANG["python"]
+
+
+def _language_from_failures(failures: list[CheckFailure]) -> str:
+    """Infer the artifact language from the first failure's expr field.
+
+    Gate failure exprs are '<lang>-syntax' (e.g. 'git-syntax', 'python-syntax').
+    Falls back to 'python' for DSL/functional failures and the empty case.
+    """
+    if not failures:
+        return "python"
+    expr = failures[0].expr
+    if "-" in expr:
+        return expr.split("-")[0]
+    return "python"
+
 
 def build_repair_prompt(
     task: str, code: str, failures: list[CheckFailure], note: str = "",
     degen_reasons: tuple[str, ...] = (),
 ) -> str:
+    lang = _language_from_failures(failures)
     blocks = []
     for i, f in enumerate(failures, 1):
         lines = [f"{i}. requirement: {f.requirement}"] if f.requirement else []
@@ -80,6 +116,7 @@ def build_repair_prompt(
         )
     return _PROTOCOL.format(
         task=task.strip(), code=code.strip(),
+        lang=lang, contract=_CONTRACT_BY_LANG.get(lang, _CONTRACT_DEFAULT),
         note=note_line, failures="\n".join(blocks),
         degen=degen_block,
     )

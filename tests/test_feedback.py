@@ -1,4 +1,4 @@
-from cascade.feedback import CheckFailure, build_repair_prompt
+from cascade.feedback import CheckFailure, _language_from_failures, build_repair_prompt
 
 
 def test_checkfailure_default_requirement():
@@ -82,6 +82,48 @@ def test_build_prompt_no_degen_block_when_empty():
     assert build_repair_prompt("t", "c", f, degen_reasons=()) == expected
     assert build_repair_prompt("t", "c", f) == expected     # default kwarg
     assert "PRIOR DRAFT QUALITY SIGNAL" not in expected
+
+
+# ---------------------------------------------------------------------------
+# VR-5: language-keyed OUTPUT CONTRACT
+# ---------------------------------------------------------------------------
+
+def test_language_from_failures_empty_list():
+    assert _language_from_failures([]) == "python"
+
+
+def test_language_from_failures_python_syntax():
+    assert _language_from_failures([CheckFailure("python-syntax", "err")]) == "python"
+
+
+def test_language_from_failures_git_syntax():
+    assert _language_from_failures([CheckFailure("git-syntax", "err")]) == "git"
+
+
+def test_language_from_failures_no_hyphen_falls_back():
+    assert _language_from_failures([CheckFailure("x == 1", "got 2")]) == "python"
+
+
+def test_build_prompt_git_failures_uses_git_contract():
+    f = [CheckFailure("git-syntax", "expected 'git <verb>', got: 'echo hi'",
+                      requirement="fenced git block that parses")]
+    out = build_repair_prompt("stage all files", "echo hi", f)
+    assert "```git\ngit <verb>" in out
+    assert "```git\necho hi\n```" in out       # code block uses git fence
+
+
+def test_build_prompt_bash_failures_uses_bash_contract():
+    f = [CheckFailure("bash-syntax", "syntax error: ...",
+                      requirement="fenced bash block that parses")]
+    out = build_repair_prompt("run a script", "if [ ; then", f)
+    assert "```bash\n# corrected command" in out
+
+
+def test_build_prompt_typescript_failures_uses_ts_contract():
+    f = [CheckFailure("typescript-syntax", "': expected'",
+                      requirement="fenced TypeScript block that parses")]
+    out = build_repair_prompt("add a function", "const x:", f)
+    assert "```typescript\n// full corrected" in out
 
 
 def test_build_prompt_degen_reasons_preserve_blank_line_before_output_contract():

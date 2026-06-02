@@ -5,31 +5,29 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-01** (VR arc added; PRs #133–#138 merged; main post-#138).
-> **Previous session shipped:** #11 hook-scope (#133), #13 nonblock-hold (#134),
-> #4 gate-helper (#135), #5 PT-4 HOLD/AVX-512 (#136), #3 PT-3 CLOSE/LlamaRAMCache.
-> **New arc: Verifier Registry (VR-1–VR-5)** — grounded in log analysis (19 min/97
-> routes wasted on caps; git commands mandatory artifacts since PR #138 but always cap;
-> dispatch in coverage.omit with no unit tests). Design: `docs/DESIGN-verifier-registry.md`.
+> **Last groomed: 2026-06-02** (VR-1–VR-4 shipped; PRs #140–#142; main post-#142).
+> **This session shipped:** VR-1 gate registry (#140), VR-2+VR-3 shell/JS verifiers (#141),
+> VR-4 wire call sites (#142). Git routes now WIN instead of always cap.
+> **Only VR-5 remains** (optional I2·S2 repair-prompt language field).
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major         I4 Critical
  S1 Safe                  ✗ (none)     ✗ (none)               — (none)        — (none)
- S2 Low                   ✗ (none)     #VR-3 JS ← (after VR-1) #VR-1 Gate ← NEXT   — (none)
-                                       #VR-5 RP                #VR-2 Shell
- S3 Moderate              ✗ (none)     — (none)               #VR-4 Wire      — (none)
+ S2 Low                   ✗ (none)     #VR-5 RP ← NEXT         — (none)        — (none)
+ S3 Moderate              ✗ (none)     — (none)                — (none)        — (none)
  S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none         — (none)
 ```
 
-**Next pick: #VR-1 gate registry** (I3·S2). Then fan-out #VR-2 ‖ #VR-3 once VR-1 is
-in main. Then #VR-4 (wiring, I3·S3). Then #VR-5 (optional polish).
+**Next pick: #VR-5 repair prompt language field** (I2·S2, optional polish).
 
 **Shipped (for the record):** #1 PT-1, #2 PT-2, #3 PT-3 CLOSE, #4 gate-helper (#135),
 #5 PT-4 HOLD, #6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116),
 #9 draft_gate-decompose (#119), #10 ts-shortcut (retired), #11 hook-scope (#133),
-#12 obs-legibility (#117), #13 nonblock-hold (#134), #14 verify_func (#130).
+#12 obs-legibility (#117), #13 nonblock-hold (#134), #14 verify_func (#130),
+**#VR-1 gate registry (#140), #VR-2 shell verifier (#141), #VR-3 JS verifier (#141),
+#VR-4 wire call sites (#142)**.
 
 ---
 
