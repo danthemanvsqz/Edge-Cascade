@@ -47,10 +47,11 @@ import logging
 
 from celery import chain, chord, group
 
-from cascade import canvas_spike, tasks, ts_verifier
+from cascade import canvas_spike, tasks
 from cascade import topologies as topo_module
 from cascade.celery_app import app
 from cascade.config import CONFIG
+from cascade.gate import gate as _gate_impl
 from cascade.low_latency_pick import _pick_decision
 from cascade.tasks import record_npu_win as _record_npu_win
 
@@ -135,38 +136,14 @@ def _budget_draft(self, env: dict) -> dict:
 
 
 def _gate(text: str, dsl: str | None) -> tuple[bool, list]:
-    """Apply the appropriate gate based on whether a DSL is supplied.
+    """Apply the appropriate gate based on language + DSL.
 
-    `dsl=None` => SYNTAX gate (cascade.verifier.verify) -- the same gate
-    the in-process pipe path uses (cascade.wiring.gate). This is the
-    parity contract: a Canvas run without a DSL behaves like
-    `mesh.solve(query, "budget", ops)` on the same prompt.
-
-    `dsl` supplied => FUNCTIONAL gate (tasks.verify_functional -> the
-    `_funcverify_child` subprocess sandbox) which exec's the candidate
-    against the DSL's assertions. Strict, returns `applicable: false`
-    (= passed: false) when no DSL would otherwise be matched.
+    Delegates to cascade.gate (VR-4): language-keyed registry with full
+    support for Python, TypeScript, git, bash, and JavaScript drafts.
 
     Returns (passed, failures-list). Failures-list is JSON-clean so it
     rides the chain envelope cleanly across the broker (charter inv. 2)."""
-    if dsl:
-        verdict = tasks.verify_functional(text, dsl)
-        return bool(verdict.get("passed")), list(verdict.get("failures", ()))
-    # Language dispatch (BACKLOG #7): a TypeScript draft can never pass the
-    # Python AST gate, so a TS-fenced draft is gated on TS syntax instead (the
-    # TS compiler's single-file transpile). Default stays the Python gate, so
-    # the pipe-parity contract for Python prompts is untouched.
-    if ts_verifier.is_typescript(text):
-        v = ts_verifier.verify_ts(text)
-        if v.passed:
-            return True, []
-        return False, [{"expr": "ts-syntax", "observed": v.reason,
-                        "requirement": "fenced TypeScript block that parses"}]
-    result = tasks.verify_syntax(text)
-    if result.get("passed"):
-        return True, []
-    return False, [{"expr": "syntax", "observed": result.get("reason", ""),
-                    "requirement": "fenced Python block that compiles"}]
+    return _gate_impl(text, dsl)
 
 
 def _verify_step(env: dict, gate_fn=_gate) -> dict:
