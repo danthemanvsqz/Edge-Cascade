@@ -104,6 +104,11 @@ def test_language_from_failures_no_hyphen_falls_back():
     assert _language_from_failures([CheckFailure("x == 1", "got 2")]) == "python"
 
 
+def test_language_from_failures_dsl_with_hyphen_falls_back():
+    # DSL expr like "x - 1 == 0" has a hyphen but "x " is not a known language.
+    assert _language_from_failures([CheckFailure("x - 1 == 0", "got 2")]) == "python"
+
+
 def test_build_prompt_git_failures_uses_git_contract():
     f = [CheckFailure("git-syntax", "expected 'git <verb>', got: 'echo hi'",
                       requirement="fenced git block that parses")]

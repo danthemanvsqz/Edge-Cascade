@@ -75,7 +75,8 @@ def _language_from_failures(failures: list[CheckFailure]) -> str:
         return "python"
     expr = failures[0].expr
     if "-" in expr:
-        return expr.split("-")[0]
+        lang = expr.split("-")[0]
+        return lang if lang in _CONTRACT_BY_LANG else "python"
     return "python"
 
 
