@@ -155,11 +155,15 @@ def gate_any(text: str, langs: list[str]) -> tuple[bool, list]:
 
 
 # ---------------------------------------------------------------------------
-# Self-registration. Python + TypeScript are always available.
-# Shell/git (VR-2) and JavaScript (VR-3) register in their own modules.
+# Self-registration. Each import triggers the module's own register() calls.
+# Late imports avoid triggering them before _REGISTRY is defined.
 # ---------------------------------------------------------------------------
 from cascade.ts_verifier import verify_ts as _ts_verify  # noqa: E402
 from cascade.verifier import verify as _py_verify  # noqa: E402
 
 register("python", _py_verify)
 register("typescript", _ts_verify)
+
+# register() (above) must be defined before these imports; they call it.
+import cascade.js_verifier  # noqa: F401, E402 — registers javascript (VR-3)
+import cascade.shell_verifier  # noqa: F401, E402 — registers git + bash (VR-2)
