@@ -14,23 +14,25 @@ is a one-line swap here, not a change to the orchestrator.
 """
 from __future__ import annotations
 
+from cascade import gate as cascade_gate
 from cascade import mesh, tasks
 from cascade.feedback import CheckFailure
 
 
 def gate(text: str) -> mesh.GateInfo:
-    """Syntax gate as a mesh op: pass/fail + a repair-legible failure.
-    Delegates to tasks.verify_syntax so both the in-process and Canvas paths
-    produce the same edge-verify.rec records."""
-    result = tasks.verify_syntax(text)
-    if result.get("passed"):
+    """Language-aware gate as a mesh op: pass/fail + a repair-legible failure.
+    Delegates to cascade.gate (VR-4) so both the in-process and Canvas paths
+    share one dispatch registry (Python, TypeScript, git, bash, javascript)."""
+    passed, failures = cascade_gate.gate(text, dsl=None)
+    if passed:
         return mesh.GateInfo(True)
+    f = failures[0] if failures else {}
     fail = CheckFailure(
-        expr="a syntactically valid Python code block",
-        observed=result.get("reason", ""),
-        requirement="the answer must contain one fenced Python block that compiles",
+        expr=f.get("expr", "gate"),
+        observed=f.get("observed", ""),
+        requirement=f.get("requirement", "the answer must contain a valid fenced code block"),
     )
-    return mesh.GateInfo(False, (fail,), result.get("reason", ""))
+    return mesh.GateInfo(False, (fail,), f.get("observed", ""))
 
 
 def repair_prompt(
