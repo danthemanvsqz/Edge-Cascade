@@ -140,12 +140,15 @@ def _gen(
     cfg.max_new_tokens = max_new_tokens
     cfg.stop_strings = {"<|im_end|>"}
     cfg.include_stop_str_in_output = False
-    seed = random.randint(0, 2**31 - 1)
-    # rng_seed only influences output when sampling (temperature > 0);
-    # at the default temp=0.0 greedy decode the seed is recorded but inert.
-    cfg.rng_seed = seed
     if CONFIG.npu_temperature > 0:
+        # Sampling mode: seed influences output and is worth recording.
+        seed = random.randint(0, 2**31 - 1)
+        cfg.rng_seed = seed
         cfg.temperature = CONFIG.npu_temperature
+    else:
+        # Greedy decode: rng_seed is inert; record 0 so "seed != 0" reliably
+        # means "this seed influenced output."
+        seed = 0
     prompt = _CHAT.format(system=system, user=user)
     t0 = time.perf_counter()
     out = pipe.generate(prompt, cfg)

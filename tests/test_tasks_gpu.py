@@ -80,4 +80,4 @@ def test_generate_qwen7b_returns_canonical_shape(mocker):
             "seed": 99,
         }
     finally:
-        del model_swap._resident["qwen7b"]
+        model_swap._resident.pop("qwen7b", None)
