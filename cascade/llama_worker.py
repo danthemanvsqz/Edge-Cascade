@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ class LlamaResult:
     latency_s: float
     tokens_per_s: float
     model: str
+    seed: int = 0
     available: bool = True
 
 
@@ -167,6 +169,7 @@ def _generate(
     `llama_cpp.Llama` in production, a stub in tests), so this is pure with
     respect to the model and needs no monkeypatching to test."""
     n_tokens = max_new_tokens or CONFIG.gpu_max_new_tokens
+    seed = random.randint(0, 2**31 - 1)
     t0 = time.perf_counter()
     try:
         resp = llm.create_chat_completion(
@@ -175,16 +178,19 @@ def _generate(
                 {"role": "user", "content": query},
             ],
             max_tokens=n_tokens,
+            temperature=CONFIG.gpu_temperature,
+            top_p=CONFIG.gpu_top_p,
+            seed=seed,
         )
     except Exception as e:  # noqa: BLE001 - hand off as unavailable
         dt = time.perf_counter() - t0
-        return LlamaResult(f"[llama_cpp error: {e}]", dt, 0.0, model_id, False)
+        return LlamaResult(f"[llama_cpp error: {e}]", dt, 0.0, model_id, seed=0, available=False)
     dt = time.perf_counter() - t0
     text = resp["choices"][0]["message"]["content"]
     usage = resp.get("usage", {}) or {}
     out_tok = int(usage.get("completion_tokens", 0))
     tok_s = round(out_tok / dt, 2) if dt > 0 else 0.0
-    return LlamaResult(text, dt, tok_s, model_id, True)
+    return LlamaResult(text, dt, tok_s, model_id, seed=seed, available=True)
 
 
 @dataclass(frozen=True)

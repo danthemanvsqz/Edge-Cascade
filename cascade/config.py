@@ -110,7 +110,7 @@ class Config:
     # Tier 3 — cloud backstop (Anthropic). PAID. Off unless explicitly enabled
     # (Orchestrator(enable_cloud=True) / CLI --cloud / CASCADE_ENABLE_CLOUD=1),
     # AND a key is present. A key alone never enables the paid tier.
-    cloud_model: str = os.environ.get("CASCADE_CLOUD_MODEL", "claude-opus-4-7")
+    cloud_model: str = os.environ.get("CASCADE_CLOUD_MODEL", "claude-opus-4-8")
     anthropic_api_key: str | None = field(
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY") or None
     )
@@ -132,7 +132,7 @@ class Config:
     # runs/edge-review.rec stream, so cascade spend ($0) is never conflated with
     # review spend. Tune via CASCADE_REVIEW_MODEL / _USD / _MAX_DIFF.
     review_model: str = os.environ.get(
-        "CASCADE_REVIEW_MODEL", "claude-opus-4-7")
+        "CASCADE_REVIEW_MODEL", "claude-opus-4-8")
     review_usd_budget: float = field(
         default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "0.50"))
     )
@@ -171,6 +171,15 @@ class Config:
     # prompt limit still caps how large an input it can repair.
     npu_repair_max_tokens: int = 640
     gpu_max_new_tokens: int = 1024
+    gpu_temperature: float = field(
+        default_factory=lambda: float(os.environ.get("CASCADE_GPU_TEMPERATURE", "0.8"))
+    )
+    gpu_top_p: float = field(
+        default_factory=lambda: float(os.environ.get("CASCADE_GPU_TOP_P", "0.95"))
+    )
+    npu_temperature: float = field(
+        default_factory=lambda: float(os.environ.get("CASCADE_NPU_TEMPERATURE", "0.0"))
+    )
     cloud_max_tokens: int = 16000
 
     # Repair-prompt budget (offline validate_log repair loop). The prompt is

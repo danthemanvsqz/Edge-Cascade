@@ -91,7 +91,7 @@ def generate_qwen14b(prompt: str, prior_attempt: str | None = None,
     r = _gpu.generate(query, max_new_tokens=max_tokens)
     return {"available": r.available, "text": r.text, "model": r.model,
             "tokens_per_s": round(r.tokens_per_s, 2),
-            "latency_s": round(r.latency_s, 2)}
+            "latency_s": round(r.latency_s, 2), "seed": r.seed}
 
 
 # Backwards-compat alias for one release. Existing callers (cascade.canvas_spike
@@ -203,7 +203,7 @@ def route(prompt: str) -> dict:
     r = npu.route(prompt)
     return {"available": True, "difficulty": round(r.difficulty, 3),
             "category": r.category, "latency_s": round(r.latency_s, 2),
-            "device": r.device}
+            "device": r.device, "seed": r.seed}
 
 
 @recorded(_NPU_REC)
@@ -216,7 +216,7 @@ def draft(prompt: str, max_tokens: int | None = None) -> dict:
         return {"available": False, "reason": err}
     r = npu.draft(prompt, max_new_tokens=max_tokens)
     return {"available": True, "text": r.text,
-            "latency_s": round(r.latency_s, 2), "device": r.device}
+            "latency_s": round(r.latency_s, 2), "device": r.device, "seed": r.seed}
 
 
 @app.task(name="mesh.route", queue="npu")
@@ -374,7 +374,7 @@ def generate_qwen7b(prompt: str, prior_attempt: str | None = None,
     r = worker.generate(query, max_new_tokens=max_tokens)
     return {"available": r.available, "text": r.text, "model": r.model,
             "tokens_per_s": round(r.tokens_per_s, 2),
-            "latency_s": round(r.latency_s, 2)}
+            "latency_s": round(r.latency_s, 2), "seed": r.seed}
 
 
 @app.task(name="mesh.generate_qwen7b", queue="gpu")

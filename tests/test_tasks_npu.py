@@ -73,7 +73,7 @@ def test_route_returns_canonical_shape(mocker):
         difficulty=0.42357, category="standard", latency_s=0.04999, device="NPU"))
     r = tasks.route(prompt="reverse a string")
     assert r == {"available": True, "difficulty": 0.424,
-                 "category": "standard", "latency_s": 0.05, "device": "NPU"}
+                 "category": "standard", "latency_s": 0.05, "device": "NPU", "seed": 0}
 
 
 def test_draft_returns_canonical_shape(mocker):
@@ -84,7 +84,7 @@ def test_draft_returns_canonical_shape(mocker):
         text="```python\nprint('hi')\n```", latency_s=0.103, device="NPU"))
     r = tasks.draft(prompt="say hi")
     assert r == {"available": True, "text": "```python\nprint('hi')\n```",
-                 "latency_s": 0.10, "device": "NPU"}
+                 "latency_s": 0.10, "device": "NPU", "seed": 0}
 
 
 def test_route_hands_off_when_compile_fails(mocker):
@@ -145,7 +145,7 @@ def test_route_task_eager_round_trips_shape(eager, mocker):
     _fake_worker(mocker)
     r = tasks.route_task.apply(args=["hello world"]).get()
     assert r == {"available": True, "difficulty": 0.42,
-                 "category": "standard", "latency_s": 0.05, "device": "NPU"}
+                 "category": "standard", "latency_s": 0.05, "device": "NPU", "seed": 0}
 
 
 def test_draft_task_eager_round_trips_shape(eager, mocker):
@@ -153,7 +153,7 @@ def test_draft_task_eager_round_trips_shape(eager, mocker):
     _fake_worker(mocker)
     r = tasks.draft_task.apply(args=["write add(a,b)"]).get()
     assert r == {"available": True, "text": "def f():\n    return 1",
-                 "latency_s": 0.10, "device": "NPU"}
+                 "latency_s": 0.10, "device": "NPU", "seed": 0}
 
 
 def test_draft_task_forwards_max_tokens(eager, mocker):
