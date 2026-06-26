@@ -142,6 +142,8 @@ def _gen(
     cfg.include_stop_str_in_output = False
     seed = random.randint(0, 2**31 - 1)
     cfg.rng_seed = seed
+    if CONFIG.npu_temperature > 0:
+        cfg.temperature = CONFIG.npu_temperature
     prompt = _CHAT.format(system=system, user=user)
     t0 = time.perf_counter()
     out = pipe.generate(prompt, cfg)
