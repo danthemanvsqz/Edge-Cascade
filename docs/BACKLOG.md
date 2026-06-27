@@ -5,33 +5,90 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-02** (VR-1–VR-4 shipped; PRs #140–#142; main post-#142).
-> **This session shipped:** VR-1 gate registry (#140), VR-2+VR-3 shell/JS verifiers (#141),
-> VR-4 wire call sites (#142). Git routes now WIN instead of always cap.
-> **Only VR-5 remains** (optional I2·S2 repair-prompt language field).
+> **Last groomed: 2026-06-26** (SR-1 shipped as #144; Opus bumped to 4-8).
+> **This session shipped:** SR-1 deterministic replay — seed + sampling params (#144).
 
 ## Current placement
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major         I4 Critical
  S1 Safe                  ✗ (none)     ✗ (none)               — (none)        — (none)
- S2 Low                   ✗ (none)     #VR-5 RP ← NEXT         — (none)        — (none)
- S3 Moderate              ✗ (none)     — (none)                — (none)        — (none)
- S4 Severe (park)         ✗ (none)     ⏳  none                ⏳ none         — (none)
+ S2 Low                   ✗ (none)     — (none)                — (none)        — (none)
+ S3 Moderate              ✗ (none)     #4, #14, #3 PT-3        #8 ← NEXT       — (none)
+ S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD         #9 ← after #8   — (none)
 ```
 
-**Next pick: #VR-5 repair prompt language field** (I2·S2, optional polish).
+**Next pick: #8 difficulty-recal** (I3·S3) — NPU router over-rates short prompts,
+pushing trivial tasks straight to GPU; recalibrate the ≥0.7 threshold.
+
+**Parked:** #5 PT-4 (llama-cpp AVX-512 version bump) — on HOLD pending hardware AVX-512
+availability; no further action until that unblocks.
 
 **Shipped (for the record):** #1 PT-1, #2 PT-2, #3 PT-3 CLOSE, #4 gate-helper (#135),
 #5 PT-4 HOLD, #6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116),
 #9 draft_gate-decompose (#119), #10 ts-shortcut (retired), #11 hook-scope (#133),
 #12 obs-legibility (#117), #13 nonblock-hold (#134), #14 verify_func (#130),
 **#VR-1 gate registry (#140), #VR-2 shell verifier (#141), #VR-3 JS verifier (#141),
-#VR-4 wire call sites (#142)**.
+#VR-4 wire call sites (#142), #VR-5 repair-prompt language field (#143)**,
+**#SR-1 deterministic replay seed+params (#144)**.
 
 ---
 
-## Verifier Registry arc (VR-1–VR-5)
+## ✅ SR-1 · deterministic replay — seed, sampling params, model identity  (I2 · S2) — SHIPPED (#144)
+
+**What:** Make all stochastic generation inputs explicit and logged in the
+per-tier `.rec` records so a session can be audited or re-run identically.
+Four categories of change per generation path:
+
+1. **Per-call seed** — generate a random `seed` per call, pass it to the model,
+   include it in the result dict → captured automatically by the existing
+   `@recorded` decorator.
+2. **Explicit sampling params** — make temperature and top_p explicit in
+   `cascade/config.py` (`CASCADE_GPU_TEMPERATURE`, `CASCADE_GPU_TOP_P`,
+   `CASCADE_NPU_TEMPERATURE`) and pass them through each worker instead of
+   inheriting backend defaults.
+3. **Model identity** — capture once at worker construction, bind into each
+   result dict. "Name alone" doesn't pin the weights:
+
+   | Tier | Identity fields to add |
+   |------|------------------------|
+   | NPU | `model_dir` (CONFIG path), `openvino_genai` version via `importlib.metadata` |
+   | GPU Ollama | model **digest** from `/api/tags` response (already fetched by `_available()`), Ollama server version from `/api/version` |
+   | GPU llama_cpp | GGUF blob **SHA** (already encoded in the blob path as `sha256-<digest>`), `llama_cpp` version via `importlib.metadata` |
+
+4. **Surface in records** — all of the above appear in the `result` JSON blob
+   of every `route`, `draft`, and `generate` record in `edge-npu.rec` /
+   `edge-gpu.rec`.
+
+**Design note:** identity fields are cheap to capture at worker init (not
+per-call) and then bound into the worker closure, so every result carries
+them with zero extra I/O on the hot path.
+
+Files: `cascade/config.py`, `cascade/npu_worker.py`, `cascade/gpu_worker.py`,
+`cascade/llama_worker.py`, `cascade/tasks.py`. No changes to `logfmt.py`,
+`_rec.py`, or `replay.py` — the grammar and recorder are already correct;
+the new fields fall through automatically. Full design in
+`C:\Users\danth\.claude\plans\robust-juggling-graham.md`.
+
+**Backend seed support:** OpenVINO GenAI `GenerationConfig.rng_seed`; Ollama
+`options.seed`; llama-cpp-python `create_chat_completion(seed=...)`. Cloud
+(Anthropic API) excluded — no reproducible seed API.
+
+**Determinism caveat:** seeding makes replay *high-fidelity*, not guaranteed
+bit-identical. CUDA non-determinism (cuBLAS, TF32 rounding), driver/version
+differences, and NUMA-order variation mean exact bit-reproducibility is not
+promised. The goal is the same weights + same seed ≈ same output, good enough
+for debugging and experiment auditing.
+
+**Why I2:** observability improvement; doesn't fix a failure mode or unblock
+anything. Useful for debugging, experiment reproducibility, and post-hoc audit.
+**Why S2:** purely additive — new fields in result dicts, explicit params in
+model calls, identity fields bound at worker init. No structural hot-path
+changes; config additions follow the established env-var override pattern.
+
+---
+
+## ✅ Verifier Registry arc (VR-1–VR-5)
 
 Design doc: [DESIGN-verifier-registry.md](DESIGN-verifier-registry.md)
 
@@ -40,7 +97,7 @@ Log analysis (2026-06-01): NPU gate pass rate only 47%; git commands guaranteed 
 since the Python AST gate rejects them; `_gate` dispatch lives in `coverage.omit` so
 regressions in language dispatch are invisible to the 100% gate.
 
-### ✅ VR-1 · language registry `cascade/gate.py`  (I3 · S2) ← NEXT
+### ✅ VR-1 · language registry `cascade/gate.py`  (I3 · S2)
 
 **What:** New covered module `cascade/gate.py`: `LanguageVerifier` protocol,
 `_REGISTRY`, `_LANG_MAP`, `register()`, `detect_language()`, `gate()`, `gate_any()`.
@@ -82,7 +139,7 @@ Registered in `gate.py`. Tests in `tests/test_js_verifier.py`.
 impact than git. **Why S2:** Same subprocess pattern as ts_verifier, fail-soft on
 node unavailable.
 
-### VR-5 · repair prompt `language` field  (I2 · S2)  — optional, after VR-4
+### ✅ VR-5 · repair prompt `language` field  (I2 · S2)  — SHIPPED (#143)
 
 **What:** Surface the `language` key from the richer failure dicts in
 `cascade/feedback.py:build_repair_prompt()`. The repair instruction can then say
