@@ -14,6 +14,7 @@ without the optional `accel` extra.
 from __future__ import annotations
 
 import json
+import random
 import re
 import subprocess
 import sys
@@ -78,6 +79,7 @@ class RouteResult:
     category: str
     latency_s: float
     device: str
+    seed: int = 0
 
 
 @dataclass
@@ -85,6 +87,7 @@ class DraftResult:
     text: str
     latency_s: float
     device: str
+    seed: int = 0
 
 
 def _npu_can_compile() -> bool:
@@ -132,19 +135,28 @@ def _compile() -> tuple[str, object]:
 
 def _gen(
     pipe, system: str, user: str, max_new_tokens: int
-) -> tuple[str, float]:
+) -> tuple[str, float, int]:
     cfg = _ov().GenerationConfig()
     cfg.max_new_tokens = max_new_tokens
     cfg.stop_strings = {"<|im_end|>"}
     cfg.include_stop_str_in_output = False
+    if CONFIG.npu_temperature > 0:
+        # Sampling mode: seed influences output and is worth recording.
+        seed = random.randint(0, 2**31 - 1)
+        cfg.rng_seed = seed
+        cfg.temperature = CONFIG.npu_temperature
+    else:
+        # Greedy decode: rng_seed is inert; record 0 so "seed != 0" reliably
+        # means "this seed influenced output."
+        seed = 0
     prompt = _CHAT.format(system=system, user=user)
     t0 = time.perf_counter()
     out = pipe.generate(prompt, cfg)
-    return str(out).strip(), time.perf_counter() - t0
+    return str(out).strip(), time.perf_counter() - t0, seed
 
 
 def _route(pipe, device: str, query: str) -> RouteResult:
-    raw, dt = _gen(pipe, _ROUTER_SYSTEM, query, max_new_tokens=48)
+    raw, dt, seed = _gen(pipe, _ROUTER_SYSTEM, query, max_new_tokens=48)
     difficulty, category = 0.5, "standard"
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if m:
@@ -155,17 +167,17 @@ def _route(pipe, device: str, query: str) -> RouteResult:
         except (ValueError, TypeError):
             pass
     difficulty = min(1.0, max(0.0, difficulty))
-    return RouteResult(difficulty, category, dt, device)
+    return RouteResult(difficulty, category, dt, device, seed)
 
 
 def _draft(
     pipe, device: str, query: str, max_new_tokens: int | None = None
 ) -> DraftResult:
-    text, dt = _gen(
+    text, dt, seed = _gen(
         pipe, _DRAFT_SYSTEM, query,
         max_new_tokens=max_new_tokens or CONFIG.npu_max_new_tokens,
     )
-    return DraftResult(text, dt, device)
+    return DraftResult(text, dt, device, seed)
 
 
 @dataclass(frozen=True)

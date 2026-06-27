@@ -17,6 +17,7 @@ prove the direct path matches (per docs/DESIGN-celery-phase2.md).
 """
 from __future__ import annotations
 
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ class GPUResult:
     latency_s: float
     tokens_per_s: float
     model: str
+    seed: int = 0
     available: bool = True
 
 
@@ -57,6 +59,7 @@ def _available(url: str, model: str) -> bool:
 def _generate(
     url: str, model: str, query: str, max_new_tokens: int | None = None
 ) -> GPUResult:
+    seed = random.randint(0, 2**31 - 1)
     payload = {
         "model": model,
         "messages": [
@@ -64,21 +67,26 @@ def _generate(
             {"role": "user", "content": query},
         ],
         "stream": False,
-        "options": {"num_predict": max_new_tokens or CONFIG.gpu_max_new_tokens},
+        "options": {
+            "num_predict": max_new_tokens or CONFIG.gpu_max_new_tokens,
+            "temperature": CONFIG.gpu_temperature,
+            "top_p": CONFIG.gpu_top_p,
+            "seed": seed,
+        },
     }
     t0 = time.perf_counter()
     try:
         r = httpx.post(f"{url}/api/chat", json=payload, timeout=180.0)
         r.raise_for_status()
     except httpx.HTTPError as e:
-        return GPUResult(f"[gpu unavailable: {e}]", 0.0, 0.0, model, False)
+        return GPUResult(f"[gpu unavailable: {e}]", 0.0, 0.0, model, seed=0, available=False)
     dt = time.perf_counter() - t0
     data = r.json()
     text = data.get("message", {}).get("content", "").strip()
     eval_count = data.get("eval_count", 0)
     eval_ns = data.get("eval_duration", 0) or 1
     tok_s = eval_count / (eval_ns / 1e9)
-    return GPUResult(text, dt, tok_s, model, True)
+    return GPUResult(text, dt, tok_s, model, seed=seed, available=True)
 
 
 @dataclass(frozen=True)
