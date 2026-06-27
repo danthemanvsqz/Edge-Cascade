@@ -14,12 +14,12 @@ dropped, the `S4` row is parked + de-risked.
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major         I4 Critical
  S1 Safe                  ✗ (none)     ✗ (none)               — (none)        — (none)
  S2 Low                   ✗ (none)     — (none)                — (none)        — (none)
- S3 Moderate              ✗ (none)     #4, #14, #3 PT-3        #8 ← NEXT       — (none)
- S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD         #9 ← after #8   — (none)
+ S3 Moderate              ✗ (none)     — (none)                — (none)        — (none)
+ S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD         — (none)        — (none)
 ```
 
-**Next pick: #8 difficulty-recal** (I3·S3) — NPU router over-rates short prompts,
-pushing trivial tasks straight to GPU; recalibrate the ≥0.7 threshold.
+**Next pick: none — backlog empty.** All tracked items shipped or parked.
+Groom a new arc before the next session.
 
 **Parked:** #5 PT-4 (llama-cpp AVX-512 version bump) — on HOLD pending hardware AVX-512
 availability; no further action until that unblocks.
