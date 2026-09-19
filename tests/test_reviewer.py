@@ -125,6 +125,25 @@ def test_review_handles_missing_usage():
     assert r.text == "z" and r.input_tokens == 0 and r.output_tokens == 0
 
 
+def test_est_cost_prices_fable_at_its_own_rate():
+    r = ReviewResult("ok", "claude-fable-5-1", 1.0, 1_000_000, 1_000_000)
+    assert est_cost_usd(r) == pytest.approx(60.0)            # 10 + 50
+
+
+@pytest.mark.parametrize("details, label", [
+    (types.SimpleNamespace(category="cyber"), "cyber"),
+    (None, "unspecified"),
+])
+def test_review_refusal_is_unavailable_but_still_costed(details, label):
+    msg = types.SimpleNamespace(
+        content=[_Blk("text", "partial")], stop_reason="refusal",
+        stop_details=details,
+        usage=types.SimpleNamespace(input_tokens=10, output_tokens=3))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 16000, "p")
+    assert r.available is False and r.text == f"[review refused: {label}]"
+    assert r.input_tokens == 10 and r.output_tokens == 3
+
+
 def test_review_handles_api_error():
     err = anthropic.APIConnectionError(
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))

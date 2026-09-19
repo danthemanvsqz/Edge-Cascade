@@ -112,4 +112,12 @@ def review(client, model: str, max_tokens: int, prompt: str) -> ReviewResult:
               + getattr(u, "cache_read_input_tokens", 0)
               + getattr(u, "cache_creation_input_tokens", 0)) if u else 0
     out_tok = getattr(u, "output_tokens", 0) if u else 0
+    # A safety-classifier decline (Fable 5.1 / Opus 5) is HTTP 200 with no
+    # verdict: unavailable, so it is neither ledgered as a review nor posted.
+    # Tokens are kept so any partial output is still charged to the guard.
+    if getattr(msg, "stop_reason", None) == "refusal":
+        det = getattr(msg, "stop_details", None)
+        cat = getattr(det, "category", None) if det else None
+        return ReviewResult(f"[review refused: {cat or 'unspecified'}]",
+                            model, dt, in_tok, out_tok, available=False)
     return ReviewResult(text, model, dt, in_tok, out_tok)
