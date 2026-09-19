@@ -32,7 +32,8 @@ spend. Never loop unbounded — runaway review→fix→review is the failure mod
 cap prevents (it's real money and it must terminate).
 
 **Spend is triple-bounded (enforced, not trusted):** per-call ≤
-`review_usd_budget` ($0.50, the in-process `CreditGuard`) → per-PR ≤
+`review_usd_budget` ($1.50 — made a hard ceiling by sizing `max_tokens` before
+the call, since the `CreditGuard` is charged after it) → per-PR ≤
 `review_max_rounds` (3) → per-day ≤ `review_daily_usd` ($5), the last two tracked
 in Redis (`cascade.review_ledger`). HEAD-dedup skips re-reviewing an unchanged
 commit. All skips are graceful (exit 0, never block); a down Redis fails soft

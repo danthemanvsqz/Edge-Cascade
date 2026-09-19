@@ -131,17 +131,24 @@ class Config:
     # go through the SAME credit guard + cost math and record to a SEPARATE
     # runs/edge-review.rec stream, so cascade spend ($0) is never conflated with
     # review spend. Tune via CASCADE_REVIEW_MODEL / _USD / _MAX_DIFF.
+    # Default: Claude Fable 5.1, the most capable frontier model ($10/$50 per
+    # 1M, 2x Opus). Its thinking is always on and draws from max_tokens.
     review_model: str = os.environ.get(
-        "CASCADE_REVIEW_MODEL", "claude-opus-4-8")
+        "CASCADE_REVIEW_MODEL", "claude-fable-5-1")
     review_usd_budget: float = field(
-        default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "0.50"))
+        # With est_input_tokens' bytes/2.5, 1.50 gives Fable 5.1 the full 16K
+        # output ($0.80) for prompts up to ~170 KB; a max-size 200 KB diff
+        # (~$0.83 input) still gets ~13K. 0.50 capped output at 10K.
+        default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "1.50"))
     )
     review_max_diff_bytes: int = field(
         default_factory=lambda: int(
             os.environ.get("CASCADE_REVIEW_MAX_DIFF", "200000"))
     )
     # Dedicated review output ceiling (don't borrow the cloud-escalation cap).
-    review_max_tokens: int = 4000
+    # Thinking tokens count against it on always-thinking models (Fable 5.1),
+    # so 4000 could be spent before the review text starts.
+    review_max_tokens: int = 16000
     # Cross-run review guards (cascade.review_ledger, SQLite). Beyond the per-call
     # credit guard: a per-PR ROUND cap and a DAILY USD budget, persisted in a
     # DURABLE local DB (no broker to be "down" -- a down Redis used to silently

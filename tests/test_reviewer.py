@@ -11,8 +11,10 @@ import pytest
 from cascade.reviewer import (
     _REVIEW_SYSTEM,
     ReviewResult,
+    affordable_max_tokens,
     build_prompt,
     est_cost_usd,
+    est_input_tokens,
     review,
 )
 
@@ -123,6 +125,70 @@ def test_review_handles_missing_usage():
         _Client(msg=types.SimpleNamespace(content=[_Blk("text", "z")], usage=None)),
         "m", 256, "p")
     assert r.text == "z" and r.input_tokens == 0 and r.output_tokens == 0
+
+
+def test_est_cost_prices_fable_at_its_own_rate():
+    r = ReviewResult("ok", "claude-fable-5-1", 1.0, 1_000_000, 1_000_000)
+    assert est_cost_usd(r) == pytest.approx(60.0)            # 10 + 50
+
+
+FABLE = (10.0, 50.0)
+
+
+@pytest.mark.parametrize("in_tok, cap, budget, want", [
+    (0, 16000, 0.50, 10000),        # output alone: $0.50 / $50 per 1M
+    (0, 4000, 0.50, 4000),          # never above the configured cap
+    (30000, 16000, 0.50, 4000),     # $0.30 of input leaves $0.20 of output
+    (60000, 16000, 0.50, 0),        # input alone uses the whole budget
+    (10**9, 16000, 0.50, 0),        # input far over budget
+    (0, 16000, 0.0, 0),             # nothing left today
+])
+def test_affordable_max_tokens_keeps_worst_case_in_budget(in_tok, cap, budget, want):
+    got = affordable_max_tokens(in_tok, cap, budget, FABLE)
+    assert got == want
+    assert in_tok / 1e6 * FABLE[0] + got / 1e6 * FABLE[1] <= budget + 1e-9 or got == 0
+
+
+def test_est_input_tokens_is_pessimistic_and_counts_the_system_prompt():
+    sys_bytes = len(_REVIEW_SYSTEM.encode("utf-8"))
+    assert est_input_tokens("") == sys_bytes * 2 // 5
+    # 2.5 bytes/token: denser than real code even on the Fable tokenizer
+    assert est_input_tokens("x" * 5000) == (sys_bytes + 5000) * 2 // 5
+    assert est_input_tokens("x" * 5000) - est_input_tokens("") in (2000, 2001)
+
+
+def test_review_truncated_at_max_tokens_is_unavailable_but_still_costed():
+    msg = types.SimpleNamespace(
+        content=[_Blk("thinking"), _Blk("text", "half a revi")],
+        stop_reason="max_tokens",
+        usage=types.SimpleNamespace(input_tokens=50, output_tokens=2000))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 2000, "p")
+    assert r.available is False and r.truncated is True
+    # the paid-for partial text is kept for stdout, flagged as truncated
+    assert r.text == "half a revi\n\n[review truncated at max_tokens=2000]"
+    assert r.output_tokens == 2000
+
+
+def test_review_truncated_with_no_text_is_just_the_note():
+    msg = types.SimpleNamespace(
+        content=[_Blk("thinking")], stop_reason="max_tokens",
+        usage=types.SimpleNamespace(input_tokens=5, output_tokens=4000))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 4000, "p")
+    assert r.truncated and r.text == "[review truncated at max_tokens=4000]"
+
+
+@pytest.mark.parametrize("details, label", [
+    (types.SimpleNamespace(category="cyber"), "cyber"),
+    (None, "unspecified"),
+])
+def test_review_refusal_is_unavailable_but_still_costed(details, label):
+    msg = types.SimpleNamespace(
+        content=[_Blk("text", "partial")], stop_reason="refusal",
+        stop_details=details,
+        usage=types.SimpleNamespace(input_tokens=10, output_tokens=3))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 16000, "p")
+    assert r.available is False and r.text == f"[review refused: {label}]"
+    assert r.input_tokens == 10 and r.output_tokens == 3
 
 
 def test_review_handles_api_error():

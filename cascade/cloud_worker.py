@@ -48,6 +48,7 @@ reasonable decision and note it."""
 # the most expensive known rate (see _price_for) so a new model can never be
 # under-counted.
 _PRICES: dict[str, tuple[float, float]] = {
+    "claude-fable":  (10.0, 50.0),
     "claude-opus":   (15.0, 75.0),
     "claude-sonnet": (3.0, 15.0),
     "claude-haiku":  (1.0, 5.0),

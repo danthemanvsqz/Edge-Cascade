@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from cascade import reviewer  # noqa: E402
+from cascade.cloud_worker import _price_for  # noqa: E402
 from cascade.config import CONFIG  # noqa: E402
 from cascade.credit_guard import CreditGuard  # noqa: E402
 from cascade.review_ledger import ReviewLedger  # noqa: E402
@@ -33,6 +34,9 @@ from mcp_servers._rec import make_recorder  # noqa: E402
 
 _GH = os.environ.get("CASCADE_GH", "gh")
 _REC = make_recorder("edge-review")
+# Below this, thinking (always on for Fable 5.1) can use the whole allowance
+# before the review text starts -- paying for a call that can't finish.
+_MIN_REVIEW_TOKENS = 4000
 
 
 def _gh(*args: str, timeout: float = 120.0) -> str:
@@ -118,13 +122,32 @@ def main() -> int:
 
     prompt = reviewer.build_prompt(diff, title, body, CONFIG.review_max_diff_bytes)
 
+    # Bound the worst case BEFORE paying: the guard is charged after the call,
+    # so max_tokens is what keeps one review inside the per-review budget (and
+    # inside what is left of today's).
+    budget = CONFIG.review_usd_budget
+    rem = ledger.remaining_today()
+    if rem is not None:
+        budget = min(budget, rem)
+    max_out = reviewer.affordable_max_tokens(
+        reviewer.est_input_tokens(prompt), CONFIG.review_max_tokens, budget,
+        _price_for(args.model))
+    if max_out < _MIN_REVIEW_TOKENS:
+        print(f"[pr_review] skipped: ${budget:.2f} can't cover this diff on "
+              f"{args.model} (max_tokens would be {max_out}).")
+        return 0
+
     import anthropic
-    res = reviewer.review(anthropic.Anthropic(), args.model,
-                          CONFIG.review_max_tokens, prompt)
+    res = reviewer.review(anthropic.Anthropic(), args.model, max_out, prompt)
     cost = reviewer.est_cost_usd(res)
     guard.charge(cost)
-    if res.available:
-        ledger.record(args.pr, sha, cost)   # persist for daily/round/dedup guards
+    if res.available or cost > 0:
+        # Every billed call (a refusal included) feeds the daily/round/dedup
+        # guards, so a diff that keeps getting refused can't re-bill forever.
+        # A truncated call is a sizing failure, not a review of this HEAD: it
+        # counts toward the daily budget and round cap but records no sha, so
+        # HEAD-dedup doesn't claim the commit was reviewed.
+        ledger.record(args.pr, "" if res.truncated else sha, cost)
 
     # Record to the SEPARATE review stream (cascade spend stays $0).
     _REC("review", {

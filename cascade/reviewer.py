@@ -63,6 +63,7 @@ class ReviewResult:
     input_tokens: int = 0
     output_tokens: int = 0
     available: bool = True
+    truncated: bool = False    # hit max_tokens: paid for, but no full review
 
 
 def est_cost_usd(result: ReviewResult) -> float:
@@ -70,6 +71,27 @@ def est_cost_usd(result: ReviewResult) -> float:
     in_rate, out_rate = _price_for(result.model)
     return (result.input_tokens / 1e6 * in_rate
             + result.output_tokens / 1e6 * out_rate)
+
+
+def est_input_tokens(prompt: str) -> int:
+    """Pessimistic pre-call input estimate: UTF-8 bytes / 2.5 over the system
+    prompt + user turn. The Opus 4.7+/Fable tokenizer emits up to ~1.35x more
+    tokens than older ones, so dense code can run ~2.6-3 bytes/token."""
+    return (len(_REVIEW_SYSTEM.encode("utf-8"))
+            + len(prompt.encode("utf-8"))) * 2 // 5
+
+
+def affordable_max_tokens(input_tokens: int, cap: int, usd_budget: float,
+                          price: tuple[float, float]) -> int:
+    """Largest max_tokens <= cap whose worst-case cost fits usd_budget; 0 if not.
+
+    The credit guard is charged AFTER the call, so it cannot stop one expensive
+    review; bounding max_tokens up front is what makes the budget a ceiling."""
+    in_rate, out_rate = price
+    left = usd_budget - input_tokens / 1e6 * in_rate
+    if left <= 0:
+        return 0
+    return min(cap, int(left / out_rate * 1e6))
 
 
 def build_prompt(diff: str, title: str = "", body: str = "",
@@ -112,4 +134,20 @@ def review(client, model: str, max_tokens: int, prompt: str) -> ReviewResult:
               + getattr(u, "cache_read_input_tokens", 0)
               + getattr(u, "cache_creation_input_tokens", 0)) if u else 0
     out_tok = getattr(u, "output_tokens", 0) if u else 0
+    # A safety-classifier decline (Fable 5.1 / Opus 5) is HTTP 200 with no
+    # verdict: unavailable, so it is not posted. Tokens are kept so the spend
+    # still reaches the guard and the ledger (pr_review ledgers any cost > 0).
+    stop = getattr(msg, "stop_reason", None)
+    if stop == "refusal":
+        det = getattr(msg, "stop_details", None)
+        cat = getattr(det, "category", None) if det else None
+        return ReviewResult(f"[review refused: {cat or 'unspecified'}]",
+                            model, dt, in_tok, out_tok, available=False)
+    # Hitting max_tokens means the review (or its VERDICT line) was cut off --
+    # always-on thinking can spend the whole allowance first. Never post that,
+    # but keep the paid-for partial text so the caller can still print it.
+    if stop == "max_tokens":
+        note = f"[review truncated at max_tokens={max_tokens}]"
+        return ReviewResult(f"{text}\n\n{note}" if text else note, model, dt,
+                            in_tok, out_tok, available=False, truncated=True)
     return ReviewResult(text, model, dt, in_tok, out_tok)
