@@ -72,6 +72,26 @@ def est_cost_usd(result: ReviewResult) -> float:
             + result.output_tokens / 1e6 * out_rate)
 
 
+def est_input_tokens(prompt: str) -> int:
+    """Pessimistic pre-call input estimate: UTF-8 bytes / 3 over the system
+    prompt + user turn (real code tokenizes at ~3.5-4 bytes/token)."""
+    return (len(_REVIEW_SYSTEM.encode("utf-8"))
+            + len(prompt.encode("utf-8"))) // 3
+
+
+def affordable_max_tokens(input_tokens: int, cap: int, usd_budget: float,
+                          price: tuple[float, float]) -> int:
+    """Largest max_tokens <= cap whose worst-case cost fits usd_budget; 0 if not.
+
+    The credit guard is charged AFTER the call, so it cannot stop one expensive
+    review; bounding max_tokens up front is what makes the budget a ceiling."""
+    in_rate, out_rate = price
+    left = usd_budget - input_tokens / 1e6 * in_rate
+    if left <= 0:
+        return 0
+    return min(cap, int(left / out_rate * 1e6))
+
+
 def build_prompt(diff: str, title: str = "", body: str = "",
                  max_diff_bytes: int = 200_000) -> str:
     """Assemble the review user-turn. A giant diff is truncated to bound input
@@ -113,8 +133,8 @@ def review(client, model: str, max_tokens: int, prompt: str) -> ReviewResult:
               + getattr(u, "cache_creation_input_tokens", 0)) if u else 0
     out_tok = getattr(u, "output_tokens", 0) if u else 0
     # A safety-classifier decline (Fable 5.1 / Opus 5) is HTTP 200 with no
-    # verdict: unavailable, so it is neither ledgered as a review nor posted.
-    # Tokens are kept so any partial output is still charged to the guard.
+    # verdict: unavailable, so it is not posted. Tokens are kept so the spend
+    # still reaches the guard and the ledger (pr_review ledgers any cost > 0).
     if getattr(msg, "stop_reason", None) == "refusal":
         det = getattr(msg, "stop_details", None)
         cat = getattr(det, "category", None) if det else None
