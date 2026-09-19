@@ -38,6 +38,15 @@ TIMEOUT_TOOL = 30.0          # NPU compile is ~9s on first call; pad for varianc
 # edge-cloud uses `budget` as its readiness-check tool (not `status`).
 STATUS_TOOL: dict[str, str] = {"edge-cloud": "budget"}
 
+# Servers with no status tool: a successful initialize() + list_tools() IS the
+# ready signal. edge-verify's sandbox is in-process (module imported => gate
+# up); playwright is the third-party browser MCP (npx), wired by edge-cli as a
+# non-tier extra, so it stays out of KNOWN and renders after the tiers.
+LIST_TOOLS_READY: dict[str, str] = {
+    "edge-verify": "deterministic sandbox up",
+    "playwright": "browser automation up",
+}
+
 # Servers we know how to interpret. Anything else in the config is rendered
 # generically (so a future tier addition is one line, not a regression).
 KNOWN: tuple[str, ...] = ("edge-npu", "edge-gpu", "edge-verify", "edge-cloud")
@@ -101,13 +110,9 @@ async def _query(name: str, spec: dict) -> tuple[str, str]:
         async with stdio_client(_params(spec), errlog=errlog) as (r, w):
             async with ClientSession(r, w) as s:
                 await asyncio.wait_for(s.initialize(), timeout=TIMEOUT_INIT)
-                # edge-verify is a deterministic gate with no status tool --
-                # successful initialize() + non-empty list_tools() IS the
-                # ready signal (the Python sandbox is in-process; if the
-                # module imported, the gate is up).
-                if name == "edge-verify":
+                if name in LIST_TOOLS_READY:
                     tools = await asyncio.wait_for(s.list_tools(), timeout=TIMEOUT_INIT)
-                    return "READY", f"deterministic sandbox up ({len(tools.tools)} tools)"
+                    return "READY", f"{LIST_TOOLS_READY[name]} ({len(tools.tools)} tools)"
                 tool = STATUS_TOOL.get(name, "status")
                 res = await asyncio.wait_for(s.call_tool(tool, {}), timeout=TIMEOUT_TOOL)
                 payload = _payload(res)
