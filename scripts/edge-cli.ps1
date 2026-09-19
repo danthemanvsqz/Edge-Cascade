@@ -465,7 +465,8 @@ if (-not (Test-Path $ProjectDir)) { throw "ProjectDir not found: $ProjectDir" }
 # Single line, ASCII, no backtick/$/double-quote -> safe as a PS 5.1 exe arg
 # (5.1 does not escape embedded double quotes for native exes). The paths in the
 # solve command are single-quoted PowerShell literals so a repo under a path with
-# a space still yields a copy-pasteable command.
+# a space still yields a copy-pasteable command -- for PowerShell only (the `&`
+# call operator is a syntax error in Git Bash), so the policy says which tool.
 $PolicyFile  = Join-Path $RepoRoot 'CLAUDE.md'
 $SolveScript = Join-Path $RepoRoot 'scripts\mesh_solve_canvas.py'
 function Format-PsLiteral([string] $s) { "'" + ($s -replace "'", "''") + "'" }
@@ -484,7 +485,7 @@ $policy = (
   'Every artifact (code, git/CLI commands, scripts, configs, commit messages) ' +
   'goes through the Canvas pipeline FIRST - one blocking call that does ' +
   'NPU route, NPU/iGPU draft, deterministic gate, bounded GPU repair, and the ' +
-  'win/lose logger: ' + $SolveCommand +
+  'win/lose logger (run it with the PowerShell tool): ' + $SolveCommand +
   ' --topology budget followed by the task as one quoted argument. ' +
   'Decompose first: independent sub-tasks go in one --topology budget_fanout ' +
   'call (one quoted argument each); dependent ones are sequential budget calls. ' +
