@@ -11,11 +11,14 @@
      stays down (-Force overrides, -NoSupervise skips). Decisions live in
      cascade/health.py; this script only spawns processes.
   1. Ensures the edge-cascade venv has the `accel` + `mcp` + `celery` extras.
-  2. Generates a robust, machine-correct MCP config (absolute interpreter
-     path + explicit cwd/PYTHONPATH) for the local servers.
+  2. Generates a machine-correct MCP config. By default it holds only the
+     Playwright browser MCP: the per-tier edge-npu/gpu/verify servers are the
+     retired topology (MD arc) and are no longer wired unless -Servers asks.
   3. Launches the bundled Claude Code CLI with `--mcp-config <that>
      --strict-mcp-config`, so the session sees EXACTLY these servers and
-     ignores every other MCP config.
+     ignores every other MCP config, plus a pipeline-first policy: every
+     artifact routes through the Canvas pipeline (mesh_solve_canvas.py
+     --topology budget), and `capped->tier3` means the session authors it.
 
   Tier 4 (`edge-cloud`, the paid Anthropic API) is deliberately NOT wired in:
   with --strict-mcp-config the launched session is structurally incapable of
@@ -25,9 +28,10 @@
   Directory to build in (the CLI's working dir). Default: current directory.
 
 .PARAMETER Servers
-  Which local servers to wire. Default: edge-npu, edge-gpu, edge-verify.
-  ("The two local models" are npu+gpu; verify is the free, deterministic gate
-  the delegation policy in CLAUDE.md depends on — kept on by default.)
+  DEPRECATED opt-in: legacy per-tier MCP servers to wire (edge-npu, edge-gpu,
+  edge-verify). Default: none. The Canvas pipeline is the single inference
+  path; edge-gpu also pins its own 14b copy in VRAM (~11 GB at idle), which
+  starves the Celery worker's GPU tier. Passing it prints a warning.
 
 .PARAMETER WithCloud
   Also wire edge-cloud (Tier 4, PAID, credit-guarded). Off by default.
@@ -87,7 +91,7 @@
 [CmdletBinding()]
 param(
   [string]   $ProjectDir = (Get-Location).Path,
-  [string[]] $Servers    = @('edge-npu', 'edge-gpu', 'edge-verify'),
+  [string[]] $Servers    = @(),   # deprecated opt-in: legacy per-tier MCP servers
   [switch]   $WithCloud,
   [switch]   $SkipSync,
   [switch]   $Check,
@@ -175,7 +179,13 @@ $catalog = @{
 $wanted = [System.Collections.Generic.List[string]]::new()
 $Servers | ForEach-Object { if ($catalog.ContainsKey($_)) { $wanted.Add($_) } else { Write-Warning "unknown server '$_' - skipped" } }
 if ($WithCloud -and -not $wanted.Contains('edge-cloud')) { $wanted.Add('edge-cloud') }
-if ($wanted.Count -eq 0) { throw "no valid servers selected" }
+# MD-1: the per-tier servers are the retired topology. Still honoured when asked
+# for, but loudly -- edge-gpu holds its own 14b resident and contends with the
+# Celery worker for the 12 GB card.
+$LegacyWired = @($wanted | Where-Object { $_ -ne 'edge-cloud' })
+if ($LegacyWired.Count -gt 0) {
+  Write-Warning "[edge-cli] -Servers is deprecated: $($LegacyWired -join ', ') are the retired per-tier topology. Route through the Canvas pipeline instead (mesh_solve_canvas.py). edge-gpu pins ~11 GB of VRAM."
+}
 
 $mcpServers = @{}
 foreach ($name in $wanted) {
@@ -215,7 +225,8 @@ $json = @{ mcpServers = $mcpServers } | ConvertTo-Json -Depth 8
 # Windows PowerShell 5.1's `Out-File -Encoding utf8` prepends a BOM, which a
 # strict JSON parser (Claude Code reads this file) rejects. Write UTF-8 *no BOM*.
 [System.IO.File]::WriteAllText($ConfigPath, $json, (New-Object System.Text.UTF8Encoding $false))
-Write-Host "[edge-cli] wired: $($wanted -join ', ')" -ForegroundColor Green
+$wiredText = if ($wanted.Count -gt 0) { $wanted -join ', ' } else { '(none)' }
+Write-Host "[edge-cli] MCP wired: $wiredText - inference goes through the Canvas pipeline" -ForegroundColor Green
 if (-not $WithCloud) {
   Write-Host "[edge-cli] Tier 4 (edge-cloud / paid API) NOT wired - session cannot spend." -ForegroundColor Yellow
 }
@@ -409,9 +420,13 @@ if (-not $NoSummary -and -not $Check) {
   } finally {
     Pop-Location -ErrorAction SilentlyContinue
   }
-  Write-Host "  cascade:"
-  $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
-  & $VenvPython $SummaryScript $ConfigPath
+  # The supervisor table above IS the pipeline's status. edge_summary.py only
+  # queries the legacy per-tier servers, so it runs only when they're opted in.
+  if ($LegacyWired.Count -gt 0 -or $WithCloud) {
+    Write-Host "  legacy MCP tiers:"
+    $SummaryScript = Join-Path $RepoRoot 'scripts\edge_summary.py'
+    & $VenvPython $SummaryScript $ConfigPath
+  }
   Write-Host ""
 }
 
@@ -448,20 +463,28 @@ if (-not (Test-Path $ProjectDir)) { throw "ProjectDir not found: $ProjectDir" }
 # straight into the system prompt via --append-system-prompt, and point at the
 # full protocol file (the session has --add-dir read access to it).
 # Single line, ASCII, no backtick/$/embedded-quote -> safe as a PS 5.1 exe arg.
-$PolicyFile = Join-Path $RepoRoot 'CLAUDE.md'
+$PolicyFile  = Join-Path $RepoRoot 'CLAUDE.md'
+$SolveScript = Join-Path $RepoRoot 'scripts\mesh_solve_canvas.py'
 $policy = (
   'You are Tier 3 of the edge-cascade local-first inference mesh. ' +
-  'MCP tools available: edge-npu (route, draft), edge-gpu (generate), ' +
-  'edge-verify (verify_syntax, verify_functional, repair_prompt). ' +
-  'MANDATORY: for ANY non-trivial code generation, FIRST call edge-npu.route, ' +
-  'then draft via edge-npu.draft or edge-gpu.generate, then gate the result ' +
-  'with edge-verify before using it. Only write code yourself if the local ' +
-  'tiers fail verification twice. Orchestration is yours: file edits, ' +
-  'commands, planning, and conversational replies stay with you and need no ' +
-  'delegation. Never claim a local tier ran or wrote anything. The paid ' +
-  'Anthropic API tier is NOT wired in - do not attempt it. Read the full ' +
-  'protocol and the routing_dispatch format in ' + $PolicyFile +
-  ' before your first coding task.'
+  'Every artifact (code, git/CLI commands, scripts, configs, commit messages) ' +
+  'goes through the Canvas pipeline FIRST - one blocking call that does ' +
+  'NPU route, NPU/iGPU draft, deterministic gate, bounded GPU repair, and the ' +
+  'win/lose logger: ' + $VenvPython + ' ' + $SolveScript +
+  ' --topology budget followed by the task as one quoted argument. ' +
+  'Decompose first: independent sub-tasks go in one --topology budget_fanout ' +
+  'call (one quoted argument each); dependent ones are sequential budget calls. ' +
+  'Pass --dsl with assert lines when the task has checkable behaviour, ' +
+  'otherwise the gate only proves the code parses. On resolved, review ' +
+  'the answer before it lands; on capped->tier3 you author it yourself - ' +
+  'never start another repair round. Surgical edits to existing code, ' +
+  'file edits, running commands, planning and conversational replies are ' +
+  'yours and need no routing. The per-tier edge-npu/gpu/verify MCP servers ' +
+  'are retired - do not look for them. Never claim a local tier ran or wrote ' +
+  'anything. The paid Anthropic API tier is NOT wired in - do not attempt it. ' +
+  'The pipeline was health-checked at launch; if a route fails, say so and ' +
+  'offer to relaunch edge rather than silently hand-writing the code. Read ' +
+  'the full protocol in ' + $PolicyFile + ' before your first coding task.'
 )
 if ($BrowserWired) {
   $policy += (
@@ -469,6 +492,13 @@ if ($BrowserWired) {
     'screenshot) is wired for browser work - e2e checks, UI verification, ' +
     'dashboard screenshots. It is not a code-generation tier and never ' +
     'replaces the routing policy above.'
+  )
+}
+if ($LegacyWired.Count -gt 0) {
+  $policy += (
+    ' The user explicitly opted in to the legacy MCP servers ' +
+    ($LegacyWired -join ', ') + ' for this session; they are for debugging ' +
+    'those servers only and never replace the pipeline call above.'
   )
 }
 

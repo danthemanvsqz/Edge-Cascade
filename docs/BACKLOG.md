@@ -57,7 +57,12 @@ supervisor glue (steps 1–6 + step 8 flags): probes skip a dependant whose prer
 check (reconnecting worker → `RECOVERED`, never a duplicate). Live-verified on this box:
 worker killed → RESTARTED; redis stopped → redis RESTARTED + worker RECOVERED (1 node);
 ollama stopped → RESTARTED; warm → all UP, no spawn; `-Check` starts nothing, exits 1 on a
-critical DOWN. **Not yet run:** the Docker-Desktop-quit cold start. **Next: 1c = step 7 (MD-1).**
+critical DOWN. Cold start (Docker Desktop quit before `edge`) observed 2026-09-19: engine →
+redis → worker → session came up in order within ~30 s and routes WIN (launch table not captured).
+✅ **1c** step 7 / MD-1: edge-npu/gpu/verify no longer wired by default (`-Servers` = deprecated
+opt-in with a warning); the appended prompt is now the pipeline-first CLAUDE.md policy with an
+absolute `mesh_solve_canvas.py` command; `edge_summary.py` runs only for opted-in legacy servers.
+**Remaining acceptance:** idle VRAM = worker only, checked from a fresh `edge` launch.
 
 **Expectation (user, 2026-09-19):** `edge` is the single command. At startup it checks
 that every dependency of the pipeline is up and **restarts any that are down**, then
