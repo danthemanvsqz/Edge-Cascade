@@ -4,7 +4,13 @@
   inference mesh only (Tier 1 NPU + Tier 2 GPU + the deterministic verifier).
 
 .DESCRIPTION
-  1. Ensures the edge-cascade venv has the `accel` + `mcp` extras.
+  0. Supervisor (EDGE-1): probes every Canvas-pipeline dependency in order --
+     Docker engine, Redis broker, Ollama, Celery worker (npu,gpu,verify),
+     dashboard -- starts whatever is down, prints an UP / RESTARTED / FAILED
+     table, and refuses to launch if a critical one (docker, redis, worker)
+     stays down (-Force overrides, -NoSupervise skips). Decisions live in
+     cascade/health.py; this script only spawns processes.
+  1. Ensures the edge-cascade venv has the `accel` + `mcp` + `celery` extras.
   2. Generates a robust, machine-correct MCP config (absolute interpreter
      path + explicit cwd/PYTHONPATH) for the local servers.
   3. Launches the bundled Claude Code CLI with `--mcp-config <that>
@@ -30,7 +36,9 @@
   Skip the `uv sync` dependency check (faster relaunch).
 
 .PARAMETER Check
-  Smoke each wired server (status/no-spend tool) and exit WITHOUT launching.
+  Probe-only: print the supervisor's dependency table (never starts anything),
+  smoke each wired server's import, and exit WITHOUT launching. Exits 1 if a
+  critical dependency (docker, redis, worker) is down.
 
 .PARAMETER NoSummary
   Skip the launch-time system summary (SD-1). The summary calls each wired
@@ -40,24 +48,22 @@
   Use during dev when you're relaunching constantly and trust the wiring.
 
 .PARAMETER NoDashboard
-  Skip the SD-3 dashboard auto-launch. The dashboard is normally spawned in a
-  separate PowerShell window with START_FROM_EOF=1 (session-coupled) and the
-  default browser is pointed at http://localhost:8789. Use this when you're
-  driving a non-interactive run, headless CI, or already have the dashboard
-  open and don't want a second instance fighting for port 8789.
+  Don't start the SD-3 dashboard when the supervisor finds it down (it is
+  otherwise spawned in its own window with START_FROM_EOF=1, session-coupled,
+  and the browser opened at http://localhost:8789). A dashboard already up on
+  8789 is left alone either way.
 
 .PARAMETER Canvas
-  Also stand up the Celery Canvas test-drive substrate alongside the normal
-  launch: sync the `celery` extra, bring up the Redis broker
-  (docker compose up -d redis), and spawn a resident Celery worker covering the
-  npu,gpu,verify queues (never `cloud` — the spend invariant) in a new window,
-  then launch Claude as usual. Drive the pipeline with
-  `python scripts\mesh_solve_canvas.py --topology {balanced,low_latency} "<task>"`
-  and watch the dashboard (the SD-4 effectiveness panel now counts Canvas runs).
-  Broker + worker outlive the session (spawn-and-leave, like the dashboard):
-  Ctrl-C the worker window and `docker stop edge-cascade-redis` to tear down.
-  Requires Docker Desktop running. Combine with -SkipSync only if the `celery`
-  extra is already in .venv (otherwise the spawned worker fails to import it).
+  Deprecated no-op, kept so old invocations still work: standing up the Redis
+  broker + Celery worker is now what the supervisor does on every launch.
+
+.PARAMETER NoSupervise
+  Skip the supervisor entirely (no probes, no restarts, no dashboard) for fast
+  dev relaunches when you know the pipeline is already up.
+
+.PARAMETER Force
+  Launch Claude even if a critical dependency could not be brought up. Routes
+  will fail until it is; the supervisor table says what to fix.
 
 .PARAMETER NoBrowser
   Skip wiring the Playwright browser MCP (`playwright`). It is wired by
@@ -76,7 +82,7 @@
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -ProjectDir C:\src\myapp
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Check    # verify wiring, don't launch
-  powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Canvas   # + Celery broker/worker for the Canvas path
+  powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -NoSupervise  # fast relaunch, pipeline known up
 #>
 [CmdletBinding()]
 param(
@@ -87,8 +93,10 @@ param(
   [switch]   $Check,
   [switch]   $NoSummary,
   [switch]   $NoDashboard,
-  [switch]   $Canvas,
-  [switch]   $NoBrowser
+  [switch]   $Canvas,      # deprecated no-op: the supervisor always does this now
+  [switch]   $NoBrowser,
+  [switch]   $NoSupervise,
+  [switch]   $Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,7 +105,10 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 $VenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $VenvPython)) {
-  throw "venv python not found at $VenvPython - run 'uv sync --extra accel --extra mcp' in $RepoRoot first"
+  throw "venv python not found at $VenvPython - run 'uv sync --extra accel --extra mcp --extra celery' in $RepoRoot first"
+}
+if ($Canvas) {
+  Write-Host "[edge-cli] -Canvas is now the default (the supervisor keeps broker + worker up) - flag ignored" -ForegroundColor DarkGray
 }
 
 # --- Phase 0: propagate main-tree NPU model dir so worktrees with empty
@@ -144,10 +155,9 @@ $ClaudeCli = Resolve-ClaudeCli
 # user who launches edge-cli after setting them up. See memory:
 # edge-cascade-imagegen-env-setup for the failure mode that motivated this.
 if (-not $SkipSync) {
-  # -Canvas needs the `celery` extra too (broker client + worker). --inexact so
-  # adding it never purges accel/mcp/imagegen/llama_cpp.
-  $syncExtras = @('--extra', 'accel', '--extra', 'mcp')
-  if ($Canvas) { $syncExtras += @('--extra', 'celery') }
+  # `celery` = the supervisor's broker/worker probes + the worker itself.
+  # --inexact so it never purges accel/mcp/imagegen/llama_cpp.
+  $syncExtras = @('--extra', 'accel', '--extra', 'mcp', '--extra', 'celery')
   Write-Host "[edge-cli] uv sync --inexact $($syncExtras -join ' ') ..." -ForegroundColor Cyan
   Push-Location $RepoRoot
   try { uv sync --inexact @syncExtras | Out-Null } finally { Pop-Location }
@@ -210,6 +220,169 @@ if (-not $WithCloud) {
   Write-Host "[edge-cli] Tier 4 (edge-cloud / paid API) NOT wired - session cannot spend." -ForegroundColor Yellow
 }
 
+# --- EDGE-1 supervisor: probe every pipeline dependency, restart what's down --
+# `edge` must leave the Canvas pipeline UP before it launches a session. The
+# decisions live in cascade/health.py (covered, unit-tested): which deps are
+# down, the repair order, and which to re-probe first because a prerequisite
+# was down too. This block is only the process-spawning glue around it.
+#
+#   UP         healthy at launch             RECOVERED  came back on its own (no spawn)
+#   RESTARTED  started here, now answering   FAILED     start/wait failed (+ fix)
+#   DOWN       -Check only (never starts)    SKIPPED    -NoDashboard
+#
+# A critical dep (docker, redis, worker) not UP -> exit 1 BEFORE launching
+# Claude, unless -Force. Everything is idempotent: a warm `edge` starts nothing.
+
+function Invoke-EdgeHealth {
+  # `python -m cascade.health --json [--only <dep>]...` -> parsed object with
+  # .statuses, .repairs, .prereqs. EAP=Continue: under 'Stop', PS 5.1 turns a
+  # native exe's stderr line into a terminating error.
+  param([string[]]$Only = @())
+  $ErrorActionPreference = 'Continue'
+  $healthArgs = @('-m', 'cascade.health', '--json')
+  foreach ($n in $Only) { $healthArgs += @('--only', $n) }
+  Push-Location $RepoRoot
+  try { $out = & $VenvPython @healthArgs 2>$null } finally { Pop-Location }
+  if (-not $out) { throw "cascade.health produced no output (is the celery extra synced?)" }
+  ($out | Out-String) | ConvertFrom-Json
+}
+
+function Wait-EdgeDep {
+  # Re-probe one dep every 2s until it is UP or $TimeoutSec elapses.
+  param([string]$Name, [int]$TimeoutSec)
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    $s = (Invoke-EdgeHealth -Only $Name).statuses[0]
+    if ($s.up) { return $s }
+    Start-Sleep -Seconds 2
+  } while ((Get-Date) -lt $deadline)
+  $s.detail = "not up after ${TimeoutSec}s: $($s.detail)"
+  $s
+}
+
+function Get-EdgeWorkerProcess {
+  # Any live Celery worker for this app (plain or -Watch). A worker that exists
+  # but doesn't answer ping yet (booting, reconnecting to a restarted broker)
+  # must be waited on, not duplicated -- the bug EDGE-1 exists to fix.
+  @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'cascade\.celery_app' -and $_.CommandLine -match '\bworker\b' })
+}
+
+# name -> scriptblock that starts it. Emits nothing, or 'waited' when it found the
+# dep already starting and left it alone (-> RECOVERED); Wait-EdgeDep decides UP.
+$EdgeStarters = @{
+  docker = {
+    $exe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+    if (-not (Test-Path $exe)) { throw "Docker Desktop not found at $exe" }
+    Start-Process $exe | Out-Null
+  }
+  redis = {
+    # compose prints progress on stderr; under 'Stop' PS 5.1 would throw on it.
+    $ErrorActionPreference = 'Continue'
+    Push-Location $RepoRoot
+    try { docker compose up -d redis 2>&1 | Out-Null } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) { throw "docker compose up -d redis exited $LASTEXITCODE" }
+  }
+  ollama = {
+    $ollama = Get-Command ollama -ErrorAction SilentlyContinue
+    if (-not $ollama) { throw "ollama not on PATH" }
+    Start-Process $ollama.Source -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+  }
+  worker = {
+    $existing = Get-EdgeWorkerProcess
+    if ($existing) {
+      Write-Host "[edge-cli]   worker process already running (pid $($existing[0].ProcessId)) - waiting for it, not spawning a duplicate" -ForegroundColor DarkGray
+      return 'waited'
+    }
+    # Slice-5 launcher: python -m celery (WDAC), --pool=solo, refuses `cloud`
+    # (spend invariant). Resident in its own window; outlives the session.
+    Start-Process powershell -ArgumentList @(
+      '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot '_celery-worker.ps1'),
+      '-Queues', 'npu,gpu,verify', '-NodeName', 'edge-local',
+      '-PropagateNpuModelDir', '-SkipSync'
+    ) | Out-Null
+  }
+  dashboard = {
+    # SD-3: session-coupled (START_FROM_EOF=1) so it shows only this session's
+    # records. Env is set inside the child command, leaving Claude's env alone.
+    $dashboardDir = Join-Path $RepoRoot 'dashboard'
+    if (-not (Test-Path $dashboardDir)) { throw "dashboard dir not found at $dashboardDir" }
+    $childCmd = "`$env:RUNS_DIR='$(Join-Path $RepoRoot 'runs')'; `$env:START_FROM_EOF='1'; npm start"
+    Start-Process powershell -WorkingDirectory $dashboardDir `
+      -ArgumentList '-NoExit', '-Command', $childCmd | Out-Null
+  }
+}
+# Bounded waits. Docker Desktop's cold start is the slow one.
+$EdgeTimeouts = @{ docker = 120; redis = 30; ollama = 30; worker = 60; dashboard = 10 }
+$EdgeFixHints = @{
+  docker    = 'start Docker Desktop, wait for the engine, rerun edge'
+  redis     = "docker compose up -d redis   (in $RepoRoot)"
+  ollama    = 'ollama serve'
+  worker    = 'scripts\_celery-worker.ps1 -Queues npu,gpu,verify   (read its window for the traceback)'
+  dashboard = 'cd dashboard; npm start'
+}
+
+$EdgeCriticalDown = @()
+if (-not $NoSupervise) {
+  Write-Host "[edge-cli] supervisor: probing pipeline dependencies ..." -ForegroundColor Cyan
+  $health = Invoke-EdgeHealth
+  $state = [ordered]@{}
+  foreach ($s in $health.statuses) {
+    $state[$s.name] = @{ status = $s; result = $(if ($s.up) { 'UP' } else { 'DOWN' }) }
+  }
+  if (-not $Check) {
+    foreach ($repair in $health.repairs) {
+      $name, $reprobeFirst = $repair[0], $repair[1]
+      $prev = $state[$name].status
+      if ($name -eq 'dashboard' -and $NoDashboard) { $state[$name].result = 'SKIPPED'; continue }
+      $prereq = $health.prereqs.$name
+      if ($prereq -and -not $state[$prereq].status.up) {
+        $prev.detail = "not started: $prereq is down"
+        $state[$name].result = 'FAILED'
+        continue
+      }
+      if ($reprobeFirst) {
+        # Its prereq was down and is now back: redis returns with the engine
+        # (restart: unless-stopped) and a live worker reconnects on its own.
+        $s = (Invoke-EdgeHealth -Only $name).statuses[0]
+        if ($s.up) { $state[$name] = @{ status = $s; result = 'RECOVERED' }; continue }
+      }
+      Write-Host "[edge-cli]   starting $name (up to $($EdgeTimeouts[$name])s) ..." -ForegroundColor Cyan
+      try {
+        $started = if ((& $EdgeStarters[$name]) -eq 'waited') { 'RECOVERED' } else { 'RESTARTED' }
+        $s = Wait-EdgeDep -Name $name -TimeoutSec $EdgeTimeouts[$name]
+      } catch {
+        $s = [pscustomobject]@{ name = $name; up = $false; critical = $prev.critical
+                                detail = "start failed: $($_.Exception.Message)" }
+      }
+      $state[$name] = @{ status = $s; result = $(if ($s.up) { $started } else { 'FAILED' }) }
+      if ($name -eq 'dashboard' -and $s.up) {
+        # Best-effort browser open, only for a dashboard this launch started.
+        try { Start-Process 'http://localhost:8789' -ErrorAction Stop | Out-Null }
+        catch { Write-Warning "[edge-cli] could not auto-open browser: $($_.Exception.Message)" }
+      }
+    }
+  }
+  $colors = @{ UP = 'Green'; RECOVERED = 'Green'; RESTARTED = 'Yellow'; SKIPPED = 'DarkGray'; DOWN = 'Red'; FAILED = 'Red' }
+  foreach ($entry in $state.GetEnumerator()) {
+    $s, $result = $entry.Value.status, $entry.Value.result
+    Write-Host ('  {0,-10} {1,-10} {2}' -f $s.name, $result, $s.detail) -ForegroundColor $colors[$result]
+    if (-not $s.up -and $result -ne 'SKIPPED') {
+      $optional = if ($s.critical) { '' } else { '   (optional - launch continues)' }
+      Write-Host "             fix: $($EdgeFixHints[$s.name])$optional" -ForegroundColor DarkGray
+    }
+  }
+  $EdgeCriticalDown = @($state.Values | Where-Object { $_.status.critical -and -not $_.status.up } |
+                        ForEach-Object { $_.status.name })
+  if ($EdgeCriticalDown -and -not $Check) {
+    if (-not $Force) {
+      Write-Host "[edge-cli] pipeline NOT up (critical: $($EdgeCriticalDown -join ', ')) - not launching. Fix the above, or pass -Force to launch anyway." -ForegroundColor Red
+      exit 1
+    }
+    Write-Warning "[edge-cli] -Force: launching with critical deps down ($($EdgeCriticalDown -join ', ')) - routes will fail until they're up."
+  }
+}
+
 # --- launch-time system summary (SD-1) --------------------------------------
 # Closes the Phase A visibility gap (#57): every wired tier's readiness is
 # printed in plain text BEFORE Claude launches, so an `available:false` tier
@@ -242,115 +415,6 @@ if (-not $NoSummary -and -not $Check) {
   Write-Host ""
 }
 
-# --- Canvas substrate (-Canvas): Redis broker + a resident Celery worker ----
-# Stands up the Celery Canvas test-drive environment alongside the normal
-# launch: the Redis broker (container) + ONE worker covering the npu,gpu,verify
-# queues (single box). The paid `cloud` queue is deliberately excluded -- the
-# spend invariant, which _celery-worker.ps1 also enforces by refusing it.
-# Spawn-and-leave like the dashboard below: the broker + worker outlive this
-# session. Drive with `python scripts\mesh_solve_canvas.py --topology ...`.
-# Skipped under -Check (a wiring probe shouldn't spin up docker + a worker).
-if ($Canvas -and -not $Check) {
-  # Broker. `docker compose up -d` is idempotent; restart:unless-stopped keeps
-  # it up across crashes/engine restarts (docker-compose.yml).
-  if (Get-Command docker -ErrorAction SilentlyContinue) {
-    Write-Host "[edge-cli] docker compose up -d redis ..." -ForegroundColor Cyan
-    Push-Location $RepoRoot
-    try { docker compose up -d redis | Out-Null } finally { Pop-Location }
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "[edge-cli] 'docker compose up -d redis' failed (is Docker Desktop running?) - the worker won't reach the broker."
-    }
-  } else {
-    Write-Warning "[edge-cli] docker not found on PATH - skipping Redis broker. Start it yourself (docker compose up -d redis) before driving the Canvas path."
-  }
-  # Worker -- reuse the Slice-5 launcher (python -m celery, --pool=solo, cloud-
-  # queue refusal). New window, resident. -SkipSync: the uv sync above already
-  # put accel+mcp+celery in the shared .venv this worker uses. -PropagateNpuModelDir
-  # so the npu tier resolves its model dir regardless of inherited env.
-  $WorkerScript = Join-Path $PSScriptRoot '_celery-worker.ps1'
-  Write-Host "[edge-cli] launching Celery worker (npu,gpu,verify) in a new window" -ForegroundColor Cyan
-  Start-Process powershell -ArgumentList @(
-    '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', $WorkerScript,
-    '-Queues', 'npu,gpu,verify', '-NodeName', 'edge-local',
-    '-PropagateNpuModelDir', '-SkipSync'
-  ) | Out-Null
-  Write-Host "[edge-cli] Canvas drive: python scripts\mesh_solve_canvas.py --topology low_latency `"<task>`"" -ForegroundColor DarkGray
-  Write-Host "[edge-cli] teardown: Ctrl-C the worker window; docker stop edge-cascade-redis" -ForegroundColor DarkGray
-}
-
-# --- SD-3: auto-launch the dashboard in a separate console ------------------
-# Spawns a NEW PowerShell window running `npm start` in dashboard/, with
-# RUNS_DIR pinned at the repo's runs/ and START_FROM_EOF=1 so the renderer
-# only shows records appended during THIS edge-cli session (not whatever the
-# gitignored runs/ history carries across launches). Then best-effort opens
-# the default browser at http://localhost:8789 ONLY AFTER the Node server has
-# bound the port (otherwise the first GET races the listen and hits ERR_CONN).
-#
-# Pre-existing listener on 8789 -> skip the spawn entirely with a warning
-# (PR #60 review nit): the silent-collision case (new child crashes on listen,
-# browser opens to the OLD session's dashboard) would silently defeat
-# session-coupling. Better to tell the user the old dashboard is still up.
-#
-# Skipped under -Check (same rationale as the summary -- -Check is a wiring
-# probe, not a full session) and under -NoDashboard (opt-out for headless /
-# non-interactive runs / when the dashboard is already up on 8789).
-
-function Test-EdgeCliPortBound {
-  # Returns $true iff something is accepting on 127.0.0.1:$Port.
-  # Uses raw TcpClient rather than Get-NetTCPConnection so we don't pick up
-  # half-bound IPv6-only listeners as IPv4 ports (and vice versa), and so we
-  # don't depend on the NetTCPIP module (present on Win10+, but the launcher
-  # should be conservative). 200 ms is enough on loopback; longer would block
-  # the launch path for nothing.
-  param([int]$Port = 8789, [int]$TimeoutMs = 200)
-  $tcp = New-Object System.Net.Sockets.TcpClient
-  try {
-    $iar = $tcp.BeginConnect('127.0.0.1', $Port, $null, $null)
-    if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $false }
-    try { $tcp.EndConnect($iar); return $true } catch { return $false }
-  } finally { $tcp.Close() }
-}
-
-if (-not $NoDashboard -and -not $Check) {
-  $DashboardDir = Join-Path $RepoRoot 'dashboard'
-  $RunsDir      = Join-Path $RepoRoot 'runs'
-  if (-not (Test-Path $DashboardDir)) {
-    Write-Warning "[edge-cli] dashboard dir not found at $DashboardDir - skipping auto-launch"
-  } elseif (Test-EdgeCliPortBound -Port 8789) {
-    # Pre-existing dashboard on 8789. Spawning a second one would crash on
-    # listen and leave the browser pointing at the OLD session, silently
-    # defeating session-coupling. Skip + tell the user.
-    Write-Warning "[edge-cli] port 8789 is already bound - a previous dashboard is still running."
-    Write-Warning "[edge-cli] kill that window (or pass -NoDashboard) to silence this; not opening browser."
-  } else {
-    Write-Host "[edge-cli] launching dashboard (session-coupled) -> http://localhost:8789" -ForegroundColor Cyan
-    # The child PS process inherits no env that isn't explicitly set in -Command.
-    # Setting `$env:RUNS_DIR` / `$env:START_FROM_EOF` inline here keeps the
-    # to-be-launched Claude session's env completely untouched.
-    $childCmd = "`$env:RUNS_DIR='$RunsDir'; `$env:START_FROM_EOF='1'; npm start"
-    Start-Process powershell `
-      -WorkingDirectory $DashboardDir `
-      -ArgumentList '-NoExit', '-Command', $childCmd | Out-Null
-    # Poll the port until the child binds (or 5 s elapses) so the browser
-    # doesn't race the listen and get ERR_CONNECTION_REFUSED on first GET.
-    # 5 s covers cold-cache `npm start` on this machine; longer means
-    # something is structurally wrong and the user should look at the new
-    # console themselves rather than wait silently.
-    $deadline = (Get-Date).AddSeconds(5)
-    while ((Get-Date) -lt $deadline) {
-      if (Test-EdgeCliPortBound -Port 8789) { break }
-      Start-Sleep -Milliseconds 200
-    }
-    if (-not (Test-EdgeCliPortBound -Port 8789)) {
-      Write-Warning "[edge-cli] dashboard did not bind 8789 within 5s - check the spawned console; opening browser anyway"
-    }
-    # Best-effort browser open (default browser). Non-blocking; failures here
-    # mustn't take down the launch (e.g. headless WSL, no DEFAULT verb).
-    try { Start-Process 'http://localhost:8789' -ErrorAction Stop | Out-Null }
-    catch { Write-Warning "[edge-cli] could not auto-open browser: $($_.Exception.Message)" }
-  }
-}
-
 # --- optional pre-launch smoke ----------------------------------------------
 if ($Check) {
   $probe = @{ 'edge-npu'='status'; 'edge-gpu'='status'; 'edge-verify'='verify_syntax'; 'edge-cloud'='budget' }
@@ -366,6 +430,10 @@ if ($Check) {
     try {
       & $VenvPython -c "import importlib,sys; importlib.import_module('$mod'); print(' OK')"
     } catch { Write-Host " FAIL"; throw } finally { Pop-Location }
+  }
+  if ($EdgeCriticalDown) {
+    Write-Host "[edge-cli] check FAILED - critical deps down: $($EdgeCriticalDown -join ', ') (run edge without -Check to start them)." -ForegroundColor Red
+    exit 1
   }
   Write-Host "[edge-cli] check passed - not launching (remove -Check to launch)." -ForegroundColor Green
   return
