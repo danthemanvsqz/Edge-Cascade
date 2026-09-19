@@ -73,10 +73,11 @@ def est_cost_usd(result: ReviewResult) -> float:
 
 
 def est_input_tokens(prompt: str) -> int:
-    """Pessimistic pre-call input estimate: UTF-8 bytes / 3 over the system
-    prompt + user turn (real code tokenizes at ~3.5-4 bytes/token)."""
+    """Pessimistic pre-call input estimate: UTF-8 bytes / 2.5 over the system
+    prompt + user turn. The Opus 4.7+/Fable tokenizer emits up to ~1.35x more
+    tokens than older ones, so dense code can run ~2.6-3 bytes/token."""
     return (len(_REVIEW_SYSTEM.encode("utf-8"))
-            + len(prompt.encode("utf-8"))) // 3
+            + len(prompt.encode("utf-8"))) * 2 // 5
 
 
 def affordable_max_tokens(input_tokens: int, cap: int, usd_budget: float,
@@ -135,9 +136,15 @@ def review(client, model: str, max_tokens: int, prompt: str) -> ReviewResult:
     # A safety-classifier decline (Fable 5.1 / Opus 5) is HTTP 200 with no
     # verdict: unavailable, so it is not posted. Tokens are kept so the spend
     # still reaches the guard and the ledger (pr_review ledgers any cost > 0).
-    if getattr(msg, "stop_reason", None) == "refusal":
+    stop = getattr(msg, "stop_reason", None)
+    if stop == "refusal":
         det = getattr(msg, "stop_details", None)
         cat = getattr(det, "category", None) if det else None
         return ReviewResult(f"[review refused: {cat or 'unspecified'}]",
+                            model, dt, in_tok, out_tok, available=False)
+    # Hitting max_tokens means the review (or its VERDICT line) was cut off --
+    # always-on thinking can spend the whole allowance first. Never post that.
+    if stop == "max_tokens":
+        return ReviewResult(f"[review truncated at max_tokens={max_tokens}]",
                             model, dt, in_tok, out_tok, available=False)
     return ReviewResult(text, model, dt, in_tok, out_tok)

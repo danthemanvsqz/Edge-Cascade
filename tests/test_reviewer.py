@@ -150,9 +150,22 @@ def test_affordable_max_tokens_keeps_worst_case_in_budget(in_tok, cap, budget, w
 
 
 def test_est_input_tokens_is_pessimistic_and_counts_the_system_prompt():
-    base = est_input_tokens("")
-    assert base == len(_REVIEW_SYSTEM.encode("utf-8")) // 3
-    assert est_input_tokens("x" * 3000) == base + 1000   # 3 bytes/token
+    sys_bytes = len(_REVIEW_SYSTEM.encode("utf-8"))
+    assert est_input_tokens("") == sys_bytes * 2 // 5
+    # 2.5 bytes/token: denser than real code even on the Fable tokenizer
+    assert est_input_tokens("x" * 5000) == (sys_bytes + 5000) * 2 // 5
+    assert est_input_tokens("x" * 5000) - est_input_tokens("") in (2000, 2001)
+
+
+def test_review_truncated_at_max_tokens_is_unavailable_but_still_costed():
+    msg = types.SimpleNamespace(
+        content=[_Blk("thinking"), _Blk("text", "half a revi")],
+        stop_reason="max_tokens",
+        usage=types.SimpleNamespace(input_tokens=50, output_tokens=2000))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 2000, "p")
+    assert r.available is False
+    assert r.text == "[review truncated at max_tokens=2000]"
+    assert r.output_tokens == 2000
 
 
 @pytest.mark.parametrize("details, label", [

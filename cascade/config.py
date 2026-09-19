@@ -136,7 +136,9 @@ class Config:
     review_model: str = os.environ.get(
         "CASCADE_REVIEW_MODEL", "claude-fable-5-1")
     review_usd_budget: float = field(
-        default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "0.50"))
+        # 1.50 covers Fable 5.1's full 16K output ($0.80) plus ~70K input
+        # tokens (~$0.70, a max-size 200 KB diff); 0.50 capped output at 10K.
+        default_factory=lambda: float(os.environ.get("CASCADE_REVIEW_USD", "1.50"))
     )
     review_max_diff_bytes: int = field(
         default_factory=lambda: int(
