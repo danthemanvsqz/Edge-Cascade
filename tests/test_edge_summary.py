@@ -272,6 +272,20 @@ def test_query_verify_path_uses_list_tools(es, patched_mcp):
     assert _FakeSession.list_tools_called is True
 
 
+def test_query_playwright_uses_list_tools(es, patched_mcp):
+    """playwright (browser MCP) has no .status tool; never calls one."""
+    _FakeSession.list_tools_n = 21
+    state, summary = _run(es._query("playwright", {"command": "npx", "args": []}))
+    assert state == "READY"
+    assert "browser automation" in summary and "21 tools" in summary
+    assert _FakeSession.last_tool_call is None
+
+
+def test_playwright_is_not_a_tier(es):
+    """Rendered as an extra after the tiers, not a NOT-WIRED KNOWN row."""
+    assert "playwright" not in es.KNOWN
+
+
 def test_query_npu_ready(es, patched_mcp):
     _FakeSession.call_tool_payload = {"available": True, "device": "NPU", "npu_max_tokens": 320}
     state, summary = _run(es._query("edge-npu", {"command": "py", "args": []}))

@@ -59,7 +59,19 @@
   Requires Docker Desktop running. Combine with -SkipSync only if the `celery`
   extra is already in .venv (otherwise the spawned worker fails to import it).
 
+.PARAMETER NoBrowser
+  Skip wiring the Playwright browser MCP (`playwright`). It is wired by
+  default -- $0, local headed Chromium via `npx @playwright/mcp@<pinned>`, so it
+  never breaks the no-spend invariant. Artifacts (screenshots, snapshots) land
+  in runs\playwright\, not the project dir. Skipped with a warning when `npx`
+  is not on PATH. Use -NoBrowser to save the Node startup on dev relaunches.
+
 .EXAMPLE
+  # One-time: install the `edge` PATH shim, then just type `edge` anywhere:
+  powershell -ExecutionPolicy Bypass -File scripts\install-edge-shim.ps1
+  edge                # = edge-cli.ps1 with defaults, in the current dir
+  edge -Check         # every edge-cli.ps1 flag passes through
+
   # Windows PowerShell 5.1 (default on this machine — no `pwsh`):
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1
   powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -ProjectDir C:\src\myapp
@@ -75,7 +87,8 @@ param(
   [switch]   $Check,
   [switch]   $NoSummary,
   [switch]   $NoDashboard,
-  [switch]   $Canvas
+  [switch]   $Canvas,
+  [switch]   $NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -165,6 +178,28 @@ foreach ($name in $wanted) {
     env     = $env_dict
   }
 }
+
+# Playwright browser MCP (default on; -NoBrowser opts out). Not a cascade tier:
+# a $0 third-party npx server, so it lives outside $catalog/$Servers. Version is
+# PINNED so an upstream release can't silently change a working session; bump
+# deliberately. Absolute npx.cmd path, same rationale as $VenvPython above.
+# --output-dir keeps screenshots out of the user's ProjectDir (runs/ is ignored).
+$PlaywrightMcp = '@playwright/mcp@0.0.82'
+$BrowserWired  = $false
+if (-not $NoBrowser) {
+  $npx = Get-Command npx.cmd -ErrorAction SilentlyContinue
+  if ($npx) {
+    $mcpServers['playwright'] = [ordered]@{
+      command = $npx.Source
+      args    = @('-y', $PlaywrightMcp, '--output-dir', (Join-Path $RepoRoot 'runs\playwright'))
+    }
+    $wanted.Add('playwright')
+    $BrowserWired = $true
+  } else {
+    Write-Warning "[edge-cli] npx not on PATH - Playwright browser MCP not wired (install Node.js, or pass -NoBrowser to silence)."
+  }
+}
+
 $ConfigPath = Join-Path $RepoRoot 'runs\edge-local.mcp.json'
 $json = @{ mcpServers = $mcpServers } | ConvertTo-Json -Depth 8
 # Windows PowerShell 5.1's `Out-File -Encoding utf8` prepends a BOM, which a
@@ -320,6 +355,9 @@ if (-not $NoDashboard -and -not $Check) {
 if ($Check) {
   $probe = @{ 'edge-npu'='status'; 'edge-gpu'='status'; 'edge-verify'='verify_syntax'; 'edge-cloud'='budget' }
   foreach ($name in $wanted) {
+    # playwright is npx, not a Python module; resolving npx.cmd above is its
+    # cheap check (a real spawn would download/boot Node for a wiring probe).
+    if ($name -eq 'playwright') { Write-Host "[check] playwright ($PlaywrightMcp via npx) ... OK"; continue }
     $mod = ($catalog[$name])[1]
     Write-Host "[check] $name ($mod -> $($probe[$name])) ..." -NoNewline
     # The pytest/MCP smoke already proves these start; here we just confirm the
@@ -357,6 +395,14 @@ $policy = (
   'protocol and the routing_dispatch format in ' + $PolicyFile +
   ' before your first coding task.'
 )
+if ($BrowserWired) {
+  $policy += (
+    ' The playwright MCP (browser automation: navigate, snapshot, click, ' +
+    'screenshot) is wired for browser work - e2e checks, UI verification, ' +
+    'dashboard screenshots. It is not a code-generation tier and never ' +
+    'replaces the routing policy above.'
+  )
+}
 
 Write-Host "[edge-cli] launching Claude CLI in $ProjectDir" -ForegroundColor Cyan
 Write-Host "[edge-cli] cli: $ClaudeCli" -ForegroundColor DarkGray

@@ -180,12 +180,22 @@ unless you opt in.
 **Agentic flow (recommended).** From any directory you want to build in:
 
 ```powershell
+# One-time: put an `edge` shim on PATH (%USERPROFILE%\.local\bin\edge.cmd):
+powershell -ExecutionPolicy Bypass -File scripts\install-edge-shim.ps1
+edge                                                                             # = edge-cli.ps1 with defaults, here
+edge -Check                                                                      # every flag below passes through
+
 # Windows PowerShell 5.1 (no `pwsh`? use `powershell`; PS7 users can use `pwsh`):
 powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1                    # build here, local mesh only
 powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -ProjectDir C:\src\myapp
 powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -Check             # validate wiring, don't launch
 powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -WithCloud         # also wire paid Tier 4 (opt-in)
+powershell -ExecutionPolicy Bypass -File scripts\edge-cli.ps1 -NoBrowser         # skip the Playwright browser MCP
 ```
+
+The Playwright browser MCP (`@playwright/mcp`, pinned in `edge-cli.ps1`) is
+wired by default alongside the tiers — $0, local Chromium via `npx`, for e2e /
+UI checks. It is not a code-generation tier; screenshots land in `runs\playwright\`.
 
 This opens a Claude Code session that **is Tier 3** — it drives `edge-npu` /
 `edge-gpu` for the bulk work, gates with `edge-verify`, reasons hard parts
