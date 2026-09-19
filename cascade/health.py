@@ -170,8 +170,9 @@ def render(statuses: list[Status], as_json: bool) -> str:
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- launcher glue
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="emit JSON for edge-cli")
+    args = parser.parse_args(argv)  # before probing: --help must not pay probe cost
     statuses = probe_all()
-    print(render(statuses, parser.parse_args(argv).json))
+    print(render(statuses, args.json))
     return exit_code(statuses)
 
 
