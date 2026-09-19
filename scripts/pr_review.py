@@ -34,8 +34,9 @@ from mcp_servers._rec import make_recorder  # noqa: E402
 
 _GH = os.environ.get("CASCADE_GH", "gh")
 _REC = make_recorder("edge-review")
-# Below this, thinking (always on for Fable 5.1) leaves no room for a review.
-_MIN_REVIEW_TOKENS = 2000
+# Below this, thinking (always on for Fable 5.1) can use the whole allowance
+# before the review text starts -- paying for a call that can't finish.
+_MIN_REVIEW_TOKENS = 4000
 
 
 def _gh(*args: str, timeout: float = 120.0) -> str:
@@ -143,7 +144,10 @@ def main() -> int:
     if res.available or cost > 0:
         # Every billed call (a refusal included) feeds the daily/round/dedup
         # guards, so a diff that keeps getting refused can't re-bill forever.
-        ledger.record(args.pr, sha, cost)
+        # A truncated call is a sizing failure, not a review of this HEAD: it
+        # counts toward the daily budget and round cap but records no sha, so
+        # HEAD-dedup doesn't claim the commit was reviewed.
+        ledger.record(args.pr, "" if res.truncated else sha, cost)
 
     # Record to the SEPARATE review stream (cascade spend stays $0).
     _REC("review", {

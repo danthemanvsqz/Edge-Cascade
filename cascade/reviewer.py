@@ -63,6 +63,7 @@ class ReviewResult:
     input_tokens: int = 0
     output_tokens: int = 0
     available: bool = True
+    truncated: bool = False    # hit max_tokens: paid for, but no full review
 
 
 def est_cost_usd(result: ReviewResult) -> float:
@@ -143,8 +144,10 @@ def review(client, model: str, max_tokens: int, prompt: str) -> ReviewResult:
         return ReviewResult(f"[review refused: {cat or 'unspecified'}]",
                             model, dt, in_tok, out_tok, available=False)
     # Hitting max_tokens means the review (or its VERDICT line) was cut off --
-    # always-on thinking can spend the whole allowance first. Never post that.
+    # always-on thinking can spend the whole allowance first. Never post that,
+    # but keep the paid-for partial text so the caller can still print it.
     if stop == "max_tokens":
-        return ReviewResult(f"[review truncated at max_tokens={max_tokens}]",
-                            model, dt, in_tok, out_tok, available=False)
+        note = f"[review truncated at max_tokens={max_tokens}]"
+        return ReviewResult(f"{text}\n\n{note}" if text else note, model, dt,
+                            in_tok, out_tok, available=False, truncated=True)
     return ReviewResult(text, model, dt, in_tok, out_tok)

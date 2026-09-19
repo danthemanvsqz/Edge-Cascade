@@ -163,9 +163,18 @@ def test_review_truncated_at_max_tokens_is_unavailable_but_still_costed():
         stop_reason="max_tokens",
         usage=types.SimpleNamespace(input_tokens=50, output_tokens=2000))
     r = review(_Client(msg=msg), "claude-fable-5-1", 2000, "p")
-    assert r.available is False
-    assert r.text == "[review truncated at max_tokens=2000]"
+    assert r.available is False and r.truncated is True
+    # the paid-for partial text is kept for stdout, flagged as truncated
+    assert r.text == "half a revi\n\n[review truncated at max_tokens=2000]"
     assert r.output_tokens == 2000
+
+
+def test_review_truncated_with_no_text_is_just_the_note():
+    msg = types.SimpleNamespace(
+        content=[_Blk("thinking")], stop_reason="max_tokens",
+        usage=types.SimpleNamespace(input_tokens=5, output_tokens=4000))
+    r = review(_Client(msg=msg), "claude-fable-5-1", 4000, "p")
+    assert r.truncated and r.text == "[review truncated at max_tokens=4000]"
 
 
 @pytest.mark.parametrize("details, label", [
