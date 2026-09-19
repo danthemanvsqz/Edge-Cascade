@@ -51,6 +51,14 @@ one trivial `mesh_solve_canvas.py --topology budget` end-to-end before starting 
 
 ## ★ EDGE-1 · `edge` = one-command supervisor launch  (I4 · S2) — HIGH PRIORITY
 
+**Progress:** ✅ **1a** `cascade/health.py` probes + `plan_repairs` (#149). ✅ **1b** edge-cli
+supervisor glue (steps 1–6 + step 8 flags): probes skip a dependant whose prereq is down,
+`--only` for wait loops, `--json` carries `prereqs`; worker spawn is guarded by a live-process
+check (reconnecting worker → `RECOVERED`, never a duplicate). Live-verified on this box:
+worker killed → RESTARTED; redis stopped → redis RESTARTED + worker RECOVERED (1 node);
+ollama stopped → RESTARTED; warm → all UP, no spawn; `-Check` starts nothing, exits 1 on a
+critical DOWN. **Not yet run:** the Docker-Desktop-quit cold start. **Next: 1c = step 7 (MD-1).**
+
 **Expectation (user, 2026-09-19):** `edge` is the single command. At startup it checks
 that every dependency of the pipeline is up and **restarts any that are down**, then
 launches the session.

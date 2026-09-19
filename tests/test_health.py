@@ -150,14 +150,56 @@ def test_default_tcp_open(mocker):
     conn.assert_called_once_with(("127.0.0.1", 8789), timeout=0.5)
 
 
+def _fake_probes(calls: list[str], **down: bool):
+    """Probes shaped like the @_probe ones, recording which were actually called."""
+    def make(name: str, critical: bool):
+        def probe() -> Status:
+            calls.append(name)
+            return Status(name, not down.get(name, False), critical, "d")
+        probe.dep_name, probe.critical = name, critical
+        return probe
+    return tuple(make(n, n in {"docker", "redis", "worker"}) for n in ORDER)
+
+
 def test_probe_all_order(mocker):
-    mocker.patch.object(health, "PROBES", tuple(
-        (lambda n=n: Status(n, True, False, "")) for n in ORDER))
+    calls: list[str] = []
+    mocker.patch.object(health, "PROBES", _fake_probes(calls))
     assert [s.name for s in probe_all()] == ORDER
+    assert calls == ORDER
+
+
+def test_probe_all_skips_dependant_of_a_down_prereq():
+    calls: list[str] = []
+    statuses = probe_all(probes=_fake_probes(calls, redis=True))
+    assert "worker" not in calls  # no ~8s ping against a dead broker
+    worker = statuses[ORDER.index("worker")]
+    assert worker == Status("worker", False, True, "not probed: redis is down")
+
+
+def test_probe_all_skip_cascades_down_the_chain():
+    calls: list[str] = []
+    statuses = probe_all(probes=_fake_probes(calls, docker=True))
+    assert calls == ["docker", "ollama", "dashboard"]
+    assert plan_repairs(statuses) == [("docker", False), ("redis", True), ("worker", True)]
+
+
+def test_probe_all_only_probes_the_named_deps():
+    calls: list[str] = []
+    statuses = probe_all(only={"worker", "ollama"}, probes=_fake_probes(calls))
+    assert [s.name for s in statuses] == calls == ["ollama", "worker"]
+
+
+def test_probe_all_only_does_not_skip_when_prereq_unprobed():
+    # --only worker is edge-cli's wait loop *after* redis is back: it must ping.
+    calls: list[str] = []
+    probe_all(only={"worker"}, probes=_fake_probes(calls, redis=True))
+    assert calls == ["worker"]
 
 
 def test_default_probes_are_in_dependency_order():
     assert [p.__name__ for p in health.PROBES] == [f"probe_{n}" for n in ORDER]
+    assert [p.dep_name for p in health.PROBES] == ORDER
+    assert {p.dep_name for p in health.PROBES if p.critical} == {"docker", "redis", "worker"}
 
 
 # --- plan_repairs / exit_code / render ----------------------------------------
@@ -199,6 +241,7 @@ def test_render_json_carries_statuses_and_plan():
     doc = json.loads(render(_statuses(redis=True), as_json=True))
     assert doc["repairs"] == [["redis", False]]
     assert doc["statuses"][1] == {"name": "redis", "up": False, "critical": True, "detail": "d"}
+    assert doc["prereqs"] == {"redis": "docker", "worker": "redis"}
 
 
 def test_render_text_is_the_table():

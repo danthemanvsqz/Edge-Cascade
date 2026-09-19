@@ -21,6 +21,7 @@ hide the others' state.
 
     uv run python -m cascade.health          # table; exit 1 iff a critical dep is down
     uv run python -m cascade.health --json   # machine-readable, for the PS glue
+    uv run python -m cascade.health --json --only worker   # one dep (wait loops)
 """
 from __future__ import annotations
 
@@ -64,6 +65,7 @@ def _probe(name: str, critical: bool):
             except Exception as exc:  # noqa: BLE001 -- any failure means DOWN
                 up, detail = False, f"{type(exc).__name__}: {exc}"
             return Status(name, up, critical, detail)
+        wrapper.dep_name, wrapper.critical = name, critical
         return wrapper
     return deco
 
@@ -133,9 +135,26 @@ PROBES: tuple[Callable[[], Status], ...] = (
     probe_docker, probe_redis, probe_ollama, probe_worker, probe_dashboard)
 
 
-def probe_all() -> list[Status]:
-    """Every dependency's Status, in dependency order."""
-    return [probe() for probe in PROBES]
+def probe_all(only: set[str] | None = None,
+              probes: tuple[Callable[[], Status], ...] | None = None) -> list[Status]:
+    """Each dependency's Status (all, or just the names in `only`), in dependency order.
+
+    A dependency whose prerequisite is already DOWN is reported DOWN without
+    being probed: a worker ping against a dead broker burns Celery's ~8s
+    connection retry just to say what the redis line already says.
+    """
+    statuses: list[Status] = []
+    down: set[str] = set()
+    for probe in PROBES if probes is None else probes:
+        if only is not None and probe.dep_name not in only:
+            continue
+        prereq = PREREQS.get(probe.dep_name)
+        status = (Status(probe.dep_name, False, probe.critical, f"not probed: {prereq} is down")
+                  if prereq in down else probe())
+        if not status.up:
+            down.add(status.name)
+        statuses.append(status)
+    return statuses
 
 
 def plan_repairs(statuses: list[Status]) -> list[tuple[str, bool]]:
@@ -163,15 +182,17 @@ def format_table(statuses: list[Status]) -> str:
 def render(statuses: list[Status], as_json: bool) -> str:
     if as_json:
         return json.dumps({"statuses": [asdict(s) for s in statuses],
-                           "repairs": plan_repairs(statuses)})
+                           "repairs": plan_repairs(statuses), "prereqs": PREREQS})
     return format_table(statuses)
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- launcher glue
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="emit JSON for edge-cli")
+    parser.add_argument("--only", action="append", choices=[p.dep_name for p in PROBES],
+                        help="probe just this dependency (repeatable); edge-cli's wait loop")
     args = parser.parse_args(argv)  # before probing: --help must not pay probe cost
-    statuses = probe_all()
+    statuses = probe_all(set(args.only) if args.only else None)
     print(render(statuses, args.json))
     return exit_code(statuses)
 
