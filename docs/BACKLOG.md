@@ -5,24 +5,39 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-06-26** (SR-1 shipped as #144; Opus bumped to 4-8).
-> **This session shipped:** SR-1 deterministic replay — seed + sampling params (#144).
+> **Last groomed: 2026-09-19** — new arcs: **EDGE-1** (supervisor launch, HIGH PRIORITY),
+> **MD** (deprecate the edge MCP servers) and **EXP-MR** (local model refresh).
+> Prior: 2026-06-26 (SR-1 shipped as #144).
 
 ## Current placement
 
 ```
- Severity ↓ \ Impact →   I1 Trivial   I2 Minor              I3 Major         I4 Critical
- S1 Safe                  ✗ (none)     ✗ (none)               — (none)        — (none)
- S2 Low                   ✗ (none)     — (none)                — (none)        — (none)
- S3 Moderate              ✗ (none)     — (none)                — (none)        — (none)
- S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD         — (none)        — (none)
+ Severity ↓ \ Impact →   I1 Trivial   I2 Minor                     I3 Major              I4 Critical
+ S1 Safe                  ✗ (none)     MD-4 docs sweep              — (MD-1 → EDGE-1)     — (none)
+ S2 Low                   ✗ (none)     MD-2 relocate shared →       EXP-MR-1 model        ★ EDGE-1 supervisor
+                                          MD-3 delete servers          refresh (fits 12GB)     launch
+ S3 Moderate              ✗ (none)     — (none)                     EXP-MR-2 MoE          — (none)
+                                                                        offload arm
+ S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)              — (none)
 ```
 
-**Next pick: none — backlog empty.** All tracked items shipped or parked.
-Groom a new arc before the next session.
+**Pick order (impact ↓, then severity ↑):**
+1. **★ EDGE-1** `edge` = one-command supervisor launch (I4·S2) — **HIGH PRIORITY**; subsumes MD-1
+2. **EXP-MR-1** model refresh, 12 GB-resident candidates (I3·S2) — needs EDGE-1 (free VRAM, live substrate)
+3. **EXP-MR-2** MoE partial-offload arm (I3·S3) — after EXP-MR-1's harness exists
+4. **MD-4** docs sweep (I2·S1)
+5. **MD-2** relocate shared modules out of `mcp_servers/` (I2·S2), then **MD-3** delete the servers (I2·S2)
 
-**Parked:** #5 PT-4 (llama-cpp AVX-512 version bump) — on HOLD pending hardware AVX-512
-availability; no further action until that unblocks.
+**Parked:** #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
+(new, 2026-09-19):** upstream is at **0.3.35** (2026-08-17); probe whether the cu12x
+Windows wheel still requires AVX-512 (`--dry-run` install into a scratch venv + load one
+GGUF). If not, PT-4 drops to S2 and re-enters at I2 — and it gains weight: 0.3.23 very
+likely cannot load the 2026-Q3 architectures EXP-MR is evaluating.
+
+**Standing precondition — substrate health check:** no task has been routed for ~85 days
+(last `runs/cascade.rec` outcome was a LOSE), and Ollama was reinstalled 2026-09-19. Run
+one trivial `mesh_solve_canvas.py --topology budget` end-to-end before starting EXP-MR.
+(EDGE-1's launch-time table makes this automatic.)
 
 **Shipped (for the record):** #1 PT-1, #2 PT-2, #3 PT-3 CLOSE, #4 gate-helper (#135),
 #5 PT-4 HOLD, #6 OBS-1, #7 ts-verify-gate (#115), #8 difficulty-recal (#116),
@@ -31,6 +46,215 @@ availability; no further action until that unblocks.
 **#VR-1 gate registry (#140), #VR-2 shell verifier (#141), #VR-3 JS verifier (#141),
 #VR-4 wire call sites (#142), #VR-5 repair-prompt language field (#143)**,
 **#SR-1 deterministic replay seed+params (#144)**.
+
+---
+
+## ★ EDGE-1 · `edge` = one-command supervisor launch  (I4 · S2) — HIGH PRIORITY
+
+**Expectation (user, 2026-09-19):** `edge` is the single command. At startup it checks
+that every dependency of the pipeline is up and **restarts any that are down**, then
+launches the session.
+
+**Reality after #147:** #147 only added the `edge.cmd` shim → `scripts/edge-cli.ps1`
+with default flags. edge-cli has no health-check-and-repair step:
+
+| Dependency | Today | Gap |
+|---|---|---|
+| venv extras | `uv sync --inexact` | ✅ |
+| Docker Desktop | not touched; `-Canvas` only warns if `docker` is missing | never started |
+| Redis broker (`edge-cascade-redis`) | `docker compose up -d redis` **only with `-Canvas`** | not checked by default (survives only via `restart: unless-stopped`) |
+| Celery worker (npu,gpu,verify) | a new worker window **only with `-Canvas`**, no liveness check | never checked by default; a 2nd `-Canvas` launch spawns a **duplicate** worker |
+| Ollama API (:11434) | not touched | never checked or started |
+| Dashboard (:8789) | spawned if the port is free, else warn | ✅ roughly right |
+| Legacy `edge-npu/gpu/verify` MCP servers | **wired by default**, readiness-probed by `edge_summary.py` | inverted: the *retired* path is the one that's health-checked |
+
+**Why I4 (blocking):** `edge` is the entry point to the whole system, and today it
+neither guarantees the Canvas pipeline is up nor steers the agent to it. Evidence: ~85
+days with no routed task; the launched session's appended prompt mandates the retired
+`edge-npu.route` flow (edge-cli.ps1:386-388); and the default `edge-gpu` server holds the
+14b resident (**11.3 / 12.2 GB at idle**), so the Celery worker's first GPU task must load
+a second copy into ~0.9 GB free → spill/OOM. The pipeline can't be relied on until the
+launcher is fixed. **Why S2:** confined to the launcher plus a small, unit-testable Python
+probe helper; every step is idempotent; revert = the previous script. Not S1 because it
+starts external processes and waits on them (timeouts, Docker Desktop cold start).
+
+**What — a supervisor pass before launching Claude, in dependency order:**
+
+1. **Docker engine** — `docker info`; if down, start Docker Desktop and wait (bounded,
+   ~90 s) for the engine.
+2. **Redis** — `docker compose up -d redis`; wait for container health `healthy`.
+3. **Ollama** — `GET :11434/api/version`; if down, start `ollama serve` (detached) and
+   wait. Needed while it's the experiment backend and the llama_cpp fallback.
+4. **Celery worker** — `celery -A cascade.celery_app inspect ping`; start the Slice-5
+   worker (`_celery-worker.ps1 -Queues npu,gpu,verify`) **only if no node answers** →
+   no duplicates. Wait for its pong.
+5. **Dashboard** — existing :8789 logic.
+6. **Status table** — one line per dependency: `UP` / `RESTARTED` / `FAILED` (+ how to
+   fix). **Critical** deps (Docker, Redis, worker) failing → exit non-zero *before*
+   launching Claude unless `-Force`; non-critical (dashboard, Ollama) → warn and continue.
+7. **Pipeline-first session** (this is MD-1): stop wiring `edge-npu/gpu/verify` by
+   default (keep `-Servers …` as a deprecated opt-in with a warning), and replace the
+   appended "MANDATORY … edge-npu.route" prompt with the CLAUDE.md policy — one call to
+   `mesh_solve_canvas.py --topology budget`, `capped->tier3` → Tier 3. Playwright stays.
+8. **Flags:** `-Canvas` becomes default behaviour (kept as a no-op alias); add `-NoSupervise`
+   for fast dev relaunches; `-Check` runs steps 1–6 as probe-only (report, never start).
+
+**Design notes:** put the probe/decision logic in a covered Python module
+(`scripts/edge_health.py` or `cascade/health.py`: pure `probe_*()` → status objects +
+`plan_repairs(statuses)`), so it's under the 100% gate and testable with fakes; keep
+edge-cli.ps1 as thin process-spawning glue. Route the Python helper through the pipeline
+per the routing rule; the PowerShell glue is Tier 3.
+
+**Acceptance (all live, on this box):**
+- Cold start — Docker Desktop quit, Ollama stopped, no worker → `edge` brings all three
+  up, prints `RESTARTED` for each, and launches.
+- Warm start — everything up → all `UP`, **no** second worker (`inspect ping` = 1 node).
+- Worker killed mid-session → next `edge` restarts exactly one.
+- Idle VRAM after launch is the worker's footprint only (no `mcp_servers.gpu` process).
+- A trivial `mesh_solve_canvas.py --topology budget` task WINs from the launched session.
+- `edge -Check` reports without starting anything; CI green at 100%.
+
+---
+
+## MD arc — deprecate the edge MCP servers completely
+
+**Why (evidence, 2026-09-19):** the per-tier MCP servers (`edge-npu`, `edge-gpu`,
+`edge-verify`, `edge-cloud` in `mcp_servers/`) are the *retired* topology — CLAUDE.md
+says the Canvas pipeline (`cascade.mesh.solve` via `mesh_solve_canvas.py`) is the single
+inference path. But they are still live, and it costs us three ways:
+
+1. **Contradictory agent policy.** `scripts/edge-cli.ps1:386-388` appends a system prompt
+   that says *"MANDATORY: … FIRST call edge-npu.route, then … edge-gpu.generate …"* —
+   the opposite of CLAUDE.md. Every `edge`-launched session starts with both instructions.
+2. **VRAM contention.** `edge-gpu` (`python -m mcp_servers.gpu`) holds the llama_cpp
+   14b resident: measured **11.3 / 12.2 GB used at idle** (≈ PT-1's +10.5 GB). A Celery
+   GPU worker, SDXL, or an Ollama model on the same card then spills (see
+   [FINDINGS-llm-vram-capability.md](FINDINGS-llm-vram-capability.md)).
+3. **Dead surface area.** ~950 LOC in `mcp_servers/`, the `mcp` extra, smoke/contract
+   tests, edge-cli catalog + status-probe code, and doc references across ~25 files.
+
+**The catch:** `mcp_servers/` is *not* only the servers. Two modules are shared by the
+live pipeline and must move first:
+
+| Module | Used by (outside the servers) |
+|---|---|
+| `mcp_servers/_rec.py` (`make_recorder`, `recorded`, `EXPERIMENT_PREFIX`, `make_experiment_recorder`) | `cascade/tasks.py`, `replay.py`, `scripts/image_server.py`, `scripts/pr_review.py`, `scripts/git_model_bench.py`, `scripts/cli_model_bench.py`, `scripts/warn_prompt_validation_v2.py`, tests |
+| `mcp_servers/_funcverify_child.py` (functional-gate sandbox) | `cascade/tasks.py` (`-m mcp_servers._funcverify_child`), `scripts/model_bench.py`, `tests/test_funcverify_child.py` |
+| `mcp_servers/_npu_worker_proc.py` | **server-only** (`npu.py`, `smoke_npu_mcp.py`) — delete with the servers |
+
+`cascade/credit_guard.py` was already lifted out (used by `pr_review.py`) — it stays.
+The **Playwright** MCP (#147) is not a cascade tier and is **out of scope** — it stays.
+
+### MD-1 · stop wiring the edge servers  (I3 · S1) — ⤴ SUBSUMED by EDGE-1 step 7
+Kept for the record; ships as part of EDGE-1.
+**What:** In `scripts/edge-cli.ps1`: default `$Servers` → `@()`; replace the appended
+"MANDATORY … edge-npu.route" prompt with the pipeline-first policy (one call to
+`mesh_solve_canvas.py --topology budget`, cap → Tier 3); keep `-Servers edge-npu,…` as an
+explicit opt-in that prints a deprecation warning for one release. Update
+`scripts/edge_summary.py` so an empty tier list is a clean READY, not an error.
+Local-only follow-up for the user: drop the `mcp__edge-*` allows from the untracked
+`.claude/settings.local.json`.
+**Why I3:** removes a live contradiction in every agent session's instructions and frees
+~10.5 GB VRAM for the real GPU tier. **Why S1:** launcher-only change, no library code;
+revert = one flag. **Acceptance:** `edge` launches with no `edge-*` servers; the appended
+prompt names the Canvas pipeline only; `nvidia-smi` shows the 14b not resident at idle;
+`edge -Check` green.
+
+### MD-2 · relocate the shared modules into `cascade/`  (I2 · S2)
+**What:** Move `_rec.py` → `cascade/recorder.py` and `_funcverify_child.py` →
+`cascade/funcverify_child.py`; update every importer in the table above; leave thin
+re-export shims in `mcp_servers/` for one slice so evidence branches and old scripts
+keep running. **Why I2:** pure enabler for MD-3, no user-visible change. **Why S2:**
+mechanical move, BUT `mcp_servers/*` is in `coverage.omit` today — landing these in
+`cascade/` puts them under the **100% gate**, so any untested branch surfaces as a
+failure (per [[coverage-holes-are-deficiencies]] that's a finding to fix, not to omit).
+`test_funcverify_child.py` / `test_degen_recorder.py` already exercise most of it.
+**Acceptance:** full suite green at 100%; `grep -r "mcp_servers\._rec\|_funcverify_child"`
+hits only the shims.
+
+### MD-3 · delete the servers  (I2 · S2) — depends on MD-2
+**What:** Remove `mcp_servers/{npu,gpu,verify,cloud,_demo,_npu_worker_proc}.py`, the
+shims, `scripts/smoke_npu_mcp.py`, `tests/test_edge_summary_contract.py`, the
+`mcp_servers*` entries in `tests/test_smoke_imports.py`, the `mcp` extra in
+`pyproject.toml` (+ its `coverage.omit` lines), the CI `--extra mcp`, and edge-cli's
+server catalog / status-probe block. **Keep** the `mcp` *package* only if something else
+still imports it (Playwright is npx, not Python — check before dropping).
+**Why I2:** cleanup; the behaviour change already happened in MD-1. **Why S2:** broad
+but deletion-only once MD-2 has cut the dependencies; guarded by CI + the live
+`tests/test_canvas_live_behavior.py` probes. **Acceptance:** CI green; `edge` + a live
+`budget` route work end-to-end; `mcp_servers/` gone.
+
+### MD-4 · docs sweep  (I2 · S1)
+**What:** CLAUDE.md, `.claude/skills/edge-cascade/SKILL.md`, README, RUNBOOK, and the
+`pipeline_reminder.py` hook text: remove per-server instructions and mark
+`ARCHITECTURE.md` historical. Fold in the known drift: three places still claim *"git/
+shell output fails the Python gate → capped→tier3"*, which has been false since VR-2/VR-4
+(git routes WIN). Leave `FINDINGS-*`, `PLAN-*` and `evidence/` untouched — they are
+history. **Why I2 · S1:** accuracy of the instructions agents act on; text-only.
+
+---
+
+## EXP-MR arc — local model refresh (2026-Q3 open models)
+
+**Why:** the production GPU code model, `qwen2.5-coder:14b`, dates from late 2024. A
+2026-09-19 scan of open-weight releases in the prior 60 days found candidates that fit the
+12 GB RTX 5070 Ti fully, plus MoE models with only ~3B active parameters that could run
+with CPU offload (the box has **63.5 GB RAM**). Details and sources in the session
+write-up; published numbers are sparse and mostly vendor/aggregator-reported, so **we
+measure, we don't adopt on reputation.** Protocol: the `/experiment` skill (LOCAL
+evidence branch, Bayesian MC, `keep_awake`, segregated telemetry, findings leave via a
+clean PR citing the evidence sha).
+
+### EXP-MR-1 · 12 GB-resident candidates vs the incumbent  (I3 · S2)
+**Arms (all via the Ollama backend — llama-cpp-python 0.3.23 likely can't load the new
+architectures; see PT-4):**
+
+| Arm | Model | Q4 size | Notes |
+|---|---|---|---|
+| control | `qwen2.5-coder:14b` | ~9.0 GB | incumbent; dijkstra 3/3 in FINDINGS-llm-vram-capability |
+| T1 | `ornith-1.5:9b` | 6.6 GB | 256K ctx; billed for agentic coding; **no published coding benchmarks** |
+| T2 | `granite4.2:8b` | 5.3 GB | IBM, Apache-2.0, dense, FIM; no published coding benchmarks |
+
+**Subjects:** reuse the existing harnesses rather than inventing tasks — (a) the
+dijkstra-class functional subjects in `scripts/model_bench.py` (DSL-gated, killed
+subprocess), (b) the three parity cases A/B/C from `scripts/parity_batch.py`, (c) NL→git
+from `scripts/git_model_bench.py` (incumbent baseline **97%** per
+FINDINGS-git-model-selection). Optional (d) one TS subject gated by `ts_verifier`.
+**Trials:** ≥ 30 per (arm × subject); record seed + sampling params (SR-1).
+**Metrics, in priority order** ([[metric-priorities-quality-cost-over-latency]]):
+functional pass rate → Beta posterior, 95% CI, **P(treatment > control)**, paired
+per-subject conditionals; cost is $0 for all arms; latency + peak VRAM (at 4k / 16k ctx)
+as tiebreakers only.
+**Decision gate:** SHIP a candidate as the production GPU model only if P(T > control)
+≥ 0.95 on the pooled functional subjects **and** no subject regresses (git ≥ 97%, parity
+A/B/C tiers unchanged). The model flip is a separate follow-up PR (`cascade/config.py`
+default + FINDINGS doc). Otherwise record REVERT/NULL and keep the 14b.
+**Preconditions:** MD-1 landed (or the edge-gpu server stopped) so the card isn't at
+11.3 GB idle; substrate health check passed; `ollama pull` both candidates.
+**Why I3:** the model choice drives every GPU route's quality — the primary metric.
+**Why S2:** measurement-only on a LOCAL evidence branch, $0, no production change until
+the separate flip PR. Known unknowns: chat-template / thinking-mode quirks in new models
+(Ollama templates handle most; note any manual `/no_think` style switches in the
+methodology), and the harnesses importing `mcp_servers._rec` (fine before MD-2; update
+paths if MD-2 lands first).
+
+### EXP-MR-2 · MoE partial-offload arm  (I3 · S3) — after EXP-MR-1
+**Arm:** `laguna-xs-2.1` (Poolside; 33B total / **3B active**; 20 GB Q4; OpenMDW-1.1;
+**SWE-bench Verified 70.9%**, per its Ollama page). Optional second: `nemotron-3.5-lightning`
+(NVIDIA; 30B / 3B active; 25 GB Q4). Neither fits 12 GB — run with Ollama's automatic
+GPU/CPU split, same subjects + gate as EXP-MR-1, and add wall time per task as a
+reported (not decisive) column.
+**Why I3:** a quality ceiling far above the 14b class if the offload is tolerable.
+**Why S3:** real unknowns — offload throughput on this laptop, whether the new
+architectures run correctly in Ollama 0.34.2 on Windows, and the VRAM-cliff behaviour
+we measured for dense models may or may not transfer to 3B-active MoE. Stays a
+measurement; a production flip would additionally need the GPU backend decision (Ollama
+vs llama_cpp → PT-4).
+
+### Follow-up (not yet scored): NPU tier refresh
+`granite4.2:3b` (2.2 GB) as a replacement for the 1.5B NPU router/drafter needs an
+OpenVINO conversion + NPU-compile spike first, and OpenVINO is 2026.1 vs upstream
+2026.4. Score it after that spike tells us whether it compiles for the NPU at all.
 
 ---
 
