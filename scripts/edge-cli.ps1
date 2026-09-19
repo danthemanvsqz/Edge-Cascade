@@ -462,27 +462,44 @@ if (-not (Test-Path $ProjectDir)) { throw "ProjectDir not found: $ProjectDir" }
 # and --add-dir only grants file access, not policy. Inject the operative rules
 # straight into the system prompt via --append-system-prompt, and point at the
 # full protocol file (the session has --add-dir read access to it).
-# Single line, ASCII, no backtick/$/embedded-quote -> safe as a PS 5.1 exe arg.
+# Single line, ASCII, no backtick/$/double-quote -> safe as a PS 5.1 exe arg
+# (5.1 does not escape embedded double quotes for native exes). The paths in the
+# solve command are single-quoted PowerShell literals so a repo under a path with
+# a space still yields a copy-pasteable command -- for PowerShell only (the `&`
+# call operator is a syntax error in Git Bash), so the policy says which tool.
 $PolicyFile  = Join-Path $RepoRoot 'CLAUDE.md'
 $SolveScript = Join-Path $RepoRoot 'scripts\mesh_solve_canvas.py'
+function Format-PsLiteral([string] $s) { "'" + ($s -replace "'", "''") + "'" }
+$SolveCommand = '& ' + (Format-PsLiteral $VenvPython) + ' ' + (Format-PsLiteral $SolveScript)
+# Only claim what the supervisor actually established about the pipeline.
+$HealthNote = if ($NoSupervise) {
+  'The pipeline was NOT health-checked at launch (-NoSupervise); if a route fails, '
+} elseif ($EdgeCriticalDown.Count -gt 0) {
+  'This session was launched with -Force while critical pipeline deps were DOWN (' +
+  ($EdgeCriticalDown -join ', ') + '), so routes are expected to fail until they are up; when one does, '
+} else {
+  'The pipeline was health-checked at launch; if a route fails, '
+}
 $policy = (
   'You are Tier 3 of the edge-cascade local-first inference mesh. ' +
   'Every artifact (code, git/CLI commands, scripts, configs, commit messages) ' +
   'goes through the Canvas pipeline FIRST - one blocking call that does ' +
   'NPU route, NPU/iGPU draft, deterministic gate, bounded GPU repair, and the ' +
-  'win/lose logger: ' + $VenvPython + ' ' + $SolveScript +
+  'win/lose logger (run it with the PowerShell tool): ' + $SolveCommand +
   ' --topology budget followed by the task as one quoted argument. ' +
   'Decompose first: independent sub-tasks go in one --topology budget_fanout ' +
   'call (one quoted argument each); dependent ones are sequential budget calls. ' +
   'Pass --dsl with assert lines when the task has checkable behaviour, ' +
   'otherwise the gate only proves the code parses. On resolved, review ' +
   'the answer before it lands; on capped->tier3 you author it yourself - ' +
-  'never start another repair round. Surgical edits to existing code, ' +
-  'file edits, running commands, planning and conversational replies are ' +
-  'yours and need no routing. The per-tier edge-npu/gpu/verify MCP servers ' +
+  'never start another repair round. The only artifacts exempt from routing ' +
+  'are surgical edits to existing code; new files, new functions and new ' +
+  'configs route first even though they land via a file edit. Running ' +
+  'commands, planning and conversational replies are yours and need no ' +
+  'routing. The per-tier edge-npu/gpu/verify MCP servers ' +
   'are retired - do not look for them. Never claim a local tier ran or wrote ' +
   'anything. The paid Anthropic API tier is NOT wired in - do not attempt it. ' +
-  'The pipeline was health-checked at launch; if a route fails, say so and ' +
+  $HealthNote + 'say so and ' +
   'offer to relaunch edge rather than silently hand-writing the code. Read ' +
   'the full protocol in ' + $PolicyFile + ' before your first coding task.'
 )
