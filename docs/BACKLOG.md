@@ -5,8 +5,8 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-09-24** — new arc: **KB** (expertise knowledge base + `consult`
-> DAG step, product path) + parked **DAG-1**. Prior 2026-09-19: new arcs: **EDGE-1** (supervisor launch, HIGH PRIORITY),
+> **Last groomed: 2026-09-24** — new arc: **KB** (RAG: book text in a local vector store,
+> retrieved into the pipeline's prompts; product path). Prior 2026-09-19: new arcs: **EDGE-1** (supervisor launch, HIGH PRIORITY),
 > **MD** (deprecate the edge MCP servers) and **EXP-MR** (local model refresh).
 > Prior: 2026-06-26 (SR-1 shipped as #144).
 
@@ -17,9 +17,9 @@ dropped, the `S4` row is parked + de-risked.
  S1 Safe                  ✗ (none)     MD-4 docs sweep              — (MD-1 → EDGE-1)                 — (none)
  S2 Low                   ✗ (none)     MD-2 relocate shared →       KB-1 ingest · KB-3 experiment ·   ★ EDGE-1 supervisor
                                           MD-3 delete servers          EXP-MR-1 model refresh            launch (acceptance left)
- S3 Moderate              ✗ (none)     — (none)                     KB-2 consult step ·               — (none)
+ S3 Moderate              ✗ (none)     — (none)                     KB-2 retrieve step ·              — (none)
                                                                         EXP-MR-2 MoE offload arm
- S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)                          ⏳ DAG-1 user-defined graphs
+ S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)                          — (none)
 ```
 
 **Pick order (impact ↓, then severity ↑; dependencies may pull an item forward):**
@@ -27,16 +27,14 @@ dropped, the `S4` row is parked + de-risked.
    idle-VRAM acceptance check remains**
 2. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
    ordered first because it is on the revenue path (user, 2026-09-24); blocked on the book file
-3. **KB-2** `consult` step in the budget chain (I3·S3) — depends on KB-1
-4. **KB-3** consult-vs-control experiment (I3·S2) — depends on KB-2, so it runs after it
+3. **KB-2** `retrieve` step in the budget chain (I3·S3) — depends on KB-1
+4. **KB-3** RAG-vs-control experiment (I3·S2) — depends on KB-2, so it runs after it
 5. **EXP-MR-1** model refresh, 12 GB-resident candidates (I3·S2) — needs EDGE-1 (free VRAM,
    live substrate); can share KB-3's evidence-branch session
 6. **EXP-MR-2** MoE partial-offload arm (I3·S3) — after EXP-MR-1's harness exists
 7. **MD-4** docs sweep (I2·S1)
 8. **MD-2** relocate shared modules out of `mcp_servers/` (I2·S2), then **MD-3** delete the servers (I2·S2)
 
-**Parked:** ⏳ **DAG-1** user-defined workflow graphs (I4·S4) — de-risk via KB-2 → one named
-client workflow → `DESIGN-dag-workflows.md`, then re-score.
 **Parked:** #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
 (new, 2026-09-19):** upstream is at **0.3.35** (2026-08-17); probe whether the cu12x
 Windows wheel still requires AVX-512 (`--dry-run` install into a scratch venv + load one
@@ -138,14 +136,17 @@ per the routing rule; the PowerShell glue is Tier 3.
 
 ---
 
-## KB arc — expertise knowledge base + `consult` DAG step  (product path)
+## KB arc — RAG: local knowledge base + `retrieve` step  (product path)
 
-**Why (user, 2026-09-24):** the revenue direction is *private local AI* — an appliance plus
-a workflow DAG that a regulated buyer runs on their own hardware. The DAG's differentiator
-is a **`consult` node**: before drafting, retrieve grounded expertise from a local vector
-store and record which passages were used (an audit trail). Corpus #1 is *The Pragmatic
-Programmer* (20th-anniversary ed., 100 numbered tips) — it improves our own pipeline and
-dogfoods the node; corpus #2 is a client's own documents, which is what ships. The book's
+**Why (user, 2026-09-24; corrected same day — the original prompt said "DAG", a typo for
+"RAG"):** the revenue direction is *private local AI* — an appliance a regulated buyer
+runs on their own hardware, whose core is **retrieval-augmented generation over documents
+that never leave the box**. The book's text goes into a local vector store; before a
+model drafts, the pipeline retrieves the most relevant passages, prepends them to the
+prompt, and records which passages were used (an audit trail). Corpus #1 is *The
+Pragmatic Programmer* (20th-anniversary ed., 100 numbered tips) — it improves our own
+pipeline and dogfoods the RAG path; corpus #2 is a client's own documents, which is what
+ships. The book's
 text never leaves this machine (own copy, local index; **not** resellable).
 
 **Substrate facts (2026-09-24):** no vector store or embedding library is installed; Ollama
@@ -188,23 +189,24 @@ retrieves today. **Why S2:** purely additive module + script; the dependency unk
 `search("don't repeat yourself", k=3)` returns the DRY tip (Tip 15 in the
 20th-anniversary numbering) in the top 3 with chapter + tip number; CI green at 100%.
 
-### KB-2 · `consult` step in the budget chain  (I3 · S3) — depends on KB-1
-**What:** a new Celery task `_budget_consult` between `_budget_route` and `_budget_draft`:
-`search(env["query"], k)` → `env["expertise"] = [{corpus, tip, chapter, text, score}]`.
+### KB-2 · `retrieve` step in the budget chain (RAG)  (I3 · S3) — depends on KB-1
+**What:** a new Celery task `_budget_retrieve` between `_budget_route` and `_budget_draft`:
+`search(env["query"], k)` → `env["passages"] = [{corpus, tip, chapter, text, score}]`.
 The NPU draft prompt and `feedback.build_repair_prompt()` prepend the passages when
-present; the trace gains `consulted=[tip ids]` so the dashboard shows the audit trail.
-Targeting flag `CASCADE_KB_TARGET = off | npu | gpu | both`, **default `off`** until KB-3
-proves a gain; `off` makes the step a no-op via the existing `_shortcut` pattern.
-**Why I3:** this is the DAG node the product is built on, and it feeds the pipeline's own
+present (the augmentation half of RAG); the trace gains `retrieved=[tip ids]` so the
+dashboard shows the audit trail. Targeting flag `CASCADE_RAG_TARGET = off | npu | gpu |
+both`, **default `off`** until KB-3 proves a gain; `off` makes the step a no-op via the
+existing `_shortcut` pattern.
+**Why I3:** this is the RAG path the product is built on, and it feeds the pipeline's own
 win rate. **Why S3:** a hot-path chain change (same class as VR-4) plus prompt changes that
 move the primary metric; blast radius confined by the default-off flag.
 **Guard:** parity check (`scripts/parity_batch.py`, Case B within ±20%) with the flag `off`
 before merge; the live `tests/test_canvas_live_behavior.py` probe.
 **Acceptance:** with `off`, `runs/cascade.rec` outcomes match today's shape apart from the
-new empty field; with `gpu`, a route's trace lists the consulted tips; the repair cap is
+new empty field; with `gpu`, a route's trace lists the retrieved tips; the repair cap is
 untouched (`over_cap_episodes` = 0).
 
-### KB-3 · experiment: does consulting raise the local win rate?  (I3 · S2) — after KB-2
+### KB-3 · experiment: does RAG raise the local win rate?  (I3 · S2) — after KB-2
 **Hypothesis (stated before running):** `gpu` targeting helps the 14b repair round;
 `npu` targeting *hurts* the 1.5B draft (tiny context — passages crowd out the task).
 **Arms:** `off` (control) · `npu` · `gpu` · `both`. **Subjects:** reuse the
@@ -212,22 +214,11 @@ untouched (`over_cap_episodes` = 0).
 `git_model_bench.py` NL→git (baseline 97%). **Trials:** ≥ 30 per (arm × subject), seeds
 recorded (SR-1). **Metrics:** functional pass rate → Beta posterior, 95% CI,
 P(arm > off), paired conditionals; `k` and passage length as a reported sensitivity.
-**Decision gate:** flip the `CASCADE_KB_TARGET` default only if P(arm > off) ≥ 0.95 pooled
+**Decision gate:** flip the `CASCADE_RAG_TARGET` default only if P(arm > off) ≥ 0.95 pooled
 **and** no subject regresses (git ≥ 97%). Otherwise record NULL / REVERT and keep `off` —
-the node still ships for the product path. Protocol: `/experiment` (LOCAL evidence branch,
+the retrieve step still ships for the product path. Protocol: `/experiment` (LOCAL evidence branch,
 `keep_awake`, segregated telemetry, findings leave via a clean PR citing the sha).
 **Why I3 · S2:** the primary metric, measured; $0, evidence branch, no production change.
-
-### ⏳ DAG-1 · user-defined workflow graphs  (I4 · S4) — PARKED, de-risk via KB-2
-**What (eventually):** a client workflow as *data* — named nodes (`consult`, `draft`,
-`gate`, `repair`, `human_review`), edges, per-node corpus / model / gate — compiled to a
-Canvas signature; a `human_review` node that pauses for sign-off; per-node audit records.
-This is the product. **Why I4:** it is the thing a client pays for. **Why S4:** the
-requirements are unknown until a real client workflow exists; multi-corpus, pause/resume
-and tenancy are each blast-radius-heavy. **De-risk steps, in order:** (1) KB-2 lands
-`consult` as the first step whose behaviour is data-driven (flag + corpus); (2) the user
-picks ONE vertical and ONE workflow with a named prospect; (3) `docs/DESIGN-dag-workflows.md`
-— nodes-as-data schema + the pause/resume seam, reviewed before any code. Re-score after (3).
 
 ---
 
