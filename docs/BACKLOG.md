@@ -149,6 +149,28 @@ pipeline and dogfoods the RAG path; corpus #2 is a client's own documents, which
 ships. The book's
 text never leaves this machine (own copy, local index; **not** resellable).
 
+**Hypothesis (formalized 2026-09-24, user; stated before any code):**
+- **H1 (effectiveness):** conditioning the local tiers' prompts on retrieved passages
+  relevant to the task raises the local functional pass rate at a fixed repair cap.
+- **H2 (cost):** any H1 gain shows up as a lower `capped->tier3` handoff rate and fewer
+  GPU repair rounds per resolved task — i.e. a cheaper tier per WIN. Retrieval overhead
+  (one embed call + a vector search) is negligible against one GPU round; the real cost is
+  prompt tokens on the 1.5B NPU's small context.
+- **H0 (corpus):** *The Pragmatic Programmer* yields no measurable lift (P(lift > 0) < 0.95);
+  the user's stated confidence is low. It is the **construction corpus** (build the RAG
+  path on a real, well-structured text) and a **negative control** — if it shows lift, the
+  measurement leaks noise. Once the path is sound, swap corpora.
+- **Predicted corpus ordering (Tier 3's input):** the pipeline's own solved history
+  (past WIN answers for similar tasks, as few-shot — matches the task distribution, $0,
+  grows with every win) > the gate's output contracts + verifier rules > API / stdlib
+  references for the libraries the tasks use > the book. **Design implication for KB-1:**
+  the corpus abstraction must support incremental append, not only a one-shot book load.
+- **KB-3 refinements (Tier 3's input):** a **placebo arm** (k random passages) to separate
+  *relevant* context from *any extra* context; a **relevance floor** (skip injection when
+  the top score is below a threshold) so retrieval cannot poison an easy task.
+- **Primary metric:** handoff rate + repair rounds per resolved task, then pass rate;
+  latency is a tie-breaker only ([[metric-priorities-quality-cost-over-latency]]).
+
 **Substrate facts (2026-09-24):** no vector store or embedding library is installed; Ollama
 0.34.3 holds only `qwen2.5-coder:14b` (no embedding model); the book is the publisher's
 **PDF** (P3.0, 340 pp, DRM-free) at `C:/Users/danth/OneDrive/Documents/the-pragmatic-programmer-20th-anniversary-edition_P3.0.pdf`
@@ -209,7 +231,7 @@ untouched (`over_cap_episodes` = 0).
 ### KB-3 · experiment: does RAG raise the local win rate?  (I3 · S2) — after KB-2
 **Hypothesis (stated before running):** `gpu` targeting helps the 14b repair round;
 `npu` targeting *hurts* the 1.5B draft (tiny context — passages crowd out the task).
-**Arms:** `off` (control) · `npu` · `gpu` · `both`. **Subjects:** reuse the
+**Arms:** `off` (control) · `placebo` (k random passages) · `npu` · `gpu` · `both`. **Subjects:** reuse the
 `scripts/model_bench.py` functional subjects, `parity_batch.py` A/B/C, and
 `git_model_bench.py` NL→git (baseline 97%). **Trials:** ≥ 30 per (arm × subject), seeds
 recorded (SR-1). **Metrics:** functional pass rate → Beta posterior, 95% CI,
