@@ -5,7 +5,8 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-09-24** — new arc: **KB** (RAG: book text in a local vector store,
+> **Last groomed: 2026-10-05** — new arc: **JOB** (job-search daemon over a GPU / Gemini /
+> Claude mesh; 18 tasks sized for a Sonnet agent, JOB-15 submit parked). Prior 2026-09-24: new arc: **KB** (RAG: book text in a local vector store,
 > retrieved into the pipeline's prompts; product path). Prior 2026-09-19: new arcs: **EDGE-1** (supervisor launch, HIGH PRIORITY),
 > **MD** (deprecate the edge MCP servers) and **EXP-MR** (local model refresh).
 > Prior: 2026-06-26 (SR-1 shipped as #144).
@@ -14,18 +15,27 @@ dropped, the `S4` row is parked + de-risked.
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor                     I3 Major                          I4 Critical
- S1 Safe                  ✗ (none)     MD-4 docs sweep              — (MD-1 → EDGE-1)                 — (none)
+ S1 Safe                  ✗ (none)     MD-4 docs sweep ·            JOB-1 scaffold                    — (none)
+                                          JOB-18 funnel report
  S2 Low                   ✗ (none)     MD-2 relocate shared →       KB-1 ingest · KB-3 experiment ·   ★ EDGE-1 supervisor
-                                          MD-3 delete servers          EXP-MR-1 model refresh            launch (acceptance left)
- S3 Moderate              ✗ (none)     — (none)                     KB-2 retrieve step ·              — (none)
-                                                                        EXP-MR-2 MoE offload arm
- S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)                          — (none)
+                                          MD-3 delete servers ·        EXP-MR-1 model refresh ·          launch (acceptance left) ·
+                                          JOB-9 Gemini 2nd opinion     JOB-4 scanner · JOB-6 embed ·     JOB-2 ledger · JOB-3 backfill ·
+                                                                       JOB-8 calibrate · JOB-10 facts ·  JOB-5 filter · JOB-12 fact gate
+                                                                       JOB-13 approval
+ S3 Moderate              ✗ (none)     — (none)                     KB-2 retrieve step ·              JOB-14 pre-fill agent
+                                                                       EXP-MR-2 MoE offload arm ·
+                                                                       JOB-7 extractor · JOB-11 tailor ·
+                                                                       JOB-16 email · JOB-17 daemon
+ S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)                          ⏳ JOB-15 auto-submit
 ```
 
 **Pick order (impact ↓, then severity ↑; dependencies may pull an item forward):**
 1. **★ EDGE-1** `edge` = one-command supervisor launch (I4·S2) — 1a/1b/1c shipped; **only the
    idle-VRAM acceptance check remains**
-2. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
+2. **JOB arc, I4 cells** (user, 2026-10-05: the job search is the most time-sensitive work):
+   JOB-1 (dependency, I3·S1) → JOB-2 → JOB-3 → JOB-5 → JOB-10 (dependency) → JOB-12 → JOB-14;
+   the rest of the arc follows its own pick order, interleaved with KB/EXP-MR at equal cells
+2a. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
    ordered first because it is on the revenue path (user, 2026-09-24); blocked on the book file
 3. **KB-2** `retrieve` step in the budget chain (I3·S3) — depends on KB-1
 4. **KB-3** RAG-vs-control experiment (I3·S2) — depends on KB-2, so it runs after it
@@ -35,7 +45,7 @@ dropped, the `S4` row is parked + de-risked.
 7. **MD-4** docs sweep (I2·S1)
 8. **MD-2** relocate shared modules out of `mcp_servers/` (I2·S2), then **MD-3** delete the servers (I2·S2)
 
-**Parked:** #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
+**Parked:** JOB-15 auto-submit (I4·S4) — de-risk steps in its block. #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
 (new, 2026-09-19):** upstream is at **0.3.35** (2026-08-17); probe whether the cu12x
 Windows wheel still requires AVX-512 (`--dry-run` install into a scratch venv + load one
 GGUF). If not, PT-4 drops to S2 and re-enters at I2 — and it gains weight: 0.3.23 very
@@ -133,6 +143,321 @@ per the routing rule; the PowerShell glue is Tier 3.
 - Idle VRAM after launch is the worker's footprint only (no `mcp_servers.gpu` process).
 - A trivial `mesh_solve_canvas.py --topology budget` task WINs from the launched session.
 - `edge -Check` reports without starting anything; CI green at 100%.
+
+---
+
+## JOB arc — job-search daemon: scan → score → tailor → approve → submit  (user, 2026-10-05)
+
+**Why (user, 2026-10-05):** the job search has run as manual "rounds" (19 so far, logged in
+`job-apply/CLAUDE.md`): Claude scans Greenhouse/Ashby boards, filters by fit, tailors a
+resume + cover letter per job, and fills the form via Playwright. Every round re-derives the
+filter and the dedupe by hand. The user wants a **daemon on a timer** that does the whole
+flow, routed across a **custom inference mesh**: no model where code suffices, the local
+GPU (Ollama 14b, $0) for volume work, Gemini (Google AI Studio) as a cheap second opinion,
+the Claude API for quality-critical drafting, and Claude Code + Playwright MCP for the form.
+It is also a second real workload for the mesh design, on the same quality-and-cost
+metric ([[metric-priorities-quality-cost-over-latency]]).
+
+**Non-negotiables (every JOB task inherits these; an agent that cannot honor one STOPS):**
+1. **No PII in this repo.** Code lives here (public, MIT). Every personal artifact (profile
+   answers, address, self-ID answers, resume sources, ledger DB,
+   generated PDFs, screenshots, slug lists) lives under `JOB_AGENT_HOME`
+   (= `C:/Users/danth/src/job-apply`, private, never committed). The repo ships only
+   `profile.example.yaml` with fictional data. Tests use fictional fixtures.
+2. **Never tick a legal box.** Arbitration agreements, application certifications,
+   AI-use attestations, "I have not used AI" statements, email verification codes, and
+   captchas are the user's. The agent detects them and **parks** the job; it never clicks them.
+3. **A click is not a submission.** A job is `confirmed` only from a confirmation email
+   (JOB-16), never from an exit code, a banner, or a "clicked" log
+   ([[verify-outcomes-not-exit-codes]]).
+4. **Human approval before any submit**, until JOB-15 is un-parked by evidence.
+5. **Untrusted text is quarantined.** Job descriptions and form pages are attacker-controllable.
+   Only the local tool-less model reads raw JD text (JOB-7); it emits schema-validated JSON,
+   and only that JSON flows to stages that hold PII or tools.
+6. **Exactly-once submit.** Every state change is a compare-and-swap on the ledger (JOB-2).
+   Celery on Redis redelivers a task that outlives `visibility_timeout` (3600 s, see
+   `cascade/celery_app.py`), so a long submit task re-run is assumed, and the CAS
+   absorbs it.
+7. **Facts are never invented.** Resume/letter text is built only from the fact bank
+   (JOB-10) and gated by JOB-12. The claim boundaries in the user's profile ("can / cannot
+   truthfully claim") are a hard deny-list.
+
+**Where the code lives:** `projects/job-agent/` — its own uv project (Python 3.13, package
+`jobagent`), like `projects/vinyl/`. It does **not** import `cascade` (that drags in
+OpenVINO/torch); it copies nothing either: small fresh modules in the same style
+(credit guard = the `cascade/credit_guard.py` pattern; SQLite ledger = the
+`cascade/review_ledger.py` pattern). It reuses the box's **Redis** (separate Celery app
+name + queue `jobs`) and **Ollama** (`:11434`). The existing Node tools in `job-apply/`
+(`make-resume.js`, `make-cover.js`, `lib/helpers.js`) are called as subprocesses, not ported.
+
+**Mesh routing (the design under test):**
+
+| Stage | Volume | Tier | Task |
+|---|---|---|---|
+| scan boards | hundreds/day | no model | JOB-4 |
+| hard filter + dedupe | hundreds | no model | JOB-5, JOB-2 |
+| semantic pre-rank | hundreds | GPU embed (`nomic-embed-text`) | JOB-6 |
+| structured fit extraction (quarantine) | dozens | GPU 14b, JSON-only | JOB-7 |
+| borderline second opinion | a few | Gemini Flash (anonymized input) | JOB-9 |
+| tailor resume + letter | a few/day | Claude API (Sonnet) | JOB-11 |
+| fact gate | same | no model | JOB-12 |
+| pre-fill form | a few/day | Claude Code headless + Playwright MCP | JOB-14 |
+| submit | approved only | same | JOB-15 (parked) |
+| read confirmation email | a few/day | Gmail read-only + GPU 14b classify | JOB-16 |
+
+**Job states (JOB-2 owns the transition table):**
+`seen → filtered_out | candidate → scored → drafted → ready → approved → submitting →
+submitted → confirmed | rejected | interview`; any state → `parked` (needs the user, with a
+reason) or `failed` (with an error). Terminal: `filtered_out`, `confirmed`, `rejected`,
+`interview`, `failed`. `parked` returns to its prior state only by a user action.
+
+**User-owned decisions (block the named tasks; not agent work):**
+- **D1 approval channel** (blocks JOB-13): Telegram bot (private chat) vs ntfy (topic name =
+  the only secret on ntfy.sh). Either way the message carries company + title + fit score
+  only, no PII.
+- **D2 Gemini tier** (blocks JOB-9): AI Studio **free tier may use inputs for training**;
+  JOB-9 sends only the public JD + an anonymized skills summary, but the user picks free vs paid.
+- **D3 Gmail access** (blocks JOB-16): OAuth consent for `gmail.readonly` on a local desktop
+  client; token stored under `JOB_AGENT_HOME`, never in the repo.
+- **D4 daily spend ceiling** (blocks JOB-11/14): USD/day across Claude API + Gemini + headless
+  Claude Code runs. Suggested starting point: a small fixed cap, raised on JOB-18 evidence.
+- **D5 `git init` `JOB_AGENT_HOME`** (local only, no remote) so profile/fact-bank edits are
+  reviewable. Recommended before JOB-3.
+
+**Agent conventions for every JOB task (written for a cold-start Sonnet agent):**
+- One task = one branch = one PR, based on `main`. Read this arc's non-negotiables and the
+  task block; touch only the listed files; if a needed change falls outside them, stop and
+  ask in the PR.
+- Tests first. `uv run pytest` inside `projects/job-agent/`, 100% line + branch coverage
+  gate (`fail_under = 100`), pytest-mock `mocker` (not monkeypatch), no network in unit tests
+  (fakes at the HTTP / Ollama / subprocess / SQLite-path seams).
+- Style: plain functions, dataclasses for data, `main()` is a thin launcher
+  (`# pragma: no cover` on `main` + `__main__`), see [[python-main-is-a-launcher]].
+- Every code PR gets `scripts/pr_review.py <PR#> --post`; never merge red
+  (`gh pr checks <PR#>`). The user merges.
+- Done = the task's **Acceptance** commands pass and are pasted into the PR body.
+
+### JOB-1 · scaffold `projects/job-agent`  (I3 · S1)
+**Depends:** none. **Files:** `projects/job-agent/{pyproject.toml, README.md,
+profile.example.yaml, jobagent/__init__.py, jobagent/settings.py, tests/test_settings.py}`,
+`.github/workflows/ci.yml` (new job `job-agent`).
+**What:** uv project, Python 3.13, deps `pydantic`, `pyyaml`, `httpx`; dev `pytest`,
+`pytest-cov`, `pytest-mock`. `settings.py`: `load_settings(env) -> Settings` reads
+`JOB_AGENT_HOME` (required; clear error if unset), derives `ledger_path`, `profile_path`,
+`out_dir`; `load_profile(path) -> Profile` (pydantic) validated against the shape of
+`profile.example.yaml` (name, location, remote/hybrid prefs, max office days, standing
+answers map, claim deny-list). README states the PII rule. Add `*.db`, `out/`, `.env` to the
+project `.gitignore`.
+**Acceptance:** `uv run pytest` green at 100%; CI job green; `profile.example.yaml` and all
+fixtures hold fictional data only.
+**Why I3 · S1:** unlocks every other task; additive, no runtime coupling.
+
+### JOB-2 · ledger: SQLite state machine with CAS  (I4 · S2)
+**Depends:** JOB-1. **Files:** `jobagent/ledger.py`, `tests/test_ledger.py`.
+**What:** tables `jobs(key PK = "<ats>:<board>:<job_id>", company, title, url, ats,
+posting_hash, state, prev_state, reason, fit, updated_at)`, `events(job_key, at, from, to,
+note)`, `spend(at, job_key, stage, provider, model, usd)`. Functions: `connect(path)`,
+`upsert_seen(conn, posting) -> bool` (new or changed hash), `transition(conn, key, frm, to,
+note) -> bool` = `UPDATE ... WHERE key=? AND state=?` (CAS; returns False on lost race;
+raises on a transition not in `ALLOWED`), `park(conn, key, reason)`, `record_spend(...)`,
+`spend_today(conn) -> float`, `by_state(conn, state)`.
+**Tests:** every allowed edge; every disallowed edge raises; two concurrent CAS → exactly
+one wins (two connections on one tmp file); park/unpark restores `prev_state`.
+**Acceptance:** 100% coverage; `ALLOWED` matches the state diagram in this arc verbatim.
+**Why I4 · S2:** dedupe and exactly-once submit both rest on it; SQLite CAS is well understood.
+
+### JOB-3 · backfill the ledger from the 19 manual rounds  (I4 · S2)
+**Depends:** JOB-2, D5 recommended. **Files:** `jobagent/backfill.py`,
+`tests/test_backfill.py`, `tests/fixtures/backfill_sample.md` (fictional rows).
+**What:** parse the "Applications submitted — do not duplicate" tables in
+`JOB_AGENT_HOME/CLAUDE.md` and the `submitted-<slug>.png` filenames into ledger rows in
+state `submitted` (or `confirmed` where the row says email-confirmed; `parked` for
+"parked for Dan"; `filtered_out` for "skipped"/"rejected on read"). Key by URL when present,
+else `"manual:<slug>:<normalized title>"`. Idempotent. Print a summary: counts per state +
+every row it could not parse.
+**Acceptance:** run against the real file → zero unparsed rows OR each listed in the PR for
+the user; a company the log marks submitted is in `submitted`/`confirmed`;
+re-run adds 0 rows.
+**Why I4 · S2:** without it the daemon re-applies to ~150 companies; parsing Markdown
+tables is fiddly but low risk (read-only on the source).
+
+### JOB-4 · board scanner (Python port of `tools/scan.js`)  (I3 · S2)
+**Depends:** JOB-2. **Files:** `jobagent/boards.py`, `tests/test_boards.py`,
+`tests/fixtures/{ashby,greenhouse}_board.json`.
+**What:** `fetch_board(client, slug) -> list[Posting]` for Ashby
+(`api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true`) then Greenhouse
+(`boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`). **No Lever** (dead boards,
+round 12). `strip_html()` as in `scan.js`. `scan(slugs) -> Iterator[Posting]` with bounded
+concurrency (10). `posting_hash` = sha256 of title+location+text. Slugs from
+`JOB_AGENT_HOME/slugs.txt`. CLI: `python -m jobagent scan` → `upsert_seen` for each.
+**Acceptance:** fixtures normalize to the same fields `scan.js` emits; a live smoke
+(`--limit 3`) on three known slugs writes rows (paste counts in PR).
+**Why I3 · S2:** a straight port of working code.
+
+### JOB-5 · hard filter: codify rounds 11–19 as pure predicates  (I4 · S2)
+**Depends:** JOB-1 (tests run on old scan JSON; no ledger needed). **Files:**
+`jobagent/filters.py`, `tests/test_filters.py`, `tests/fixtures/filter_golden.json`.
+**What:** port the rules in `JOB_AGENT_HOME/tools/filt.py` + `filt_fit19.py` (title level,
+not junior, Python primary, US, remote-OK or Bay/Sacramento hybrid ≤ profile's max office
+days, reject 4–5 day / onsite, reject non-Greenhouse/Ashby). Each predicate returns
+`(ok: bool, reason: str)`; `apply_filters(posting, profile) -> Verdict(ok, reasons)`.
+All thresholds come from the profile, none hard-coded.
+**Golden tests:** build `filter_golden.json` from the user's real decisions (round 16
+shortlist = pass; its "Rejected on read" list = fail), **with company text replaced by
+minimal fictional excerpts that preserve the triggering phrase**. Report agreement.
+**Acceptance:** golden agreement ≥ 90%; every disagreement listed in the PR with the
+predicate that caused it. **Why I4 · S2:** this is "fits me"; it is regexes over text the
+round scripts already proved.
+
+### JOB-6 · semantic pre-rank via local embeddings  (I3 · S2)
+**Depends:** JOB-5; `ollama pull nomic-embed-text` (same precondition as KB-1, shared).
+**Files:** `jobagent/embed.py`, `tests/test_embed.py`.
+**What:** `embed(texts) -> list[list[float]]` via Ollama `/api/embed`; profile vector from
+`JOB_AGENT_HOME/fit-summary.md` (a skills-only summary, no PII); `rank(candidates) ->
+[(key, cosine)]`; store on the job row; only the top N (config, default 15/day) advance.
+**Acceptance:** on the golden set, applied jobs' median rank beats rejected jobs' median
+rank (report both). **Why I3 · S2:** additive, $0, one HTTP seam.
+
+### JOB-7 · quarantined fit extractor (GPU 14b, JSON only)  (I3 · S3)
+**Depends:** JOB-6. **Files:** `jobagent/extract.py`, `jobagent/prompts/extract.txt`,
+`tests/test_extract.py`.
+**What:** Ollama `/api/chat` with `format` = the JSON schema of `Extraction{seniority,
+office_days: int|null, python_primary: bool, must_haves: list[str], red_flags: list[str],
+legal_gates: list[str], fit: int 0-100, fit_reason: str ≤ 300 chars}`. Input = JD text
+truncated to 6k chars + the skills-only summary. **No tools, no PII in the prompt.**
+pydantic validation; one retry on invalid JSON; then `park(reason="extract_invalid")`.
+Strings are length-capped and stripped of URLs before anything downstream sees them.
+Spend row with `usd=0`.
+**Acceptance:** unit tests with a fake Ollama; live run on 10 golden JDs → 10 valid
+`Extraction`s (paste them). **Why S3:** prompt quality is an unknown; JOB-8 measures it.
+
+### JOB-8 · calibrate the extractor (experiment)  (I3 · S2)
+**Depends:** JOB-7. Protocol: `/experiment` (local evidence branch, `keep_awake`, never
+merge the branch). **What:** run JOB-7 over the golden set ≥ 5 seeds each; report
+agreement with the user's real decisions as a Beta posterior + 95% CI; per-threshold
+precision/recall for `fit`; recommend the `fit` cutoff and the borderline band for JOB-9.
+**Acceptance:** FINDINGS doc via a clean PR citing branch + sha. **Why I3 · S2:** $0, no
+production change.
+
+### JOB-9 · Gemini second opinion on the borderline band  (I2 · S2)
+**Depends:** JOB-8 (sets the band), D2. **Files:** `jobagent/gemini.py`,
+`jobagent/guard.py` (credit guard, `cascade/credit_guard.py` pattern), tests.
+**What:** `google-genai` SDK; model id from config; input = the JOB-7 `Extraction` + public
+JD excerpt + skills summary (no PII); output = same schema; final fit = mean. Guarded by
+the daily ceiling (D4); a tripped guard skips (job keeps the 14b score), never blocks.
+**Acceptance:** fake-client tests; spend rows recorded. **Why I2:** a tiebreaker; the
+pipeline works without it.
+
+### JOB-10 · fact bank  (I3 · S2)
+**Depends:** JOB-1, D5. **Files:** `jobagent/facts.py`, tests; data file
+`JOB_AGENT_HOME/facts.yaml` (**not** in the repo).
+**What:** schema `Fact{id, employer, title, dates, kind: bullet|skill|metric|education,
+text, numbers: list[str]}`. The agent drafts `facts.yaml` from `JOB_AGENT_HOME/resumes/base.md`
+(+ the three source PDFs it names) with one fact per source bullet, and the claim deny-list
+from the profile. **The user reviews `facts.yaml` before JOB-11 uses it** (park until
+approved: `facts.yaml` header `reviewed: true`).
+**Acceptance:** `load_facts()` validates; every bullet in `resumes/base.md` maps to ≥ 1 fact
+id (report unmapped). **Why I3 · S2:** the ground truth the gate needs; low risk.
+
+### JOB-12 · fact gate: deterministic verifier for resumes + letters  (I4 · S2)
+**Depends:** JOB-10. (Built **before** JOB-11, which must pass it.) **Files:**
+`jobagent/factgate.py`, tests.
+**What:** input = a resume/letter Markdown where each bullet/sentence carries
+`[f:<id>]` citations (stripped before rendering). Rejects when: a citation id is
+unknown; a number, employer, title, or date range in the text is absent from the cited
+facts; a deny-list claim appears; an uncited sentence contains a number or a proper noun
+from a fixed list (employers, tools). Returns `GateResult(ok, violations[])`.
+**Acceptance:** tests include one passing doc and one doc per violation type; 100%.
+**Why I4 · S2:** this is the "never invent a fact" guarantee under the user's name;
+deterministic code, no model.
+
+### JOB-11 · tailor resume + cover letter (Claude API)  (I3 · S3)
+**Depends:** JOB-12, D4. **Files:** `jobagent/tailor.py`, `jobagent/prompts/tailor.txt`,
+tests.
+**What:** Anthropic SDK, model `claude-sonnet-5-5` (config). Input = `Extraction` +
+selected facts + the house rules (lead with professional experience; edge-cascade is a
+supporting paragraph; AI use framed as quality first). Output = cited Markdown in the
+`make-resume.js` / `make-cover.js` source format. Gate with JOB-12; on reject, one repair
+call with the violations; then `park("factgate")`. On pass: strip citations, write
+`JOB_AGENT_HOME/resumes/<slug>.md` + `cover-letters/<slug>.md`, run
+`node make-resume.js <slug>` / `node make-cover.js <slug>` (subprocess, cwd =
+`JOB_AGENT_HOME`), state → `drafted`. Spend row from the API usage.
+**Acceptance:** fake-client tests for pass / repair-pass / park; one live run on a golden
+job whose PDF the user reads (in the PR: the gate result, not the PDF).
+**Why S3:** model output under the user's name; bounded by the gate.
+
+### JOB-13 · digest + approval channel  (I3 · S2)
+**Depends:** JOB-2, D1. **Files:** `jobagent/notify.py`, tests.
+**What:** `send_digest(jobs)` = one message: index, company, title, fit, one-line reason
+(no PII, no URLs to local files). `poll_replies()` parses `approve 1,3` / `skip 2` /
+`park 4` → CAS transitions `ready → approved` etc. Unknown reply → help text.
+**Acceptance:** fake-transport tests; a live round-trip with one fictional job.
+**Why I3 · S2:** small; it is the human gate.
+
+### JOB-14 · form pre-fill agent (headless Claude Code)  (I4 · S3)
+**Depends:** JOB-2, JOB-11, D4. **Files:** `jobagent/prefill.py`,
+`jobagent/prompts/prefill.md`, tests.
+**What:** one job per invocation: `claude -p <prompt> --allowedTools <Playwright MCP
+browser_* tools + Read>` with cwd = `JOB_AGENT_HOME` (so `job-apply/CLAUDE.md`'s
+Ashby/Greenhouse playbooks load). The prompt carries the job URL, file paths, and the rule
+"**stop before Submit**; read back every field; list every checkbox/attestation and do not
+tick legal ones". The agent writes `out/<key>/prefill.json` (fields + read-back values +
+`legal_gates[]` + screenshot path). `prefill.py` validates that JSON; any `legal_gates` or
+read-back mismatch → `park`; else `drafted → ready`. Hard timeout 20 min (< the 3600 s
+visibility timeout).
+**Acceptance:** subprocess faked in unit tests; live: 3 real jobs pre-filled, screenshots
+match read-backs (user checks), zero submits.
+**Why I4 · S3:** the bulk of each round's manual effort; risky because forms lie
+([[ashby-form-playbook]]), so it stops before Submit.
+
+### JOB-15 · submit on approval  (I4 · S4) — ⏳ PARKED
+**Why S4:** irreversible, under the user's name, on forms known to report set fields while
+the underlying state is empty; past rounds recorded a mis-set screening answer and
+falsely-reported successes. **De-risk steps (re-score after each):**
+1. JOB-14 runs for ≥ 2 weeks with the user clicking Submit by hand; log read-back vs
+   screenshot mismatches per ATS → Beta posterior of a clean pre-fill.
+2. Submit path = re-open the form, re-verify every field against `prefill.json`, CAS
+   `approved → submitting` **before** clicking (a redelivered task finds `submitting` and
+   exits), click once, screenshot, `→ submitted`; never retry a click automatically.
+3. Allow only ATS/form shapes whose clean-pre-fill posterior lower bound clears a bar the
+   user sets. When steps 1–3 hold, S4 → S3 and JOB-15 enters at I4.
+
+### JOB-16 · confirmation-email reader  (I3 · S3)
+**Depends:** JOB-2, D3. **Files:** `jobagent/mail.py`, tests.
+**What:** Gmail API `gmail.readonly`, query recent mail from ATS senders; match to
+`submitted` jobs by company name + date window; GPU 14b classifies
+`confirmation | rejection | interview | other` (JSON schema, same quarantine as JOB-7);
+CAS transition. Unmatched mail → digest line, no state change.
+**Acceptance:** fake-API tests; live: the last 20 known confirmations match.
+**Why S3:** OAuth + fuzzy matching; read-only scope bounds the blast radius.
+
+### JOB-17 · the daemon: Celery beat + worker on the shared Redis  (I3 · S3)
+**Depends:** JOB-4, JOB-5, JOB-7, JOB-13 (later stages plug in as they ship).
+**Files:** `jobagent/celery_app.py`, `jobagent/tasks.py`, `scripts/start-job-agent.ps1`
+(in `projects/job-agent/`), tests (eager mode).
+**What:** Celery app `jobagent`, queue `jobs`, Redis URL from env (same broker as
+edge-cascade, different queue; never consumes `cascade` queues). Beat: `scan` every 6 h →
+chain `filter → embed → extract` on new rows; `tailor` + `prefill` for the top N within the
+daily spend ceiling; `digest` at 08:00 PT; `poll_replies` every 5 min; `mail` hourly.
+Every task is idempotent (CAS) and `time_limit` < 3600 s. `keep_awake` while a chain runs
+([[experiment-machine-sleep-state]]). The start script launches beat + one worker with
+`--concurrency 1` (one browser at a time).
+**Acceptance:** eager-mode tests for the chain; a live 24 h run produces a digest and
+zero duplicate rows (paste `by_state` counts).
+**Why S3:** long-running process on a laptop; bounded by the CAS and the spend guard.
+
+### JOB-18 · funnel + spend report  (I2 · S1)
+**Depends:** JOB-2. **Files:** `jobagent/report.py`, tests.
+**What:** `python -m jobagent report` → counts per state, $ per stage per job, and
+interview rate per source (Beta posterior + 95% CI), weekly.
+**Acceptance:** fixture DB → expected table. **Why I2 · S1:** tells us whether the mesh
+pays for itself; small.
+
+**JOB pick order (impact ↓, severity ↑; dependencies pull forward):**
+JOB-1 (dep) → JOB-2 → JOB-3 → JOB-5 → JOB-10 (dep) → JOB-12 → JOB-14 → JOB-4 → JOB-6 →
+JOB-13 → JOB-7 → JOB-8 → JOB-11 → JOB-16 → JOB-17 → JOB-9 → JOB-18. **Parked:** JOB-15.
+**First useful milestone:** after JOB-5 + JOB-4, `scan` + `filter` replace a manual
+round's discovery step. **Second:** after JOB-14, a round = review the digest and click Submit.
 
 ---
 
