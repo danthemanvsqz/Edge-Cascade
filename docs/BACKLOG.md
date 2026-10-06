@@ -5,7 +5,9 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-10-06** — new arc: **SQ** (signal quality: diagnose the cap-everywhere
+> **Last groomed: 2026-10-06 (later)** — new arc: **NH** (NPU as a helper node: spec
+> extraction → DSL, GPU best-of-N selected by the gate, ledger-driven NPU drafting) and
+> **CI-1/CI-2** housekeeping; KB-1/KB-2 updated. Earlier 2026-10-06: new arc: **SQ** (signal quality: diagnose the cap-everywhere
 > finding, pin the gate to the task's language, a GPU sampling-temperature experiment, router
 > JSON fallback, Ollama `num_ctx`), from a critique of an external RAG/quality analysis.
 > Updated KB-1 (embedder off the GPU), KB-3 (repo-symbol corpus arm, new KB-4), JOB-6, and
@@ -20,20 +22,26 @@ dropped, the `S4` row is parked + de-risked.
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor                     I3 Major                          I4 Critical
  S1 Safe                  ✗ (none)     MD-4 docs sweep ·            JOB-1 scaffold ·                  — (none)
-                                          JOB-18 funnel report ·       DX-1 cap-everywhere diagnosis
-                                          RT-1 router fallback probe ·
-                                          OL-1 pin Ollama num_ctx
+                                          JOB-18 funnel report ·       DX-1 cap-everywhere diagnosis ·
+                                          RT-1 router fallback probe · NH-0 NPU multi-model spike
+                                          OL-1 pin Ollama num_ctx ·
+                                          CI-1 actions Node 24 ·
+                                          CI-2 no false-alarm cancels
  S2 Low                   ✗ (none)     MD-2 relocate shared →       KB-1 ingest · KB-3 experiment ·   ★ EDGE-1 supervisor
                                           MD-3 delete servers ·        KB-4 repo-symbol corpus ·         launch (acceptance left) ·
                                           JOB-9 Gemini 2nd opinion     EXP-MR-1 model refresh ·          JOB-2 ledger · JOB-3 backfill ·
                                                                        EXP-SP-1 GPU temperature ·        JOB-5 filter · JOB-12 fact gate
                                                                        DX-2 gate = task language ·
+                                                                       NH-1 spec extractor ·
+                                                                       NH-4 pair experiment ·
                                                                        JOB-4 scanner · JOB-6 embed ·
                                                                        JOB-8 calibrate · JOB-10 facts ·
                                                                        JOB-13 approval
  S3 Moderate              ✗ (none)     — (none)                     KB-2 retrieve step ·              JOB-14 pre-fill agent
                                                                        EXP-MR-2 MoE offload arm ·
                                                                        JOB-7 extractor · JOB-11 tailor ·
+                                                                       NH-2 wire DSL · NH-3 best-of-N ·
+                                                                       NH-5 ledger NPU drafting ·
                                                                        JOB-16 email · JOB-17 daemon
  S4 Severe (park)         ✗ (none)     ⏳ #5 PT-4 HOLD (re-probe)   — (none)                          ⏳ JOB-15 auto-submit
 ```
@@ -47,6 +55,10 @@ dropped, the `S4` row is parked + de-risked.
 2a. **DX-1** diagnose cap-everywhere + `repair_rnds=0` (I3·S1) — read-only; **gates every
    experiment below** (if the repair loop isn't running, every baseline is confounded).
    Then **EXP-SP-1** GPU temperature A/B (I3·S2) and **DX-2** gate = task language (I3·S2)
+2c. **NH arc** (user, 2026-10-06): **NH-0** NPU multi-model spike (I3·S1; ahead of KB-1 because
+   it settles the embedder's device) → **NH-1** spec extractor (I3·S2) → **NH-2** wire DSL
+   (I3·S3, needs DX-2) → **NH-3** best-of-N (I3·S3) → **NH-4** experiment (I3·S2, after
+   EXP-SP-1) → **NH-5** ledger-driven NPU drafting (I3·S3); interleave with KB at equal cells
 2b. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
    ordered first because it is on the revenue path (user, 2026-09-24); book file in hand,
    blocked on dep approval
@@ -58,7 +70,8 @@ dropped, the `S4` row is parked + de-risked.
    live substrate); can share KB-3's evidence-branch session
 6. **EXP-MR-2** MoE partial-offload arm (I3·S3) — after EXP-MR-1's harness exists
 7. **MD-4** docs sweep (I2·S1), **RT-1** router fallback probe (I2·S1), **OL-1** pin Ollama
-   `num_ctx` (I2·S1; pulled forward — EXP-MR-1 precondition)
+   `num_ctx` (I2·S1; pulled forward — EXP-MR-1 precondition), **CI-1** + **CI-2** CI
+   housekeeping (I2·S1; one small workflow PR)
 8. **MD-2** relocate shared modules out of `mcp_servers/` (I2·S2), then **MD-3** delete the servers (I2·S2)
 
 **Parked:** JOB-15 auto-submit (I4·S4) — de-risk steps in its block. #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
@@ -574,6 +587,162 @@ both backends agree) and record it in the result dict (SR-1 identity fields).
 
 ---
 
+## NH arc — NPU as a helper node; GPU best-of-N selected by the gate  (user, 2026-10-06)
+
+**Why (user, 2026-10-06):** raise local inference quality and use the hardware better: RAG
+for the GPU, and move NPU load from coding inference to helper roles in the pipeline.
+**Evidence that shaped the plan:** `runs/cascade.rec` (144 outcomes to 2026-10-06) = **NPU
+WIN 43 (30%) · GPU WIN 46 (32%) · capped→tier3 55 (38%)**. The NPU wins about as often as the
+GPU, mostly on short tasks, so pulling it off coding entirely would push cheap wins up a
+tier. Some of those NPU WINs are false (git-wrapped-in-Python, DX-2). **Decision:** keep NPU
+drafting only for task classes where the cleaned ledger proves it wins (NH-5), and give the
+NPU helper jobs everywhere else.
+**Why spec extraction + best-of-N are a pair:** most routes carry no DSL, so the gate is
+syntax-only. That is where false WINs come from, and it is why sampling more candidates
+cannot help: a syntax gate cannot tell a right candidate from a wrong one. NH-1/NH-2 give the
+gate a functional check on more routes; NH-3 spends GPU calls on independent samples that
+the functional gate can then select between.
+
+**Target shape (each node behind a default-off flag until NH-4 measures it):**
+```
+route (NPU) ─┬─ task class with a proven NPU win rate (NH-5) ─► NPU draft ─► gate
+             └─ everything else:
+                spec-extract (NPU, NH-1/2) → retrieve (KB arc; NPU embed + rerank if NH-0 allows)
+                → GPU sample, up to N, gate-selected (NH-3) → gate with extracted DSL (CPU)
+                → Tier 3
+```
+**Ruled out (recorded so it isn't re-proposed):** NPU-drafts / GPU-verifies speculative
+decoding. Syncing the two devices on every token cancels the gain. Same-GPU speculative
+decoding (0.5b draft for the 14b) only buys speed, which is a tiebreaker here
+([[metric-priorities-quality-cost-over-latency]]).
+**Ordering:** after DX-1 (repair-loop baseline) and alongside DX-2 (gate language), which
+NH-2 depends on.
+
+### NH-0 · spike: how many models can the NPU hold at once?  (I3 · S1)
+**Question:** can `openvino_genai` keep the 1.5B router/drafter **plus** a spec-extractor
+prompt (same model, no new weights), an embedder (`bge-small-en-v1.5`, INT8 IR), and a small
+cross-encoder reranker resident on the NPU together, and at what compile time, memory, and
+per-call latency? **Fallback device:** the Arrow Lake **Xe iGPU** (OpenVINO `GPU` device —
+check the device-name ordering against the RTX; OpenVINO only enumerates Intel GPUs). Then CPU.
+**What:** scratch-venv script, no repo change: load each combination, time 50 calls each,
+record `npu_compile_s`, resident memory, p50/p95 latency; run the existing router
+concurrently to check for contention. **Output:** a short FINDINGS doc with a placement
+table (model → device) that NH-1 and KB-1 consume.
+**Why I3 · S1:** decides where every helper node runs; read-only spike.
+**Acceptance:** the placement table exists with measured numbers; KB-1's embedder choice
+(currently CPU-pinned `nomic-embed-text`) is confirmed or switched by it.
+
+### NH-1 · spec extractor: prompt → DSL test cases  (I3 · S2) — after NH-0
+**What:** `cascade/spec.py` — `extract_spec(prompt) -> Spec(fn_name, arity, cases)` via the
+NPU model with a strict JSON output contract, then `dsl_from_cases(fn_name, cases)` (exists,
+`cascade/verifier.py`). **Safety rule (the whole point):** extract **only what the prompt
+states**: examples written in the prompt (`f(3) -> 6`), the stated name and signature.
+Never invent cases. A prompt with no examples yields a signature-only check (the function
+exists and accepts the stated arity), and a parse failure yields `None` (today's behaviour).
+A wrong extracted test rejects correct code, which is worse than no test.
+**Calibration (offline, $0):** run the extractor over the `scripts/model_bench.py` subjects
+(they have ground-truth DSLs and reference solutions) plus the historical prompts in
+`runs/cascade.rec`. Measure **false-reject rate = extracted DSL fails a known-correct
+reference solution** (must be **0**) and coverage (share of prompts that get ≥ 1 case).
+**Why S2:** a pure module + offline calibration; nothing in the chain calls it yet.
+**Acceptance:** false-reject = 0 on every reference solution; coverage reported; fakes at
+the NPU seam; CI green at 100%.
+
+### NH-2 · wire extracted DSL into the budget chain  (I3 · S3) — after NH-1 + DX-2
+**What:** a `_budget_spec` step after `_budget_route`: when the caller passed no `--dsl`, set
+`env["dsl"] = extract_spec(...)`, tagged `dsl_source="extracted"` in the trace. A
+caller-supplied DSL always wins. Flag `CASCADE_SPEC_EXTRACT = off | on`, **default off**,
+no-op via the existing `_shortcut` pattern.
+**Why I3:** turns syntax-only routes into functional ones, which cuts false WINs and makes
+every later quality lever measurable. **Why S3:** a hot-path chain change (VR-4 / KB-2
+class). An extracted test that is wrong would flip correct code to a cap; the NH-1
+false-reject gate and the default-off flag bound that.
+**Guard:** parity batch with the flag off; with it on, re-run NH-1's reference set through
+the live chain.
+**Acceptance:** with `off`, outcomes match today; with `on`, a prompt carrying examples shows
+`dsl_source=extracted` and a functional gate result in the trace.
+
+### NH-3 · GPU best-of-N, selected by the gate  (I3 · S3) — after NH-2
+**What:** when a functional DSL exists (caller-supplied or extracted), the GPU tier may
+spend its round budget on **independent fresh samples** (stop at the first that passes the
+gate) instead of repair rounds that condition on the failed candidate. Mode flag
+`CASCADE_GPU_STRATEGY = repair | resample | hybrid` (hybrid = one fresh resample then
+repair), **default `repair`** (today). The GPU-call budget is the same `cap` in every mode, so
+the comparison is at equal compute and the spend invariant is untouched. Prior art:
+PD-1 v2 skip-repair (+22.8 pp) already showed that a fresh generate beats repairing a
+poisoned draft.
+**Why I3:** likely the strongest local quality lever: local samples are $0 and quality
+outranks latency. **Why S3:** changes what the GPU tier does with its budget; bounded by the
+unchanged cap, the default-off mode, and `over_cap_episodes = 0`.
+**Acceptance:** each mode stays within `cap` GPU calls (tested); `repair` is byte-identical
+to today; the trace records the mode and which sample won.
+
+### NH-4 · experiment: does the pair raise the local win rate?  (I3 · S2) — after NH-3
+**Hypothesis (stated before running):** at an equal GPU-call budget, `resample` with an
+extracted DSL beats `repair` on post-gate functional pass rate, and the gain is concentrated
+on prompts that state examples. The false-WIN rate (scored against the reference solutions)
+falls with `CASCADE_SPEC_EXTRACT=on`.
+**Arms:** extract {off, on} × strategy {repair, resample, hybrid}. Temperature fixed at
+EXP-SP-1's winner (resample needs diverse samples, so EXP-SP-1 should report first).
+**Subjects:** `model_bench.py` functional subjects + parity A/B/C + git subjects.
+**Trials:** ≥ 30 per (arm × subject), seeds recorded (SR-1). **Metrics:** functional pass
+rate against reference solutions (**not** the gate's own verdict, which is the thing that
+changed), cap rate, GPU calls per resolved task → Beta posteriors, 95% CI,
+P(arm > control), paired conditionals. **Decision gate:** flip a default only if
+P(arm > control) ≥ 0.95 pooled and no subject regresses. Protocol: `/experiment`.
+**Why I3 · S2:** measurement-only, $0, evidence branch.
+
+### NH-5 · ledger-driven NPU drafting  (I3 · S3) — after DX-2 cleans the ledger
+**What:** the router decides *whether* the NPU drafts from the measured NPU win rate per
+task class (router `category` × difficulty band) in the cleaned `cascade.rec`, not from
+the difficulty threshold alone. Classes below a floor (e.g. P(NPU win) < 0.3 by Beta
+posterior) skip straight to the GPU path; the NPU's freed time goes to the helper nodes.
+Re-estimated from the ledger on a schedule, never per call.
+**Why I3:** this is the user's "move NPU load off coding" done with evidence: drafting stays
+where it wins and stops where it only delays the GPU. **Why S3:** changes tier selection,
+the same class as #8 difficulty-recal; measure cap rate and the NPU-win share before and
+after on `cascade.rec`.
+**Acceptance:** a per-class table of NPU win posteriors is committed with the change; the
+skip decision is unit-tested against it; win/lose shape on the parity batch is no worse.
+
+**Not yet scored (follow-ups from the 2026-10-06 brainstorm):**
+- **NPU reranker in KB-2's retrieve step**: CPU search for the top 20, rerank to the top 3.
+  Placement comes from NH-0. Usually a bigger precision gain than a better embedder.
+- **Hybrid search** (BM25 on CPU + vectors): exact symbol names beat embeddings on code;
+  pairs with KB-4.
+- **Solved-history corpus**: the pipeline's own past WIN answers as few-shot examples.
+  This is the KB arc's top predicted corpus, and it is not yet an item. Needs DX-2 first so
+  false WINs don't seed it.
+- **NPU context compression** of long retrieved passages, if the KB-2 token cap bites.
+- **Parallel gate execution** for N candidates on CPU, if NH-3 drops its early-exit.
+
+---
+
+## CI housekeeping
+
+### CI-1 · bump GitHub Actions off Node 20  (I2 · S1)
+**Fact:** every CI run carries a deprecation warning: `actions/checkout@v4` and
+`astral-sh/setup-uv@v5` target Node 20 and are being forced onto Node 24.
+**What:** bump both in `.github/workflows/ci.yml` to their current majors (check each
+action's releases for the Node 24 major; keep `enable-cache` + `python-version` inputs
+compatible).
+**Acceptance:** a CI run on the PR shows no Node 20 annotation and stays green.
+
+### CI-2 · stop the false-alarm "cancelled" CI runs  (I2 · S1)
+**Fact (2026-10-06, PR #156; same on #155):** a force-push to a PR branch fired two
+`pull_request` runs milliseconds apart. `concurrency: cancel-in-progress` cancelled one, and
+GitHub shows that as a **failure-level annotation** ("Canceling since a higher priority
+waiting request … exists") on the job named `… + bandit (Windows)`. That reads like a bandit
+error; it isn't (bandit: "No issues identified"), and re-running the cancelled job cleared
+it. Separately, `on: push` with no branch filter runs CI twice for every PR-branch push
+(once for `push`, once for `pull_request`).
+**What:** (1) `on: push: branches: [main]` so PR branches run CI once, via `pull_request`;
+(2) `cancel-in-progress: ${{ github.event_name != 'pull_request' }}` so superseded PR runs
+finish (about 40 s each) instead of being cancelled into a red annotation. The check on the
+new head SHA is unaffected.
+**Why S1:** workflow-only; revert = the previous file.
+**Acceptance:** a force-push to a PR yields no cancelled run; a push to main still runs CI.
+
 ## KB arc — RAG: local knowledge base + `retrieve` step  (product path)
 
 **Why (user, 2026-09-24; corrected same day — the original prompt said "DAG", a typo for
@@ -623,7 +792,8 @@ since Slice 7 the worker holds the 14b in-process at ~10.5 GB (PT-1 VRAM delta 1
 KV cache needs at long context ([[llm-vram-cliff-12gb]]). One short query embed per route
 is cheap on CPU; the one-time book ingest is a batch job. Fallbacks if CPU latency is bad:
 a small ONNX/OpenVINO embedder (`bge-small-en-v1.5`) on CPU, or on the NPU *only if* a
-second `openvino_genai` pipeline can share the NPU with the router/drafter (unverified).
+second `openvino_genai` pipeline can share the NPU with the router/drafter (unverified;
+**NH-0 measures this** and its placement table decides the device before KB-1 starts).
 store = LanceDB
 (embedded, file-based, pip-only, Apache-2.0, Windows wheels); chunking = the book's own
 boundaries with `corpus`, `chapter`, `topic`, `tip`, `page`, `text` columns so citations
@@ -668,6 +838,9 @@ existing `_shortcut` pattern.
 **Why I3:** this is the RAG path the product is built on, and it feeds the pipeline's own
 win rate. **Why S3:** a hot-path chain change (same class as VR-4) plus prompt changes that
 move the primary metric; blast radius confined by the default-off flag.
+**Context cap (added 2026-10-06):** retrieved passages are truncated to a hard token budget
+(`CASCADE_RAG_MAX_TOKENS`, default ~1,000) before prepending. The 14b slows sharply as
+context grows ([[llm-vram-cliff-12gb]]), and NH-3 multiplies prompt cost by the sample count.
 **Guard:** parity check (`scripts/parity_batch.py`, Case B within ±20%) with the flag `off`
 before merge; the live `tests/test_canvas_live_behavior.py` probe.
 **Acceptance:** with `off`, `runs/cascade.rec` outcomes match today's shape apart from the
