@@ -5,7 +5,9 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-10-06 (later)** — new arc: **NH** (NPU as a helper node: spec
+> **Last groomed: 2026-10-06 (latest)** — new arc: **PG** (dashboard playground: run the
+> pipeline from a text area, watch the flow + per-run events + worker logs; spec in
+> DESIGN-dashboard-playground.md). Earlier 2026-10-06: new arc: **NH** (NPU as a helper node: spec
 > extraction → DSL, GPU best-of-N selected by the gate, ledger-driven NPU drafting) and
 > **CI-1/CI-2** housekeeping; KB-1/KB-2 updated. Earlier 2026-10-06: new arc: **SQ** (signal quality: diagnose the cap-everywhere
 > finding, pin the gate to the task's language, a GPU sampling-temperature experiment, router
@@ -25,15 +27,17 @@ dropped, the `S4` row is parked + de-risked.
                                           JOB-18 funnel report ·       DX-1 cap-everywhere diagnosis ·
                                           RT-1 router fallback probe · NH-0 NPU multi-model spike
                                           OL-1 pin Ollama num_ctx ·
+                                          PG-1 solve --json/stdin ·
                                           CI-1 actions Node 24 ·
                                           CI-2 no false-alarm cancels
  S2 Low                   ✗ (none)     MD-2 relocate shared →       KB-1 ingest · KB-3 experiment ·   ★ EDGE-1 supervisor
                                           MD-3 delete servers ·        KB-4 repo-symbol corpus ·         launch (acceptance left) ·
-                                          JOB-9 Gemini 2nd opinion     EXP-MR-1 model refresh ·          JOB-2 ledger · JOB-3 backfill ·
-                                                                       EXP-SP-1 GPU temperature ·        JOB-5 filter · JOB-12 fact gate
+                                          JOB-9 Gemini 2nd opinion ·   EXP-MR-1 model refresh ·          JOB-2 ledger · JOB-3 backfill ·
+                                          PG-4 worker log pane         EXP-SP-1 GPU temperature ·        JOB-5 filter · JOB-12 fact gate
                                                                        DX-2 gate = task language ·
                                                                        NH-1 spec extractor ·
                                                                        NH-4 pair experiment ·
+                                                                       PG-2 run panel · PG-3 event log ·
                                                                        JOB-4 scanner · JOB-6 embed ·
                                                                        JOB-8 calibrate · JOB-10 facts ·
                                                                        JOB-13 approval
@@ -55,13 +59,16 @@ dropped, the `S4` row is parked + de-risked.
 2a. **DX-1** diagnose cap-everywhere + `repair_rnds=0` (I3·S1) — read-only; **gates every
    experiment below** (if the repair loop isn't running, every baseline is confounded).
    Then **EXP-SP-1** GPU temperature A/B (I3·S2) and **DX-2** gate = task language (I3·S2)
-2c. **NH arc** (user, 2026-10-06): **NH-0** NPU multi-model spike (I3·S1; ahead of KB-1 because
+2b. **NH arc** (user, 2026-10-06): **NH-0** NPU multi-model spike (I3·S1; ahead of KB-1 because
    it settles the embedder's device) → **NH-1** spec extractor (I3·S2) → **NH-2** wire DSL
    (I3·S3, needs DX-2) → **NH-3** best-of-N (I3·S3) → **NH-4** experiment (I3·S2, after
    EXP-SP-1) → **NH-5** ledger-driven NPU drafting (I3·S3); interleave with KB at equal cells
-2b. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
+2c. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
    ordered first because it is on the revenue path (user, 2026-09-24); book file in hand,
    blocked on dep approval
+2d. **PG arc** (user, 2026-10-06): **PG-1** (I2·S1) → **PG-2** (I3·S2) → **PG-3** (I3·S2) →
+   **PG-4** (I2·S2). PG-1 + PG-2 are cheap and make every later pipeline change (DX-1
+   repros, NH, KB) observable from the browser, so they may be pulled ahead of KB-1
 3. **KB-2** `retrieve` step in the budget chain (I3·S3) — depends on KB-1
 3a. **KB-4** repo-symbol corpus (I3·S2) — after KB-1; must land before KB-3 so KB-3 can run
    its `symbols` arm
@@ -715,6 +722,46 @@ skip decision is unit-tested against it; win/lose shape on the parity batch is n
   false WINs don't seed it.
 - **NPU context compression** of long retrieved passages, if the KB-2 token cap bites.
 - **Parallel gate execution** for N candidates on CPU, if NH-3 drops its early-exit.
+
+---
+
+## PG arc — dashboard playground: run the pipeline directly, watch it flow  (user, 2026-10-06)
+
+**Spec:** [DESIGN-dashboard-playground.md](DESIGN-dashboard-playground.md). Read it before any PG
+slice; it carries the architecture, invariants, file lists and acceptance in full.
+**Why (user, 2026-10-06):** a text area on the dashboard that bypasses the agent, sends a
+prompt straight into the Canvas pipeline, and shows the run moving through the flow graph
+with a per-run event log and the worker's logs: a test bench for every pipeline change.
+**Decisions (user):** D1 playground runs are recorded in `runs/cascade.rec` tagged
+`source=playground` and **excluded by default** from DX-1 / NH-5 / experiment analyses;
+D2 laptop-only (bind `127.0.0.1`, no auth; today the server listens on all interfaces);
+D3 per-run settings deferred to PG-5.
+**Key constraint:** Node has no Celery client, so the dashboard **spawns**
+`scripts/mesh_solve_canvas.py` (prompt on stdin, argv fixed) and never builds Celery
+messages. Run identity = the chain's `root_id`.
+
+### PG-1 · `mesh_solve_canvas.py --json`, stdin prompt, `source` tag  (I2 · S1)
+Split `canvas_client` dispatch from wait so `root_id` is known at dispatch; JSONL mode
+(`dispatched` → `outcome` / `error`); `--query-file -`; `--source` field in `cascade.rec`
++ default-exclude in ledger readers. Human-readable output unchanged. Spec §6 PG-1.
+
+### PG-2 · run panel + `POST /api/run`  (I3 · S2) — after PG-1
+Bind `127.0.0.1`; prompt / DSL / topology form; spawn + JSONL parse in `dashboard/src/run.ts`;
+one run at a time (`409`); status, outcome, trace, last-10 history with Re-run. **Usable
+alone:** outcome + the existing global node lighting. Spec §6 PG-2.
+
+### PG-3 · per-run event log + step inspector + path highlight  (I3 · S2) — after PG-2
+Receiver publishes truncated per-task frames (`root_id`, task, state, runtime, args,
+result) on `cascade.live.events`; dashboard timeline filtered by `root_id`, click a step
+to see its input/output, the flow graph highlights the run's path. Spec §6 PG-3.
+
+### PG-4 · worker log shipping + log pane  (I2 · S2) — after PG-3
+`RedisLogHandler` on the worker → `cascade.live.logs` with `task_id` / `root_id`, rate
+limited, never raises; log pane with a level filter. Spec §6 PG-4.
+
+### PG-5 · per-run settings  (not yet scored) — deferred (D3)
+Needs the chain to read settings from the envelope instead of `CONFIG`; score after NH-3
+and KB-2 exist. Spec §6 PG-5.
 
 ---
 
