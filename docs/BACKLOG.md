@@ -5,7 +5,11 @@ Live, prioritized backlog. Ordering and zones follow
 impact descending, then severity ascending (safest first); the `I1` column is
 dropped, the `S4` row is parked + de-risked.
 
-> **Last groomed: 2026-10-05** — new arc: **JOB** (job-search daemon over a GPU / Gemini /
+> **Last groomed: 2026-10-06** — new arc: **SQ** (signal quality: diagnose the cap-everywhere
+> finding, pin the gate to the task's language, a GPU sampling-temperature experiment, router
+> JSON fallback, Ollama `num_ctx`), from a critique of an external RAG/quality analysis.
+> Updated KB-1 (embedder off the GPU), KB-3 (repo-symbol corpus arm, new KB-4), JOB-6, and
+> EXP-MR-1 (pin `num_ctx` + temperature across arms). Prior 2026-10-05: new arc: **JOB** (job-search daemon over a GPU / Gemini /
 > Claude mesh; 18 tasks sized for a Sonnet agent, JOB-15 submit parked). Prior 2026-09-24: new arc: **KB** (RAG: book text in a local vector store,
 > retrieved into the pipeline's prompts; product path). Prior 2026-09-19: new arcs: **EDGE-1** (supervisor launch, HIGH PRIORITY),
 > **MD** (deprecate the edge MCP servers) and **EXP-MR** (local model refresh).
@@ -15,12 +19,17 @@ dropped, the `S4` row is parked + de-risked.
 
 ```
  Severity ↓ \ Impact →   I1 Trivial   I2 Minor                     I3 Major                          I4 Critical
- S1 Safe                  ✗ (none)     MD-4 docs sweep ·            JOB-1 scaffold                    — (none)
-                                          JOB-18 funnel report
+ S1 Safe                  ✗ (none)     MD-4 docs sweep ·            JOB-1 scaffold ·                  — (none)
+                                          JOB-18 funnel report ·       DX-1 cap-everywhere diagnosis
+                                          RT-1 router fallback probe ·
+                                          OL-1 pin Ollama num_ctx
  S2 Low                   ✗ (none)     MD-2 relocate shared →       KB-1 ingest · KB-3 experiment ·   ★ EDGE-1 supervisor
-                                          MD-3 delete servers ·        EXP-MR-1 model refresh ·          launch (acceptance left) ·
-                                          JOB-9 Gemini 2nd opinion     JOB-4 scanner · JOB-6 embed ·     JOB-2 ledger · JOB-3 backfill ·
-                                                                       JOB-8 calibrate · JOB-10 facts ·  JOB-5 filter · JOB-12 fact gate
+                                          MD-3 delete servers ·        KB-4 repo-symbol corpus ·         launch (acceptance left) ·
+                                          JOB-9 Gemini 2nd opinion     EXP-MR-1 model refresh ·          JOB-2 ledger · JOB-3 backfill ·
+                                                                       EXP-SP-1 GPU temperature ·        JOB-5 filter · JOB-12 fact gate
+                                                                       DX-2 gate = task language ·
+                                                                       JOB-4 scanner · JOB-6 embed ·
+                                                                       JOB-8 calibrate · JOB-10 facts ·
                                                                        JOB-13 approval
  S3 Moderate              ✗ (none)     — (none)                     KB-2 retrieve step ·              JOB-14 pre-fill agent
                                                                        EXP-MR-2 MoE offload arm ·
@@ -35,14 +44,21 @@ dropped, the `S4` row is parked + de-risked.
 2. **JOB arc, I4 cells** (user, 2026-10-05: the job search is the most time-sensitive work):
    JOB-1 (dependency, I3·S1) → JOB-2 → JOB-3 → JOB-5 → JOB-10 (dependency) → JOB-12 → JOB-14;
    the rest of the arc follows its own pick order, interleaved with KB/EXP-MR at equal cells
-2a. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
-   ordered first because it is on the revenue path (user, 2026-09-24); blocked on the book file
+2a. **DX-1** diagnose cap-everywhere + `repair_rnds=0` (I3·S1) — read-only; **gates every
+   experiment below** (if the repair loop isn't running, every baseline is confounded).
+   Then **EXP-SP-1** GPU temperature A/B (I3·S2) and **DX-2** gate = task language (I3·S2)
+2b. **KB-1** ingest the book into a local knowledge base (I3·S2) — same cell as EXP-MR-1,
+   ordered first because it is on the revenue path (user, 2026-09-24); book file in hand,
+   blocked on dep approval
 3. **KB-2** `retrieve` step in the budget chain (I3·S3) — depends on KB-1
+3a. **KB-4** repo-symbol corpus (I3·S2) — after KB-1; must land before KB-3 so KB-3 can run
+   its `symbols` arm
 4. **KB-3** RAG-vs-control experiment (I3·S2) — depends on KB-2, so it runs after it
 5. **EXP-MR-1** model refresh, 12 GB-resident candidates (I3·S2) — needs EDGE-1 (free VRAM,
    live substrate); can share KB-3's evidence-branch session
 6. **EXP-MR-2** MoE partial-offload arm (I3·S3) — after EXP-MR-1's harness exists
-7. **MD-4** docs sweep (I2·S1)
+7. **MD-4** docs sweep (I2·S1), **RT-1** router fallback probe (I2·S1), **OL-1** pin Ollama
+   `num_ctx` (I2·S1; pulled forward — EXP-MR-1 precondition)
 8. **MD-2** relocate shared modules out of `mcp_servers/` (I2·S2), then **MD-3** delete the servers (I2·S2)
 
 **Parked:** JOB-15 auto-submit (I4·S4) — de-risk steps in its block. #5 PT-4 (llama-cpp-python bump) — HOLD on AVX-512. **Next de-risk step
@@ -196,7 +212,7 @@ name + queue `jobs`) and **Ollama** (`:11434`). The existing Node tools in `job-
 |---|---|---|---|
 | scan boards | hundreds/day | no model | JOB-4 |
 | hard filter + dedupe | hundreds | no model | JOB-5, JOB-2 |
-| semantic pre-rank | hundreds | GPU embed (`nomic-embed-text`) | JOB-6 |
+| semantic pre-rank | hundreds | CPU embed (`nomic-embed-text`, `num_gpu: 0`) | JOB-6 |
 | structured fit extraction (quarantine) | dozens | GPU 14b, JSON-only | JOB-7 |
 | borderline second opinion | a few | Gemini Flash (anonymized input) | JOB-9 |
 | tailor resume + letter | a few/day | Claude API (Sonnet) | JOB-11 |
@@ -312,7 +328,9 @@ round scripts already proved.
 ### JOB-6 · semantic pre-rank via local embeddings  (I3 · S2)
 **Depends:** JOB-5; `ollama pull nomic-embed-text` (same precondition as KB-1, shared).
 **Files:** `jobagent/embed.py`, `tests/test_embed.py`.
-**What:** `embed(texts) -> list[list[float]]` via Ollama `/api/embed`; profile vector from
+**What:** `embed(texts) -> list[list[float]]` via Ollama `/api/embed` pinned to CPU
+(`options: {"num_gpu": 0}`, same rule as KB-1 — the daemon must not contend with the
+worker's resident 14b); profile vector from
 `JOB_AGENT_HOME/fit-summary.md` (a skills-only summary, no PII); `rank(candidates) ->
 [(key, cosine)]`; store on the job row; only the top N (config, default 15/day) advance.
 **Acceptance:** on the golden set, applied jobs' median rank beats rejected jobs' median
@@ -461,6 +479,101 @@ round's discovery step. **Second:** after JOB-14, a round = review the digest an
 
 ---
 
+## SQ arc — signal quality: is the pipeline measuring and sampling what we think?  (2026-10-06)
+
+**Origin:** a critique (2026-10-06) of an external "why is local inference quality low"
+analysis. Most of its root causes did not apply here: the 8 GB VRAM spill assumption (this box
+has 12 GB with every 14b layer on the GPU, PT-1), Ollama `num_ctx=2048` (production GPU
+is llama_cpp at `n_ctx=8192`, Slice 7), and missing ChatML on the NPU (`npu_worker._CHAT`
+already wraps `<|im_start|>`/`<|im_end|>`, greedy decode). Its "100% deterministic"
+grammar-constrained-shell and "9.5/10" claims had no evidence. What survived is below, plus
+two open findings from 2026-09-19 that the critique pointed back to. **Order matters:** DX-1
+first — every experiment's baseline is suspect until we know the repair loop runs.
+
+### DX-1 · diagnose cap-everywhere + `repair_rnds=0`  (I3 · S1)
+**Evidence (2026-09-19 sessions, in the open-threads log, not yet investigated):** every
+route that session capped — git commands (which should WIN post-VR-4), `probe_all` with a
+DSL, commit messages, PR bodies; one `budget` route took > 5 min; and a DSL-gated
+`plan_repairs` route capped with **`repair_rnds=0` in 12.7 s**, i.e. the GPU repair round may
+never have run. The tail of `runs/cascade.rec` is still `done: LOSE (-> capped->tier3)`.
+**What (read-only first):** (1) tabulate `runs/cascade.rec` since 2026-09-19 by
+outcome × task kind × `repair_rnds` × wall time; (2) for each cap with `repair_rnds=0`, trace
+the chain step that ended it (`topologies_canvas` budget chain: route → draft → gate →
+repair) — is it the skip-repair-on-degen path (PD-1 v2, by design), an unavailable GPU
+(`available=False` → cap), or a bug; (3) for prose routes, confirm "no gate ⇒ always cap"
+is by design and decide whether prose should be routed at all; (4) one live repro per
+distinct cause. **Output:** a FINDINGS doc + one follow-up item per bug found (S-scored then).
+**Why I3:** if the repair loop silently doesn't run, the local win rate, every A/B baseline
+(EXP-SP-1, KB-3, EXP-MR) and the routing policy are all wrong. **Why S1:** analysis + repro,
+no code change in this item.
+**Acceptance:** every 2026-09-19+ cap is attributed to a named cause; the `repair_rnds=0`
+case is explained (by-design or bug + follow-up item filed).
+
+### DX-2 · gate on the task's language, not the output's  (I3 · S2) — after DX-1
+**The gap:** `cascade/gate.py` picks the verifier from the **output's** fence
+(`detect_language`), and unfenced output goes to `gate_any`, which passes if **any**
+registered language verifies. Observed 2026-09-19: the NPU answered a git task by wrapping
+git in a Python `subprocess` call → the Python gate passed it → a false NPU WIN.
+**What:** thread the task's expected language (the router's `category`, or an explicit
+`--lang` on `mesh_solve_canvas.py`) into `gate(text, dsl, expected=...)`; a fenced block in a
+different language fails with `expr: "language-mismatch"` (the repair prompt's OUTPUT
+CONTRACT from VR-5 already tells the model what to emit); `gate_any` only runs when no
+expected language is known. Route the change through the pipeline.
+**Why I3:** false WINs corrupt the win/lose ledger that every routing and experiment
+decision reads. **Why S2:** one call-site signature in the hot path (VR-4 class) but
+additive — `expected=None` is byte-identical to today; guarded by the parity batch.
+**Acceptance:** the 2026-09-19 git-in-Python output fails the gate when the task is git;
+`expected=None` parity unchanged; CI green at 100%.
+
+### EXP-SP-1 · experiment: GPU sampling temperature 0.8 vs 0.2  (I3 · S2) — after DX-1
+**Fact:** `cascade/config.py` defaults `CASCADE_GPU_TEMPERATURE=0.8` (top_p 0.95). SR-1 made
+it explicit but only preserved Ollama's old default; no experiment chose it. 0.8 is high
+for code. **But do not just flip it:** the bounded repair loop and the self-consistency
+/ context-precision experiments depend on sample diversity — a near-greedy retry can
+reproduce the same bug, so a lower temperature could raise first-pass and *lower*
+post-repair pass rates.
+**Hypothesis (stated before running):** at 0.2, first-pass functional pass rate rises;
+post-repair pass rate is ≥ 0.8's; caps (handoffs) fall. **Arms:** 0.8 (control) · 0.2 ·
+optional hybrid (0.2 first pass, 0.8 on repair rounds — needs a per-round knob, build only
+if the two plain arms disagree on first-pass vs post-repair). **Subjects:**
+`scripts/model_bench.py` functional subjects (dijkstra class) + parity A/B/C +
+`git_model_bench.py` NL→git. **Trials:** ≥ 30 per (arm × subject), seeds recorded (SR-1),
+llama_cpp backend (production). **Metrics:** first-pass rate, post-repair rate, cap rate
+→ Beta posteriors, 95% CI, P(arm > control), paired conditionals
+([[experiment-methods-bayesian-monte-carlo]]). **Decision gate:** change the default only if
+P(arm > control) ≥ 0.95 on post-repair pass rate (the outcome that matters) **and** no
+subject regresses. Protocol: `/experiment`.
+**Why I3 · S2:** the cheapest likely quality lever on every GPU route; $0, evidence branch,
+no production change until a separate flip PR. Its winning temperature then feeds EXP-MR-1.
+
+### RT-1 · router JSON fallback rate + structured-output probe  (I2 · S1)
+**Fact:** `npu_worker._route` regex-extracts `{...}` from the 1.5B's output and, on any parse
+failure, **silently defaults to `difficulty=0.5, category="standard"`** — no record that it
+fell back. (Distinct from #8 difficulty-recal, which addressed *parsed* over-rating.)
+**What:** (1) measure: replay the router over the historical prompts in `runs/edge-npu.rec`
+/ `cascade.rec` (greedy ⇒ deterministic) and count fallbacks; add a `route_parsed: bool`
+field to the route record so it's visible going forward; (2) probe: does the installed
+`openvino_genai` (2026.1) support structured / JSON-schema-constrained generation on the
+NPU device (the analysis called it "GBNF", which is llama.cpp's grammar format, not
+OpenVINO's)? Scratch-venv spike, no repo change.
+**Why I2 · S1:** affects tier selection only when parsing fails — size unknown until
+measured; measurement + a record field is additive.
+**Follow-up (not yet scored): RT-2** constrain the router's output to the JSON schema —
+score it only if RT-1 finds a material fallback rate **and** the probe finds support.
+
+### OL-1 · pin `num_ctx` on the Ollama path  (I2 · S1)
+**Fact:** `gpu_worker._generate` sends `num_predict`/`temperature`/`top_p`/`seed` but **no
+`num_ctx`**, so the Ollama backend runs at whatever context Ollama chooses per model and
+version. Production (llama_cpp, `n_ctx=8192`) is unaffected, but the Ollama path is the
+fallback **and** the EXP-MR backend, where differing defaults per candidate would confound
+the comparison.
+**What:** pass `num_ctx` from one shared knob (reuse `CASCADE_LLAMA_N_CTX`, default 8192, so
+both backends agree) and record it in the result dict (SR-1 identity fields).
+**Why I2 · S1:** one option key on a non-default path; unit-tested at the HTTP seam.
+**Acceptance:** the Ollama payload carries `num_ctx`; the `.rec` result shows it; CI green.
+
+---
+
 ## KB arc — RAG: local knowledge base + `retrieve` step  (product path)
 
 **Why (user, 2026-09-24; corrected same day — the original prompt said "DAG", a typo for
@@ -504,7 +617,14 @@ through Celery steps (`cascade/topologies_canvas.py`), so a new step slots in wi
 touching the gate or the repair cap.
 
 **Choices (proposed; the KB-1 spike may overturn them):** embeddings = `nomic-embed-text`
-via Ollama `/api/embed` (~270 MB, sits beside the 14b's 9 GB in 12 GB); store = LanceDB
+via Ollama `/api/embed` **pinned to CPU** (`options: {"num_gpu": 0}`) — revised 2026-10-06:
+since Slice 7 the worker holds the 14b in-process at ~10.5 GB (PT-1 VRAM delta 10,526 MB of
+12,227), so an Ollama-resident embedder on the GPU eats the last ~1.2 GB of headroom the
+KV cache needs at long context ([[llm-vram-cliff-12gb]]). One short query embed per route
+is cheap on CPU; the one-time book ingest is a batch job. Fallbacks if CPU latency is bad:
+a small ONNX/OpenVINO embedder (`bge-small-en-v1.5`) on CPU, or on the NPU *only if* a
+second `openvino_genai` pipeline can share the NPU with the router/drafter (unverified).
+store = LanceDB
 (embedded, file-based, pip-only, Apache-2.0, Windows wheels); chunking = the book's own
 boundaries with `corpus`, `chapter`, `topic`, `tip`, `page`, `text` columns so citations
 are exact.
@@ -519,8 +639,8 @@ resolve on the venv's **Python 3.13.12**; Ollama answers on :11434. Tip 1's firs
 is the preface's "box labeled Tip nn" -- anchor the callout regex to a line end.
 
 ### KB-1 · ingest: book → chunks → embeddings → LanceDB  (I3 · S2)
-**Preconditions:** [x] book file (PDF, above); `ollama pull nomic-embed-text` and confirm it
-coexists with the 14b (`nvidia-smi`); `uv add lancedb pypdf` (wheels verified on 3.13);
+**Preconditions:** [x] book file (PDF, above); `ollama pull nomic-embed-text` and confirm a
+CPU-pinned embed call leaves `nvidia-smi` unchanged while the worker holds the 14b; `uv add lancedb pypdf` (wheels verified on 3.13);
 the standing substrate health check (one trivial `budget` route WINs — last route was
 117 h ago).
 **What:** `cascade/knowledge.py` — pure functions `chunk_book()`, `embed()`, `upsert()`,
@@ -532,7 +652,8 @@ Ollama and LanceDB seams, under the 100% gate.
 **Why I3:** the first real new capability on the product path; nothing in the repo
 retrieves today. **Why S2:** purely additive module + script; the dependency unknowns
 (wheels, text layer, outline) were closed by the spike.
-**Acceptance:** `kb_ingest` loads the book once and a re-run is idempotent;
+**Acceptance:** `kb_ingest` loads the book once and a re-run is idempotent; `embed()` passes
+`num_gpu: 0` (unit-tested at the HTTP seam) and a live embed adds 0 MB VRAM;
 `search("don't repeat yourself", k=3)` returns the DRY tip (Tip 15 in the
 20th-anniversary numbering) in the top 3 with chapter + tip number; CI green at 100%.
 
@@ -556,7 +677,13 @@ untouched (`over_cap_episodes` = 0).
 ### KB-3 · experiment: does RAG raise the local win rate?  (I3 · S2) — after KB-2
 **Hypothesis (stated before running):** `gpu` targeting helps the 14b repair round;
 `npu` targeting *hurts* the 1.5B draft (tiny context — passages crowd out the task).
-**Arms:** `off` (control) · `placebo` (k random passages) · `npu` · `gpu` · `both`. **Subjects:** reuse the
+**Arms:** `off` (control) · `placebo` (k random passages) · `npu` · `gpu` · `both` — all on the
+book corpus — plus **`gpu × symbols`** (corpus = KB-4's `cascade-symbols`; added 2026-10-06).
+**Symbols hypothesis (stated before running):** the 14b knows Python but not this repo's
+APIs, so injecting the signatures a task touches lifts tasks that call `cascade/` internals
+(`plan_repairs`, `probe_all`-class) and is neutral on self-contained functions. This arm is
+the first test of the KB arc's predicted ordering that API references beat the book. Report it per
+subject class (repo-internal vs self-contained) — pooling would hide the effect. **Subjects:** reuse the
 `scripts/model_bench.py` functional subjects, `parity_batch.py` A/B/C, and
 `git_model_bench.py` NL→git (baseline 97%). **Trials:** ≥ 30 per (arm × subject), seeds
 recorded (SR-1). **Metrics:** functional pass rate → Beta posterior, 95% CI,
@@ -566,6 +693,20 @@ P(arm > off), paired conditionals; `k` and passage length as a reported sensitiv
 the retrieve step still ships for the product path. Protocol: `/experiment` (LOCAL evidence branch,
 `keep_awake`, segregated telemetry, findings leave via a clean PR citing the sha).
 **Why I3 · S2:** the primary metric, measured; $0, evidence branch, no production change.
+
+### KB-4 · repo-symbol corpus via `ast`  (I3 · S2) — after KB-1, before KB-3
+**Why (2026-10-06):** the 14b knows Python but not this repo's APIs; tasks that call
+`cascade/` internals are where it invents names. The KB arc's predicted corpus ordering ranks
+API references above the book; this is the cheapest real instance.
+**What:** `scripts/kb_ingest.py --corpus cascade-symbols cascade/` with a second source
+adapter, `chunk_python_symbols(path)`: stdlib `ast` (no Tree-sitter — Python only) → one
+chunk per public function/class: `module.qualname(signature) -> return` + the docstring's
+first paragraph, ~50-150 tokens each, columns `corpus, module, symbol, lineno, text`. Same
+`embed`/`upsert`/`search` as KB-1 — the adapter is the only new code. Idempotent re-ingest
+keyed by `(module, symbol)` so it can refresh on each merge.
+**Why S2:** additive adapter + corpus; KB-1 already proved the store.
+**Acceptance:** `search("restart a dead celery worker", corpus="cascade-symbols")` returns
+`cascade.health.plan_repairs` in the top 3; re-ingest is a no-op; CI green at 100%.
 
 ---
 
@@ -683,7 +824,12 @@ as tiebreakers only.
 A/B/C tiers unchanged). The model flip is a separate follow-up PR (`cascade/config.py`
 default + FINDINGS doc). Otherwise record REVERT/NULL and keep the 14b.
 **Preconditions:** MD-1 landed (or the edge-gpu server stopped) so the card isn't at
-11.3 GB idle; substrate health check passed; `ollama pull` both candidates.
+11.3 GB idle; substrate health check passed; `ollama pull` both candidates; **OL-1 landed**
+— the Ollama path sends no `num_ctx`, so without it each arm runs at whatever context
+Ollama picks for that model, and that difference confounds the comparison (added 2026-10-06).
+**Hold sampling constant across arms:** one temperature / top_p for all arms, recorded
+per SR-1; if EXP-SP-1 has reported, use its winning temperature, else the current 0.8 and
+say so in the methodology.
 **Why I3:** the model choice drives every GPU route's quality — the primary metric.
 **Why S2:** measurement-only on a LOCAL evidence branch, $0, no production change until
 the separate flip PR. Known unknowns: chat-template / thinking-mode quirks in new models
