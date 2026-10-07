@@ -415,11 +415,9 @@ if (-not $NoSummary -and -not $Check) {
     # Child scope with EAP=Continue: under 'Stop', PS 5.1 turns git's
     # "not a git repository" stderr into a terminating error, which aborted
     # the launch whenever edge ran outside a repo (e.g. from $HOME).
-    $branch, $sha = & {
-      $ErrorActionPreference = 'Continue'
-      git rev-parse --abbrev-ref HEAD 2>$null
-      git rev-parse --short HEAD 2>$null
-    }
+    $gitQuiet = { $ErrorActionPreference = 'Continue'; git @args 2>$null }
+    $branch = & $gitQuiet rev-parse --abbrev-ref HEAD
+    $sha    = & $gitQuiet rev-parse --short HEAD
     if ($LASTEXITCODE -eq 0 -and $branch) {
       Write-Host "  branch:  $branch @ $sha"
     }
