@@ -412,8 +412,14 @@ if (-not $NoSummary -and -not $Check) {
   # the (rare) case where Push itself failed -- there's nothing to pop.
   try {
     Push-Location $ProjectDir
-    $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
-    $sha    = (git rev-parse --short HEAD 2>$null)
+    # Child scope with EAP=Continue: under 'Stop', PS 5.1 turns git's
+    # "not a git repository" stderr into a terminating error, which aborted
+    # the launch whenever edge ran outside a repo (e.g. from $HOME).
+    $branch, $sha = & {
+      $ErrorActionPreference = 'Continue'
+      git rev-parse --abbrev-ref HEAD 2>$null
+      git rev-parse --short HEAD 2>$null
+    }
     if ($LASTEXITCODE -eq 0 -and $branch) {
       Write-Host "  branch:  $branch @ $sha"
     }
