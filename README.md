@@ -249,28 +249,19 @@ If a key is ever pasted or leaked, rotate it at
 uv run pytest
 ```
 
-> **CI** runs this exact suite *and* the bandit security gate on every push
-> and PR (`.github/workflows/ci.yml`, Windows runner). The bandit gate is
-> **loose by design** — edge-cascade is a local, sandboxed, single-user runtime,
-> so it blocks only on *egregious* findings (HIGH severity **and** HIGH
-> confidence); everything else is reported, not gated. A green **CI** badge
-> means the scoped 100% coverage gate held and bandit found no egregious issues.
+Five test layers; full strategy in **[docs/TESTING.md](docs/TESTING.md)**.
 
-The suite enforces **`fail_under = 100`** — but *scoped*, not project-wide.
-100% is measured over the pure, safety-critical logic:
-
-- `cascade/config.py` — env/config + the cloud gate
-- `cascade/feedback.py` — the repair protocol
-- `cascade/verifier.py` — the escalation gate
-- `cascade/cloud_worker.py` — credit-guard cost math + cloud gating
-
-Excluded from the gate (see `pyproject.toml [tool.coverage.run] omit`):
-`npu_worker`, `gpu_worker`, `orchestrator`, `lookahead`, and the CLI/server
-entrypoints. These require real NPU hardware, a running Ollama, the paid API,
-or a `__main__`/HTTP loop. Mock-theater tests for them would assert against
-fakes, adding maintenance risk without real assurance. They're exercised by
-the live smoke runs instead. Tightening this (with hardware fakes) is a
-deliberate future choice, not an accident — hence the explicit `omit`.
+- **100% coverage gate (`fail_under = 100`) on the pure, safety-critical core**: the verifiers and
+  escalation gate, the repair protocol, routing logic, spend safety (credit guard, cloud gating,
+  review ledger) and observability (25 modules).
+- **Hardware and broker modules** (workers, orchestrator, Celery tasks, Canvas topologies) are
+  excluded from the gate on purpose: mock-theater tests for them would assert against fakes. They are
+  covered by ungated unit tests, an **integration** suite (embedded Celery worker), a **live** suite
+  (real worker + Redis + NPU/GPU), and two **pre-push end-to-end gates** that run the real pipeline and
+  assert that a known-bad draft is rejected and no paid call ever happens.
+- **Supported environment is the author's laptop.** CI (Windows) runs the unit layers plus the bandit
+  security gate (loose by design: blocks only HIGH severity + HIGH confidence findings, since this is
+  a local, single-user runtime). Integration, live and end-to-end layers run locally.
 
 ## License
 
